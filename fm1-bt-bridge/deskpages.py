@@ -59,8 +59,8 @@ class DeskPages:
             return ("ROUTE PRESETS", rows, None, None,
                     lambda i: (setattr(a, "preset_row", i), a.on_key("press")), lambda: a.on_key("left"))
         if a.screen == "scan":
-            rows = [(dev["name"], "") for dev in a.devices]
-            return ("SPEAKERS", rows, None, None,
+            rows = [(dev["name"], dev.get("tag") or "") for dev in a.scan_rows()]
+            return ("MIDI KEYBOARDS" if a.scan_kind == "midi" else "SPEAKERS", rows, None, None,
                     lambda i: (setattr(a, "cursor", i), a.on_key("press")), lambda: a.on_key("left"))
         return None
 
@@ -140,10 +140,16 @@ class DeskPages:
 
     def draw_scan_extra(self, img, d, rows):
         a, t = self.app, self.theme
-        self.button(img, d, (W - 120, 3, W - 4, HDR_H - 5), "RESCAN", a.start_scan, key="rescan")
-        if a.scanning or not rows:
-            text = "SEARCHING: PUT THE SPEAKER IN PAIRING MODE" if a.scanning else "NONE FOUND: RESCAN"
+        self.button(img, d, (W - 120, 3, W - 4, HDR_H - 5), "RESCAN", lambda: a.start_scan(a.scan_kind),
+                    key="rescan")
+        midi = a.scan_kind == "midi"
+        if not rows:
+            text = ("NONE FOUND: RESCAN" if not a.scan_running() else
+                    "SEARCHING: TURN THE KEYBOARD ON" if midi else "SEARCHING: PUT THE SPEAKER IN PAIRING MODE")
             self.centre(img, (0, HDR_H, W, H), text, t.c[3])
+        elif midi:                           # what a tap does: connect a found one, forget a saved one
+            text = "SEARCHING..." if a.scan_running() else "TAP TO CONNECT; TAP A SAVED ONE TO FORGET IT"
+            st.text(img, ((W - st.text_size(text)[0]) // 2, H - 24), text, t.c[2])
 
     def draw_confirm(self, img, d, now):
         a, t = self.app, self.theme
@@ -226,6 +232,6 @@ class DeskPages:
         if a.screen == "confirm":
             return ("confirm", a.confirm["title"], tuple(a.confirm["lines"]), held, hold)
         page = self.page_rows()
-        return (a.screen, page and (page[0], tuple(page[1]), page[3]), held, a.screen == "scan" and a.scanning,
+        return (a.screen, page and (page[0], tuple(page[1]), page[3]), held, a.screen == "scan" and a.scan_running(),
                 tuple(sorted(self.page_top.items())))
 

@@ -119,6 +119,7 @@ or down repeats, faster after a second and a half.
 | **MIDI ›** | |
 | · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
+| · **BT keys** | Bluetooth MIDI keyboards the Companion connects to itself (v2.9, not tried with a real keyboard yet): how many are connected of those saved; press to scan and pick (below). |
 | · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
@@ -154,6 +155,19 @@ Then MIDI flows both ways:
   over a USB cable. For example, in Sloop, channels 1–3 play the synths and channel 10 the drums.
 - **From the FM-1:** whatever it sends over USB MIDI (keys, sequencer, clock, depending on the
   firmware's MIDI settings) goes to your device.
+
+Several devices can be connected at once (v2.9): a phone and an iPad, say. They all share the matrix's
+Bluetooth row and column, and what goes to Bluetooth reaches each of them. *Not tried with two real devices yet.*
+
+**Keyboards that wait to be connected to** (v2.9; *not tried with a real keyboard yet*). Some Bluetooth MIDI
+keyboards (a Korg microKEY Air, a CME WIDI) never connect to anything themselves: something has to connect to
+them. Turn the keyboard on, open Settings → MIDI › **BT keys** (on the Studio, MORE › MIDI SETTINGS › BT KEYS),
+and the Companion scans for about 8 seconds for anything that advertises Bluetooth MIDI. Press one to connect;
+it's saved (up to four) and connected again by itself whenever it's on, trying less often while it's off (from
+every 5 seconds to once a minute) so the headphones keep their share of the radio. Press a saved one to forget it.
+Saved keyboards show *on* while connected. BLE MIDI off lets them go until it's on again.
+
+![Settings › MIDI › BT keys: two keyboards found by a scan](../docs/images/screen-bt-keys.png)
 
 ### Recording
 

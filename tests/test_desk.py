@@ -802,6 +802,90 @@ def test_daw_surface():
     assert app.midi.sent[-1] == bytes([0xB0, 0x10, 2])                          # BASS panned right
 
 
+def test_sloop_on_the_studio():
+    """SLOOP on the Studio (sloop-remote-out): MORE starts it, its level is a MIXER channel and the margin's + / -,
+    the "< HOME" corner hides it (it keeps running) and PLAY SLOOP shows it again; the Companion has the screen
+    back for good when it stops"""
+    import os
+    os.environ.setdefault("FM1_SETTINGS", str(Path(tempfile.mkdtemp()) / "settings.json"))
+    import bridge
+    import deskui
+
+    class Region(RgbCapture):
+        device, regions, last = "/dev/fb-test", [], None
+
+        def show_region(self, img, box):
+            self.regions.append((box, img.crop(box)))
+
+    class Proc:
+        code = None
+
+        def __init__(self):
+            self.signals = []
+
+        def poll(self):
+            return self.code
+
+        def send_signal(self, sig):
+            self.signals.append(sig)
+
+        def terminate(self):
+            self.code = 0
+
+    app = bridge.App(Region(), dict(bridge.DEFAULTS))
+    app.save_settings = lambda: None
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+    deskui.SLOOP_APP = Path(__file__)                       # (installed)
+    ui.open_tab("MIX")
+    ui.render(0.0, force=True)
+    assert any(w[3] == ("slide", "sloop") for w in ui.widgets) and app.mix_level("sloop") == 100
+    ui.tab = "MORE"
+    ui.render(0.0, force=True)
+    assert any(w[3] == ("more", "PLAY SLOOP") for w in ui.widgets)
+    ui.external = proc = Proc()                             # (as start_sloop leaves it)
+    ui.draw_sloop_margins()
+    margins = app.display.image
+    ui.render(1.0, force=True)
+    assert app.display.image is margins                     # SLOOP's screen: the Companion draws nothing over it
+    up, down = deskui.SLOOP_UP, deskui.SLOOP_DOWN
+    t0 = ui.sloop_shown_at
+
+    def tap(x, y, at, held=0.1):                            # as the resistive screen sends one: moves throughout
+        ui.touch("down", x, y, at)
+        ui.touch("move", x + 1, y, at + held / 2)
+        ui.touch("move", x, y + 1, at + held)
+        ui.touch("up", x, y, at + held)
+    ui.touch("up", 20, deskui.H - 20, t0 + 0.1)            # the lift of the tap that opened it: nothing
+    tap(20, deskui.H - 20, t0 + 0.2)                        # a quick second tap there (OFF): nothing either
+    tap(20, deskui.H - 20, t0 + 1.0)                        # OFF tapped, not held: still on
+    assert not proc.signals and proc.code is None
+    tap(up[0] + 5, up[1] + 5, t0 + 2)
+    tap(up[0] + 5, up[1] + 5, t0 + 3)
+    tap(down[0] + 5, down[1] + 5, t0 + 4)
+    assert app.mix_level("sloop") == 110 and len(app.display.regions) == 3
+    assert all(box == deskui.SLOOP_MARGIN for box, _ in app.display.regions)    # only the margin, not SLOOP
+    tap(240, 160, t0 + 5)                                   # SLOOP's picture: not ours
+    assert not proc.signals
+    tap(20, 20, t0 + 6)                                     # < HOME: hidden, still running
+    assert proc.signals == [deskui.SLOOP_HIDE] and ui.external is proc and ui.tab == "HOME"
+    ui.render(2.0)
+    assert app.display.image is not margins                 # the Companion's screen again
+    ui.tab = "MORE"
+    ui.render(2.0, force=True)
+    tile = next(w for w in ui.widgets if w[3] == ("more", "PLAY SLOOP"))
+    tile[2]()                                               # PLAY SLOOP (it says ON): shown again, as it was
+    assert proc.signals == [deskui.SLOOP_HIDE, deskui.SLOOP_SHOW] and not ui.sloop_hidden
+    shown_again = app.display.image
+    ui.render(3.0, force=True)
+    assert app.display.image is shown_again                 # SLOOP's screen: nothing drawn over it
+    t1 = ui.sloop_shown_at
+    tap(20, deskui.H - 20, t1 + 2, held=1.2)                # OFF held: it saves and stops
+    ui.render(4.0)
+    assert ui.external is None and app.display.image is not shown_again
+    if os.environ.get("SNAP_DIR"):                         # (to look at: SNAP_DIR=dir)
+        margins.save(Path(os.environ["SNAP_DIR"]) / "sloop-margins.png")
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

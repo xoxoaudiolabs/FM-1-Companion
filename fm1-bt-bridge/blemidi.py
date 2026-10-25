@@ -5,6 +5,10 @@ and MIDI passes both ways between it and the FM-1's USB MIDI port:
 
   phone / iPad / Mac  <--BLE MIDI-->  Pi  <--USB MIDI (ALSA sequencer, via mido)-->  FM-1
 
+It also connects out to Bluetooth MIDI keyboards that wait to be connected to (a microKEY Air, a WIDI), as the
+central: found by a scan, saved, and connected again by themselves. Several of each at once; all of them are
+the matrix's BT.
+
 The packet coding (encode / strip_timestamps) is plain Python; the BlueZ side needs python3-dbus
 and python3-gi, the USB side python3-mido and python3-rtmidi.
 """
@@ -19,7 +23,9 @@ MIDI_IO = "7772e5db-3868-4112-a1a9-f2669d106bf3"
 PACKET = 20                 # ATT payload with the minimum MTU: safe with every central
 DEVICE_NAME = "FM-1 Companion"
 PAIRING_SECONDS = 120
-ADDRESS = re.compile(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}")     # what BlueZ calls a device before its name
+KEYBOARD_SCAN = 8           # seconds a scan for Bluetooth MIDI keyboards takes
+MAX_KEYBOARDS = 4           # saved keyboards (the Zero W's radio also carries the headphones)
+ADDRESS =re.compile(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}")     # what BlueZ calls a device before its name
 
 
 # ---------------------------------------------------------------- BLE MIDI packets
@@ -218,7 +224,7 @@ def start_bluez(bridge):
     from gi.repository import GLib
 
     BLUEZ, OM, PROPS = "org.bluez", "org.freedesktop.DBus.ObjectManager", "org.freedesktop.DBus.Properties"
-    SERVICE, CHRC = "org.bluez.GattService1", "org.bluez.GattCharacteristic1"
+    SERVICE, CHRC, DEVICE = "org.bluez.GattService1", "org.bluez.GattCharacteristic1", "org.bluez.Device1"
     ADV, AGENT, ADAPTER = "org.bluez.LEAdvertisement1", "org.bluez.Agent1", "org.bluez.Adapter1"
     ROOT = "/org/fm1bridge"
 
@@ -249,14 +255,14 @@ def start_bluez(bridge):
             bridge.from_ble(bytes(value), options.get("device"))
 
         @dbus.service.method(CHRC)
-        def StartNotify(self):
+        def StartNotify(self):                # the first central to subscribe (BlueZ sends to each that has)
             self.notifying = True
-            GLib.idle_add(lambda: (bridge.subscribed(True), False)[1])    # after replying to bluetoothd
+            GLib.idle_add(bridge.find_names)  # after replying to bluetoothd
 
         @dbus.service.method(CHRC)
         def StopNotify(self):
             self.notifying = False
-            bridge.subscribed(False)
+            GLib.idle_add(bridge.find_names)
 
         @dbus.service.signal(PROPS, signature="sa{sv}as")
         def PropertiesChanged(self, interface, changed, invalidated):
@@ -351,6 +357,8 @@ def start_bluez(bridge):
     adv = Advertisement()
     agent = Agent()
     state = {"adapter": None, "advertising": False}
+    links = {}                                # a linked keyboard's device path -> (its MIDI characteristic, iface)
+    central = {"connecting": None, "tries": {}, "scanned": 0.0}   # tries: address -> (next try, wait after it)
 
     def adapter_path():
         objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
@@ -365,6 +373,9 @@ def start_bluez(bridge):
     def register():
         """(Re)register everything with bluetoothd; called at start and whenever it restarts."""
         state["advertising"] = False
+        for path in list(links):              # a restarted bluetoothd has dropped them: reconnect() starts again
+            unlink(path)
+        central["connecting"] = None
         path = adapter_path()
         state["adapter"] = path
         if not path:
@@ -389,16 +400,20 @@ def start_bluez(bridge):
     def refresh_keyboards():
         """MIDI devices still linked from before this service existed (the Companion restarted, or the keyboard
         connected first at boot) write to a service that's gone: their MIDI goes nowhere until they look it up
-        again. Disconnect them so they reconnect and find it; headphones and speakers are left alone."""
-        objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
-        for path, ifaces in objects.items():
-            dev = ifaces.get("org.bluez.Device1")
-            uuids = [str(u) for u in dev.get("UUIDs", [])] if dev else []
-            if dev and dev.get("Connected") and not any(u.startswith("0000110b") for u in uuids)                     and path != bridge.peer_path:
-                try:
-                    dbus.Interface(bus.get_object(BLUEZ, path), "org.bluez.Device1").Disconnect()
-                except dbus.DBusException:
-                    pass
+        again. Disconnect them so they reconnect and find it; headphones and speakers are left alone, and a saved
+        keyboard the box connects to itself is taken up where it is."""
+        saved = saved_addresses()
+        for path, ifaces in managed().items():
+            dev = ifaces.get(DEVICE)
+            if not (dev and dev.get("Connected")) or is_audio(dev) or str(path) in bridge.peers:
+                continue
+            if str(dev.get("Address", "")).upper() in saved:
+                link(str(path))
+                continue
+            try:
+                dbus.Interface(bus.get_object(BLUEZ, path), DEVICE).Disconnect()
+            except dbus.DBusException:
+                pass
         return False
 
     def close_pairing():
@@ -430,27 +445,206 @@ def start_bluez(bridge):
             props.Set(ADAPTER, "PairableTimeout", dbus.UInt32(PAIRING_SECONDS))
             props.Set(ADAPTER, "Pairable", dbus.Boolean(True))
 
-    def peer_name(device_path):
-        try:
-            props = dbus.Interface(bus.get_object(BLUEZ, device_path), PROPS)
-            return str(props.Get("org.bluez.Device1", "Alias"))
-        except dbus.DBusException:
-            return None
+    def managed():
+        return dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
 
-    def connected_peer():
-        """The connected device that isn't the headphones: the MIDI central."""
-        objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
-        for path, ifaces in objects.items():
-            dev = ifaces.get("org.bluez.Device1")
-            if dev and dev.get("Connected") and not any(u.startswith("0000110b") for u in dev.get("UUIDs", [])):
-                return path, str(dev.get("Alias", ""))
-        return None, None
+    def is_audio(dev):
+        return any(str(u).startswith("0000110b") for u in dev.get("UUIDs", []))
+
+    def device_path(address):
+        return f"{state['adapter']}/dev_{address.upper().replace(':', '_')}"
+
+    def saved_addresses():
+        return {a.upper() for a, _ in bridge.ble_saved}
+
+    def connected_peers():
+        """[(path, name, address)]: the connected devices that aren't headphones (MIDI centrals, keyboards)"""
+        return [(str(path), str(dev.get("Alias", "")), str(dev.get("Address", "")))
+                for path, ifaces in managed().items()
+                for dev in [ifaces.get(DEVICE)] if dev and dev.get("Connected") and not is_audio(dev)]
+
+    # ---- the box as the central: Bluetooth MIDI keyboards that wait to be connected to
+
+    def reason(e):
+        """a D-Bus error from BlueZ, in words that fit the screen"""
+        text = f"{e.get_dbus_name()} {e.get_dbus_message()}"
+        for needle, words in (("abort-by-local", "No answer: is it on?"), ("page-timeout", "No answer: is it on?"),
+                              ("NoReply", "No answer: is it on?"), ("Timeout", "No answer: is it on?"),
+                              ("AuthenticationFailed", "Pairing rejected"),
+                              ("AuthenticationCanceled", "Pairing cancelled"),
+                              ("InProgress", "Busy: try again"), ("NotReady", "Bluetooth is off"),
+                              ("UnknownObject", "Not found: scan again"), ("DoesNotExist", "Not found: scan again")):
+            if needle in text:
+                return words
+        return (e.get_dbus_message() or "failed")[:30]
+
+    def keyboard_scan(seconds=KEYBOARD_SCAN):
+        """Look for Bluetooth MIDI keyboards (the MIDI service in what they advertise) for seconds: then
+        bridge.ble_found is [[address, name]]. The headphone scan (bluetoothctl, the app's) can run alongside."""
+        if not state["adapter"] or bridge.ble_scanning:
+            return False
+        adapter = dbus.Interface(bus.get_object(BLUEZ, state["adapter"]), ADAPTER)
+        try:
+            adapter.SetDiscoveryFilter({"UUIDs": dbus.Array([MIDI_SERVICE], signature="s"), "Transport": "le"})
+            adapter.StartDiscovery()
+        except dbus.DBusException as e:
+            bridge.note("Scan: " + reason(e))
+            return False
+        bridge.ble_scanning = True
+        GLib.timeout_add_seconds(seconds, scan_done)
+        return False
+
+    def scan_done():
+        found = []
+        for path, ifaces in managed().items():   # before StopDiscovery: RSSI marks the ones seen just now
+            dev = ifaces.get(DEVICE)
+            if (dev and "RSSI" in dev and str(path).startswith(state["adapter"] + "/")
+                    and MIDI_SERVICE in [str(u).lower() for u in dev.get("UUIDs", [])]):
+                found.append([str(dev["Address"]), str(dev.get("Alias", dev["Address"]))])
+        try:
+            dbus.Interface(bus.get_object(BLUEZ, state["adapter"]), ADAPTER).StopDiscovery()
+        except dbus.DBusException:
+            pass
+        bridge.ble_found, bridge.ble_scanning = sorted(found, key=lambda f: f[1].lower()), False
+        reconnect()                           # a saved keyboard the adapter had forgotten may be in it
+        return False
+
+    def keyboard_connect(address, quiet=False):
+        """Connect to a keyboard as its central (one at a time: each try holds the radio for up to ~30 s);
+        linked once its services are read. quiet: an automatic try, nothing said if it fails."""
+        if not state["adapter"] or central["connecting"]:
+            if not quiet:
+                bridge.note("Busy: try again")
+            return False
+        path = device_path(address)
+        try:
+            dev = dbus.Interface(bus.get_object(BLUEZ, path), PROPS).GetAll(DEVICE)
+        except dbus.DBusException:
+            if not quiet:
+                bridge.note("Not found: scan again")
+            return False
+        if dev.get("Connected") and dev.get("ServicesResolved"):
+            link(path, wanted=True)
+            return False
+        central["connecting"] = path
+        name = str(dev.get("Alias", address))
+
+        def done():
+            central["connecting"] = None
+            try:                              # kept by BlueZ (not a passing scan result) for next time
+                dbus.Interface(bus.get_object(BLUEZ, path), PROPS).Set(DEVICE, "Trusted", dbus.Boolean(True))
+            except dbus.DBusException:
+                pass
+            GLib.timeout_add(500, lambda: (link(path, wanted=True), False)[1])   # else ServicesResolved links it
+
+        def failed(e):
+            central["connecting"] = None
+            if not quiet:
+                bridge.note(f"{name}: {reason(e)}")
+
+        if not quiet:
+            bridge.note(f"Connecting {name}")
+        dbus.Interface(bus.get_object(BLUEZ, path), DEVICE).Connect(reply_handler=done, error_handler=failed,
+                                                                    timeout=35)
+        return False
+
+    def link(path, wanted=False):
+        """A connected keyboard's MIDI characteristic: notifications on, its writes ready. wanted: connected
+        from the list (saved now); else only a saved keyboard is taken up."""
+        if path in links:
+            return
+        try:
+            dev = dbus.Interface(bus.get_object(BLUEZ, path), PROPS).GetAll(DEVICE)
+        except dbus.DBusException:
+            return
+        address, name = str(dev.get("Address", "")), str(dev.get("Alias", ""))
+        if not (wanted or address.upper() in saved_addresses()):
+            return
+        found = [str(p) for p, ifaces in managed().items() if str(p).startswith(path + "/")
+                 and str(ifaces.get(CHRC, {}).get("UUID", "")).lower() == MIDI_IO]
+        if not found:
+            if wanted and dev.get("ServicesResolved"):
+                bridge.note(f"{name}: not a MIDI device")
+            return                            # services still being read: ServicesResolved calls again
+        chrc_obj = dbus.Interface(bus.get_object(BLUEZ, found[0], introspect=False), CHRC)
+        links[path] = (found[0], chrc_obj)
+        chrc_obj.StartNotify(reply_handler=ignore, error_handler=lambda e: (unlink(path),
+                                                                          bridge.note(f"{name}: {reason(e)}")))
+        chrc_obj.ReadValue({}, reply_handler=ignore, error_handler=ignore)    # BLE MIDI: the central reads once
+        central["tries"].pop(address.upper(), None)
+        bridge.keyboard_linked(path, address, name)
+
+    def unlink(path):
+        if links.pop(path, None):
+            bridge.keyboard_gone(path)
+
+    def keyboard_forget(address):
+        bridge.ble_saved = [s for s in bridge.ble_saved if s[0].upper() != address.upper()]
+        path = device_path(address)
+        unlink(path)
+        try:                                  # disconnects it, and forgets a pairing
+            dbus.Interface(bus.get_object(BLUEZ, state["adapter"]), ADAPTER).RemoveDevice(path)
+        except dbus.DBusException:
+            pass
+        return False
+
+    def keyboard_write(path, packet):
+        link_ = links.get(path)
+        if link_:
+            link_[1].WriteValue(dbus.Array([dbus.Byte(b) for b in packet], signature="y"), {"type": "command"},
+                                reply_handler=ignore, error_handler=ignore)
+
+    def reconnect():
+        """Every few seconds: a saved keyboard that isn't linked gets a try, one at a time, each less often
+        after it fails (5 s, doubling to a minute: a try that waits for a keyboard that's off takes the radio
+        from the headphones a little). One the adapter no longer knows needs a scan to be seen again."""
+        missing = [a.upper() for a, _ in bridge.ble_saved if device_path(a) not in links] if state["adapter"] else []
+        if not (missing and bridge.enabled) or central["connecting"] or bridge.ble_scanning:
+            return True
+        known = {str(p) for p, ifaces in managed().items() if DEVICE in ifaces}
+        now = time.monotonic()
+        for address in missing:
+            due, wait = central["tries"].get(address, (0.0, 5))
+            if now < due:
+                continue
+            central["tries"][address] = (now + wait, min(60, wait * 2))
+            if device_path(address) in known:
+                keyboard_connect(address, quiet=True)
+            elif now - central["scanned"] > 60:
+                central["scanned"] = now
+                keyboard_scan(5)
+            break
+        return True
+
+    def set_central(on):
+        """BLE MIDI off: the keyboards are let go (reconnect() leaves them alone until it's on again)"""
+        if not on:
+            for path in list(links):
+                unlink(path)
+                try:
+                    dbus.Interface(bus.get_object(BLUEZ, path), DEVICE).Disconnect()
+                except dbus.DBusException:
+                    pass
+            central["tries"].clear()
 
     def device_changed(interface, changed, invalidated, path=None):
-        if interface == "org.bluez.Device1" and "Connected" in changed and not changed["Connected"]:
-            if path == bridge.peer_path:
-                chrc.notifying = False
-                bridge.subscribed(False)
+        if interface != DEVICE:
+            return
+        path = str(path)
+        if "Connected" in changed:
+            if not changed["Connected"]:
+                unlink(path)
+                bridge.streams.pop(path, None)
+            GLib.idle_add(bridge.find_names)
+        if changed.get("ServicesResolved"):
+            GLib.idle_add(lambda: (link(path), False)[1])
+
+    def chrc_changed(interface, changed, invalidated, path=None):
+        """a keyboard's notification: its MIDI"""
+        if interface == CHRC and "Value" in changed:
+            device = str(path).rsplit("/", 2)[0]
+            if links.get(device, (None,))[0] == str(path):
+                bridge.from_ble(bytes(changed["Value"]), device)
 
     def try_register():
         try:
@@ -466,12 +660,17 @@ def start_bluez(bridge):
             GLib.timeout_add(500, try_register)
 
     bus.add_signal_receiver(device_changed, dbus_interface=PROPS, signal_name="PropertiesChanged",
-                            arg0="org.bluez.Device1", path_keyword="path")
+                            arg0=DEVICE, path_keyword="path")
+    bus.add_signal_receiver(chrc_changed, dbus_interface=PROPS, signal_name="PropertiesChanged",
+                            arg0=CHRC, bus_name=BLUEZ, path_keyword="path")    # (not our own characteristic's)
     bus.watch_name_owner(BLUEZ, owner_changed)    # also calls back now if bluetoothd is running
 
     bridge.bluez = {"notify": chrc.notify, "set_advertising": set_advertising, "open_pairing": open_pairing,
-                    "peer_name": peer_name, "connected_peer": connected_peer, "idle_add": GLib.idle_add,
-                    "timeout_add_seconds": GLib.timeout_add_seconds}
+                    "connected_peers": connected_peers, "idle_add": GLib.idle_add,
+                    "timeout_add_seconds": GLib.timeout_add_seconds, "write": keyboard_write,
+                    "scan": keyboard_scan, "connect": keyboard_connect, "forget": keyboard_forget,
+                    "set_central": set_central}
+    GLib.timeout_add_seconds(5, reconnect)
     GLib.MainLoop().run()
 
 
@@ -955,7 +1154,14 @@ class MidiBridge:
             self.net = netmidi.Session("FM-1 Companion", 5004, self.from_net)
             self.mcu = netmidi.Session("FM-1 Companion MCU", 5006, self.from_mcu)
             self.mackie = netmidi.Mackie()
-        self.peer, self.peer_path = None, None
+        self.peers = {}                     # device path -> name: what's connected to the box (phones, iPads, Macs)
+        self.keyboards = {}                 # device path -> name: keyboards the box connected to (as the central)
+        self.addresses = {}                 # their device path -> address
+        self.ble_saved = []                 # [[address, name]]: keyboards to connect to whenever they're on
+        self.ble_loaded = False             # the app has sent them (till then the status leaves them out)
+        self.ble_found, self.ble_scanning = [], False    # the last keyboard scan's [[address, name]]
+        self.ble_note = [0, None]           # [count, text]: what the screen says about a keyboard (counted: said once)
+        self.name_timer = False
         self.pairing_until = 0.0
         self.last_ble = 0.0
         self.bluez = None                   # filled in by start_bluez's thread
@@ -968,7 +1174,7 @@ class MidiBridge:
         self.split = bool(net)                # the Studio: each USB MIDI device its own row and column
         if net:                               # the Studio: four USB ports, more on a hub (the Pocket: 4, its CPU)
             self.controllers.MAX = UsbControllers.MAX_STUDIO
-        self.ble_stream = MidiStream()
+        self.streams = {}                   # device path -> MidiStream: each sender's running status its own
         self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
         self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
         self.box_origin = None                      # when the box clock's tick 0 (after Start) was due
@@ -976,6 +1182,7 @@ class MidiBridge:
         self.routes = {key: Route(route_default(key)) for key in ROUTES}
         self.saved = {}                       # the routes as the app last sent them (a USB device's, made on use)
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
+        self.tap_path, self.tap_fd = None, None     # SLOOP on the Studio (deskui.start_sloop): FM-1 A's MIDI, its FIFO
 
     def set_routes(self, routes):
         self.saved = dict(routes or {})
@@ -1175,10 +1382,37 @@ class MidiBridge:
 
     def from_fm1(self, source, message):
         """from FM-1 A or B (source), on rtmidi's thread"""
+        if source == "FM-1" and self.tap_path:
+            self.tap(message)
         if is_library_sysex(message) or not self.passes(source, message):
             return
         self.note_watch(message, time.monotonic())
         self.route_from(source, message)
+
+    def tap(self, message):
+        """FM-1 A's MIDI, as it comes, into SLOOP's FIFO (sloop-remote-out reads its REMOTE OUT channel from it). The
+        FIFO opens once SLOOP has its end open; a message it can't take is dropped, never waited for"""
+        import os
+        if self.tap_fd is None:
+            try:
+                self.tap_fd = os.open(self.tap_path, os.O_WRONLY | os.O_NONBLOCK)
+            except OSError:                   # (no reader yet: the next message tries again)
+                return
+        try:
+            os.write(self.tap_fd, bytes(message))
+        except BlockingIOError:
+            pass
+        except OSError:                       # SLOOP stopped
+            self.set_tap(self.tap_path)
+
+    def set_tap(self, path):
+        import os
+        if self.tap_fd is not None:
+            try:
+                os.close(self.tap_fd)
+            except OSError:
+                pass
+        self.tap_path, self.tap_fd = path, None
 
     def route_from(self, source, message):
         for dest in self.dests():
@@ -1213,7 +1447,7 @@ class MidiBridge:
         self.route_from(source, message)
 
     def to_ble(self, message):
-        if not (self.bluez and self.enabled and self.peer):
+        if not (self.bluez and self.enabled and (self.peers or self.keyboards)):
             return
         with self.lock:
             self.pending.append(message)
@@ -1226,43 +1460,85 @@ class MidiBridge:
         with self.lock:
             messages, self.pending, self.flush_queued = self.pending, [], False
         for packet in encode(messages, int(time.monotonic() * 1000)):
-            self.bluez["notify"](packet)
+            if self.peers:
+                self.bluez["notify"](packet)  # to every central that subscribed
+            for path in list(self.keyboards):
+                self.bluez["write"](path, packet)
         self.last_ble = time.monotonic()
         return False
 
-    # BLE -> USB (called on the GLib thread)
+    # BLE -> USB (called on the GLib thread): from a central's writes, or a keyboard's notifications
     def from_ble(self, packet, device_path):
-        if device_path and str(device_path) != self.peer_path:
-            self.peer_path, self.peer = str(device_path), self.peer or "connected"
-            self.bluez["idle_add"](self.find_name)            # after replying to bluetoothd
+        path = str(device_path) if device_path else None
+        stream = self.streams.get(path)
+        if stream is None:
+            stream = self.streams[path] = MidiStream()
+            if path and path not in self.peers and path not in self.keyboards and self.bluez:
+                self.bluez["idle_add"](self.find_names)       # after replying to bluetoothd
         self.last_ble = time.monotonic()
-        for m in self.ble_stream.feed(strip_timestamps(packet)):
+        for m in stream.feed(strip_timestamps(packet)):
             if self.passes("BT", m):
                 self.route_from("BT", m)
         log_timing(packet, self.last_ble)
 
-    def lookup_name(self):
-        """True (keep the timer) while BlueZ still only has the address: a keyboard's name is read a few
-        seconds after it connects, so the first look often gets 28-9E-F6-…"""
-        if self.peer_path:
-            self.peer = self.bluez["peer_name"](self.peer_path) or self.peer
-        self.naming = bool(self.peer_path and self.peer and ADDRESS.fullmatch(self.peer))
-        return self.naming
+    @property
+    def peer(self):
+        """the Bluetooth MIDI devices connected, for the screen ("iPad + microKEY"), or None"""
+        names = list(self.keyboards.values()) + [n for p, n in self.peers.items() if p not in self.keyboards]
+        return " + ".join(n or "connected" for n in names) or None
 
-    def find_name(self):
-        if getattr(self, "naming", False):                    # already asking every 3 s
+    def refresh_peers(self):
+        """The centrals connected: every connected device but the headphones and the keyboards (linked, or saved
+        and on the way). True while BlueZ still only has an address for one: a name is read a few seconds after
+        it connects, so the first look often gets 28-9E-F6-…"""
+        if not self.bluez:
             return False
-        if self.lookup_name() and "timeout_add_seconds" in self.bluez:
-            self.bluez["timeout_add_seconds"](3, self.lookup_name)
+        saved = {a.upper() for a, _ in self.ble_saved}
+        self.peers = {path: name for path, name, address in self.bluez["connected_peers"]()
+                      if path not in self.keyboards and address.upper() not in saved}
+        return any(ADDRESS.fullmatch(n) for n in self.peers.values())
+
+    def find_names(self):
+        """something connected or left: look again, and every 3 s while a name is still an address"""
+        if self.refresh_peers() and not self.name_timer and "timeout_add_seconds" in self.bluez:
+            self.name_timer = True
+            self.bluez["timeout_add_seconds"](3, self.name_tick)
         return False
 
-    def subscribed(self, on):
-        if on:
-            path, name = self.bluez["connected_peer"]() if self.bluez else (None, None)
-            self.peer_path, self.peer = path, name or "connected"
-            self.find_name()
-        else:
-            self.peer, self.peer_path = None, None
+    def name_tick(self):
+        self.name_timer = self.refresh_peers()
+        return self.name_timer
+
+    # keyboards (the box as the central), called on the GLib thread
+    def keyboard_linked(self, path, address, name):
+        self.keyboards[path] = name
+        self.addresses[path] = address
+        self.peers.pop(path, None)
+        saved = [s for s in self.ble_saved if s[0].upper() != address.upper()]
+        self.ble_saved = ([[address, name]] + saved)[:MAX_KEYBOARDS]
+        self.note(f"{name} connected")
+
+    def keyboard_gone(self, path):
+        name = self.keyboards.pop(path, None)
+        self.addresses.pop(path, None)
+        self.streams.pop(path, None)
+        if name:
+            self.note(f"{name} left")
+
+    def note(self, text):
+        self.ble_note = [self.ble_note[0] + 1, text]
+
+    def keyboard_list(self):
+        """the saved keyboards for the screen: [[address, name, linked]]"""
+        linked = {a.upper() for a in self.addresses.values()}
+        return [[a, n, a.upper() in linked] for a, n in self.ble_saved]
+
+    def keyboard_command(self, name, *args):
+        """("scan",), ("connect", address), ("forget", address): from the app, done on the GLib thread"""
+        if self.bluez:
+            self.bluez["idle_add"](lambda: (self.bluez[name](*args), False)[1])
+        elif name != "forget":
+            self.note("Bluetooth not ready")
 
     # from the app's threads
     def poll(self):
@@ -1279,7 +1555,8 @@ class MidiBridge:
     def set_enabled(self, on):
         self.enabled = on
         if self.bluez:
-            self.bluez["idle_add"](lambda: (self.bluez["set_advertising"](on), False)[1])
+            self.bluez["idle_add"](lambda: (self.bluez["set_advertising"](on), self.bluez["set_central"](on),
+                                            False)[2])
 
     def open_pairing(self):
         self.pairing_until = time.monotonic() + PAIRING_SECONDS
@@ -1321,6 +1598,13 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 wanted[:] = command[1:5]
             elif command[0] == "mcu" and bridge.mcu:   # ("mcu", [messages]): the control surface, to the DAW
                 bridge.mcu.send([bytes(m) for m in command[1]])
+            elif command[0] == "ble_saved":        # ("ble_saved", [[address, name]]): the keyboards, at start
+                bridge.ble_saved = [[str(a), str(n)] for a, n in command[1]][:MAX_KEYBOARDS]
+                bridge.ble_loaded = True
+            elif command[0] == "ble":              # ("ble", "scan") / ("ble", "connect" or "forget", address)
+                bridge.keyboard_command(*command[1:])
+            elif command[0] == "tap":              # ("tap", FIFO path or None): FM-1 A's MIDI to SLOOP on the Studio
+                bridge.set_tap(command[1])
 
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
@@ -1338,6 +1622,8 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
         status.update(bridge.net_status())
         status["pads"] = bridge.pads is not None
         status["split"] = bridge.split
+        status.update(ble_keys=bridge.keyboard_list() if bridge.ble_loaded else None, ble_found=bridge.ble_found,
+                      ble_scanning=bridge.ble_scanning, ble_note=bridge.ble_note)
         if status != last:
             try:
                 conn.send(status)
@@ -1367,6 +1653,9 @@ class MidiProcess:
         self.usb_b = None                   # a second FM-1's port name, when there is one
         self.clock = None                   # {"bpm", "source", "playing"} while there's a clock
         self.notes, self.chans = [], 0      # for the MIDI meter
+        self.ble_keys, self.ble_found, self.ble_scanning = [], [], False   # Bluetooth MIDI keyboards (MidiBridge's)
+        self.ble_note = 0
+        self.on_note = self.on_saved = None  # the app's: a keyboard's news to say; the saved keyboards to keep
 
     def start(self):
         self.proc.start()
@@ -1387,6 +1676,16 @@ class MidiProcess:
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
             self.net, self.mcu = status.get("net") or [], status.get("mcu")
+            self.ble_found, self.ble_scanning = status.get("ble_found") or [], status.get("ble_scanning", False)
+            keys = status.get("ble_keys")
+            if keys is not None:              # None: the saved ones not sent yet (not "none saved")
+                if [k[:2] for k in keys] != [k[:2] for k in self.ble_keys] and self.on_saved:
+                    self.on_saved([k[:2] for k in keys])
+                self.ble_keys = keys
+            count, text = status.get("ble_note") or (0, None)
+            if count != self.ble_note and text and self.on_note:
+                self.on_note(text)
+            self.ble_note = count
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
@@ -1419,6 +1718,26 @@ class MidiProcess:
 
     def set_metronome(self, on, target, level, rate):
         self.conn.send(("metronome", on, target, level, rate))
+
+    def set_tap(self, path):
+        """FM-1 A's MIDI also into the FIFO at path (SLOOP on the Studio, deskui.start_sloop); None: not"""
+        self.conn.send(("tap", path))
+
+    def set_ble_saved(self, keys):
+        """the saved keyboards (the app's state), to connect to whenever they're on"""
+        self.ble_keys = [list(k[:2]) + [False] for k in keys or []]
+        self.conn.send(("ble_saved", [list(k[:2]) for k in keys or []]))
+
+    def ble_scan(self):
+        self.ble_scanning = True              # (till the MIDI process says otherwise: no "none found" first)
+        self.conn.send(("ble", "scan"))
+
+    def ble_connect(self, address):
+        self.conn.send(("ble", "connect", address))
+
+    def ble_forget(self, address):
+        self.ble_keys = [k for k in self.ble_keys if k[0] != address]
+        self.conn.send(("ble", "forget", address))
 
     def mcu_send(self, messages):
         """the control surface's moves (netmidi.Mackie.fader / press) to the DAW"""

@@ -219,6 +219,7 @@ class TftDisplay:
     480x320 frame, 300 KB, in ~0.1 s; the picture's band is 60% of that, a press 40%)."""
 
     def __init__(self, device="/dev/fb1"):
+        self.device = device                  # (SLOOP on the Studio draws on it too: deskui.start_sloop)
         self.fb = open(device, "r+b", buffering=0)
         self.frame, self.pressed, self.lock = Image.new("1", (128, 64)), None, threading.Lock()
         self.blank_path = Path("/sys/class/graphics") / Path(device).name / "blank"
@@ -272,6 +273,16 @@ class TftDisplay:
                 self.fb.write(px[top:bottom].tobytes())
                 rows += bottom - top
             self.busy_until = time.monotonic() + 1 / 30 + rows * W * 16 * 1.15 / self.hz
+
+    def show_region(self, img, box):
+        """box (left, top, right, bottom) of a whole-screen RGB image, and nothing around it (SLOOP on the
+        Studio has the middle of the screen: its margins are redrawn on their own)"""
+        band = rgb565(img.crop(box))
+        row = (box[2] - box[0]) * 2
+        with self.lock:
+            for y in range(box[1], box[3]):
+                self.fb.seek((y * W + box[0]) * 2)
+                self.fb.write(band[(y - box[1]) * row:(y - box[1] + 1) * row])
 
     def press(self, name):
         """light a button while it's held (None: none), redrawn at once"""

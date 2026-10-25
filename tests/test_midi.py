@@ -31,7 +31,7 @@ def make_bridge():
     bridge.usb = FakeUsb()
     bridge.to_ble_sent = []
     bridge.to_ble = bridge.to_ble_sent.append
-    bridge.bluez = {"idle_add": lambda f: f(), "peer_name": lambda p: "Keys"}
+    bridge.bluez = {"idle_add": lambda f: f(), "connected_peers": lambda: []}
     return bridge
 
 
@@ -39,15 +39,51 @@ def test_peer_name_after_address():
     """BlueZ often has only the address when a keyboard connects; the name shows up once it has it."""
     bridge = make_bridge()
     names, timers = ["28-9E-F6-E8-D8-53", "28-9E-F6-E8-D8-53", "SMK-37+VA_BLE"], []
-    bridge.bluez.update(peer_name=lambda p: names.pop(0),
-                        connected_peer=lambda: ("/org/bluez/hci0/dev_28", "28-9E-F6-E8-D8-53"),
+    bridge.bluez.update(connected_peers=lambda: [("/org/bluez/hci0/dev_28", names.pop(0), "28:9E:F6:E8:D8:53")],
                         timeout_add_seconds=lambda s, f: timers.append(f))
-    bridge.subscribed(True)
+    bridge.find_names()
     assert bridge.peer == "28-9E-F6-E8-D8-53" and len(timers) == 1
-    bridge.find_name()                                   # a second look doesn't start a second timer
+    bridge.find_names()                                  # a second look doesn't start a second timer
     assert len(timers) == 1
-    assert timers[0]() is True                           # still the address: keep asking
     assert timers[0]() is False and bridge.peer == "SMK-37+VA_BLE"
+
+
+def test_several_bluetooth_devices():
+    """Phones connect to the box and the box connects to keyboards, several at once: each sender keeps its own
+    running status, and what goes out to BT reaches every one of them."""
+    bridge = blemidi.MidiBridge(["felucca"])
+    bridge.usb = FakeUsb()
+    notified, written = [], []
+    connected = [("/hci0/dev_AA", "iPad", "AA:00:00:00:00:01"), ("/hci0/dev_BB", "microKEY", "BB:00:00:00:00:02")]
+    bridge.bluez = {"idle_add": lambda f: f(), "connected_peers": lambda: connected,
+                    "notify": notified.append, "write": lambda path, p: written.append((path, p))}
+    bridge.ble_saved = [["BB:00:00:00:00:02", "microKEY"]]
+    bridge.find_names()
+    assert bridge.peers == {"/hci0/dev_AA": "iPad"}      # a saved keyboard isn't a central, even before it's linked
+    bridge.keyboard_linked("/hci0/dev_BB", "BB:00:00:00:00:02", "microKEY")
+    assert bridge.peer == "microKEY + iPad" and bridge.ble_note[1] == "microKEY connected"
+    assert bridge.keyboard_list() == [["BB:00:00:00:00:02", "microKEY", True]]
+    # two senders, each in running status: their bytes mustn't mix
+    bridge.from_ble(bytes([0x80, 0x80, 0x90, 0x3C, 0x40]), "/hci0/dev_AA")
+    bridge.from_ble(bytes([0x80, 0x80, 0x91, 0x30, 0x40]), "/hci0/dev_BB")
+    bridge.from_ble(bytes([0x80, 0x80, 0x3E, 0x40]), "/hci0/dev_AA")
+    assert bridge.usb.sent == [bytes([0x90, 0x3C, 0x40]), bytes([0x91, 0x30, 0x40]), bytes([0x90, 0x3E, 0x40])]
+    bridge.to_ble(bytes([0xF8]))
+    assert len(notified) == 1 and written == [("/hci0/dev_BB", notified[0])]
+    bridge.keyboard_gone("/hci0/dev_BB")
+    assert bridge.peer == "iPad" and bridge.keyboard_list() == [["BB:00:00:00:00:02", "microKEY", False]]
+    bridge.to_ble(bytes([0xF8]))
+    assert len(notified) == 2 and len(written) == 1      # gone: nothing written to it
+
+
+def test_saved_keyboards_newest_first():
+    bridge = make_bridge()
+    for i in range(blemidi.MAX_KEYBOARDS + 1):
+        bridge.keyboard_linked(f"/hci0/dev_{i}", f"00:00:00:00:00:0{i}", f"Keys {i}")
+    names = [n for _, n in bridge.ble_saved]
+    assert names[0] == f"Keys {blemidi.MAX_KEYBOARDS}" and len(names) == blemidi.MAX_KEYBOARDS
+    bridge.keyboard_linked("/hci0/dev_2", "00:00:00:00:00:02", "Keys 2")      # again: moved up, not doubled
+    assert [n for _, n in bridge.ble_saved].count("Keys 2") == 1 and bridge.ble_saved[0][1] == "Keys 2"
 
 
 def ble_packet(*messages):

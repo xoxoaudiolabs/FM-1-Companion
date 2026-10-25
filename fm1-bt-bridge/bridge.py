@@ -46,6 +46,7 @@ DEFAULTS = {
     "last_name": None,
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
+    "ble_keys": [],         # Bluetooth MIDI keyboards the box connects to whenever they're on: [[address, name]]
     "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
     "audio_rate": 48000,    # PipeWire's rate (Hz), 48000 or 44100: the FM-1 is opened at this rate
     "clock_mode": "follow", # MIDI clock: "follow" (pass on and show incoming clock) or "box" (send our own)
@@ -512,6 +513,7 @@ class Loopback:
 
 
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
+SLOOP_NODE = "sloop-remote-out"         # SLOOP on the Studio's sound (SLOOP Remote Out): its level is mixer key "sloop"
 
 
 def link_ports(links):
@@ -791,6 +793,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.jack_loop = Loopback(state["audio_rate"])  # output "both": the speaker's sound copied to the jack
         self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
         self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
+        self.sloop_set = None                 # (node id, level) last set on SLOOP's sound (deskui.start_sloop)
         self.box = {"build": "pocket", "board": "", "screen": None, "can": set()}   # main() fills it in
         self.desk = None                      # the desk box's touch screens (deskui.DeskUI), from main()
         self.pads = None                      # the Studio's sampler (pads.PadProcess), from main()
@@ -809,6 +812,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.screen = "status"                # or "scan", "settings"
         self.back_to = "status"               # where left leaves the scan list for
         self.devices, self.cursor, self.scanning = [], 0, False
+        self.scan_kind = "audio"              # what the scan screen lists: "audio" (speakers) or "midi" (keyboards)
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
         self.battery, self.next_battery = None, 0.0   # the PiSugar's {"percent", "mv", "plugged"}, or None
@@ -913,6 +917,11 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if copy_id is not None and self.copy_set != (copy_id, main_level):
             run(["wpctl", "set-volume", str(copy_id), f"{main_level / 100:.2f}"], timeout=5)
             self.copy_set = (copy_id, main_level)
+        sloop_id = next((o.get("id") for o in objects       # SLOOP playing (it goes to the speaker by itself)
+                         if ((o.get("info") or {}).get("props") or {}).get("node.name") == SLOOP_NODE), None)
+        if sloop_id is not None and self.sloop_set != (sloop_id, self.mix_level("sloop")):
+            run(["wpctl", "set-volume", str(sloop_id), f"{self.mix_level('sloop') / 100:.2f}"], timeout=5)
+            self.sloop_set = (sloop_id, self.mix_level("sloop"))
         if len(channels) > 1:                 # more than one source: through the mixer, each at its level
             self.loop.ensure(None, None)
             self.mixer.ensure(main, [(key, node["name"], self.input_pair(key, node))
@@ -1127,12 +1136,20 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
 
     # ---- actions
 
-    def start_scan(self):
+    def start_scan(self, kind="audio"):
+        """the scan screen: speakers and headphones to pair, or (kind "midi") Bluetooth MIDI keyboards"""
         if self.busy or self.scanning:
+            return
+        if kind == "midi" and not self.midi:
+            self.say("Bluetooth MIDI isn't running")
             return
         if self.screen != "scan":
             self.back_to = self.screen        # left goes back where the scan was started from
-        self.screen, self.devices, self.cursor, self.scanning = "scan", [], 0, True
+        self.scan_kind, self.screen, self.cursor = kind, "scan", 0
+        if kind == "midi":                    # the MIDI process scans (BlueZ's discovery, MIDI service only)
+            self.midi.ble_scan()
+            return
+        self.devices, self.scanning = [], True
 
         def body():
             devices = []
@@ -1144,6 +1161,36 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.post("status", True)
 
         threading.Thread(target=body, daemon=True).start()
+
+    def scan_rows(self):
+        """the scan screen's list, [{"mac", "name", "tag"}]: the speakers found; or the saved keyboards (tag
+        "on" while connected) and then the ones the scan found"""
+        if self.scan_kind != "midi":
+            return self.devices
+        saved = getattr(self.midi, "ble_keys", None) or []
+        rows = [{"mac": a, "name": n, "tag": "on" if linked else "saved", "saved": True} for a, n, linked in saved]
+        mine = {a.upper() for a, _, _ in saved}
+        return rows + [{"mac": a, "name": n, "tag": ""} for a, n in getattr(self.midi, "ble_found", None) or []
+                       if a.upper() not in mine]
+
+    def scan_running(self):
+        return bool(getattr(self.midi, "ble_scanning", False)) if self.scan_kind == "midi" else self.scanning
+
+    def pick_selected(self):
+        """press on the scan list: pair a speaker; connect a keyboard, or forget a saved one"""
+        rows = self.scan_rows()
+        if not rows or self.scan_running():
+            return
+        self.cursor = min(self.cursor, len(rows) - 1)
+        device = rows[self.cursor]
+        if self.scan_kind != "midi":
+            self.pair_selected()
+        elif device.get("saved"):
+            self.midi.ble_forget(device["mac"])
+            self.say(f"Forgot {device['name']}", 2)
+            self.cursor = 0
+        else:
+            self.midi.ble_connect(device["mac"])
 
     def pair_selected(self):
         device = self.devices[self.cursor]
@@ -1241,7 +1288,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     + [("rate", "Audio rate", rate)] + mix + parts)
         if self.settings_menu == "midi":
             keys = getattr(self.midi, "controllers", None) or []
+            bt_keys = getattr(self.midi, "ble_keys", None) or []
+            linked = sum(1 for k in bt_keys if k[2])
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                    ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›"),
                     ("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
         return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
@@ -1317,6 +1367,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.midi.set_enabled(on)
             self.state["midi_enabled"] = on
             save_state(self.state)
+        elif key == "btkeys":                  # Bluetooth MIDI keyboards: the box connects to them
+            self.start_scan("midi")
         elif key == "usbkeys":                 # USB MIDI controllers on a hub, found by themselves
             keys = getattr(self.midi, "controllers", None) or []
             self.say(", ".join(keys) if keys else "Plug a USB keyboard into the hub", 3)
@@ -1466,12 +1518,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             elif key == "left":
                 self.screen = "status"
         else:
-            if key in ("up", "down") and self.devices:
-                self.cursor = (self.cursor + (1 if key == "down" else -1)) % len(self.devices)
-            elif key in ("press", "right") and self.devices and not self.scanning:
-                self.pair_selected()
+            rows = self.scan_rows()
+            if key in ("up", "down") and rows:
+                self.cursor = (self.cursor + (1 if key == "down" else -1)) % len(rows)
+            elif key in ("press", "right"):
+                self.pick_selected()
             elif key == "key1":
-                self.start_scan()
+                self.start_scan(self.scan_kind)
             elif key == "left" and not self.busy:
                 self.screen = self.back_to
 
@@ -1485,7 +1538,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if self.desk:                         # an LCD doesn't burn in (and it's on the desk, plugged in)
             return
         idle = time.monotonic() - self.last_activity
-        if self.busy or self.scanning:
+        if self.busy or self.scan_running():
             idle = 0
         if idle > OFF_AFTER and self.mode != "saver":
             self.display.contrast(1)
@@ -1508,7 +1561,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.state["last_name"], self.auto, self.volume, now < self.volume_shown,
                 self.battery and (self.battery["percent"], self.battery["plugged"]),
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
-                tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
+                tuple((d["name"], d.get("tag")) for d in self.scan_rows()), self.cursor, self.scan_running(),
                 tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting, self.settings_menu,
                 self.library_view(now), self.meter_view(now), self.midi_view(),
                 self.editor_view() if self.screen == "editor" else None)
@@ -1661,24 +1714,37 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         d.text((0, 53), hint, font=self.f_small, fill=1)
 
     def draw_scan(self, d):
-        d.text((0, 0), "BT audio out", font=self.f_title, fill=1)
+        midi, rows = self.scan_kind == "midi", self.scan_rows()
+        d.text((0, 0), "BT MIDI keys" if midi else "BT audio out", font=self.f_title, fill=1)
         d.line((0, 14, 127, 14), fill=1)
-        if self.scanning:
+        if self.scan_running() and not rows:
             d.text((0, 18), "Searching…", font=self.f_body, fill=1)
-            d.text((0, 32), "Put headphones in", font=self.f_small, fill=1)
-            d.text((0, 42), "pairing mode now", font=self.f_small, fill=1)
-        elif not self.devices:
+            d.text((0, 32), "Turn the keyboard on" if midi else "Put headphones in", font=self.f_small, fill=1)
+            d.text((0, 42), "(its Bluetooth on)" if midi else "pairing mode now", font=self.f_small, fill=1)
+        elif not rows:
             d.text((0, 18), "None found", font=self.f_body, fill=1)
             d.text((0, 34), "K1 scan again", font=self.f_small, fill=1)
             d.text((0, 44), "< back", font=self.f_small, fill=1)
         else:
-            top = min(max(0, self.cursor - 1), max(0, len(self.devices) - 3))
-            for row, device in enumerate(self.devices[top:top + 3]):
+            top = min(max(0, self.cursor - 1), max(0, len(rows) - 3))
+            for row, device in enumerate(rows[top:top + 3]):
                 y, selected = 16 + row * 12, top + row == self.cursor
                 if selected:
                     d.rectangle((0, y, 127, y + 11), fill=1)
-                d.text((2, y), fit(d, device["name"], self.f_body, 122), font=self.f_body, fill=0 if selected else 1)
-            d.text((0, 53), "press = pair   K1 = rescan", font=self.f_small, fill=1)
+                tag = device.get("tag") or ""                 # a keyboard's: "on" (connected) or "saved"
+                w = d.textlength(tag, font=self.f_small) + 4 if tag else 0
+                d.text((2, y), fit(d, device["name"], self.f_body, 122 - w), font=self.f_body,
+                       fill=0 if selected else 1)
+                if tag:
+                    d.text((126 - w + 4, y + 1), tag, font=self.f_small, fill=0 if selected else 1)
+            if self.scan_running():
+                hint = "searching…"
+            elif midi:
+                saved = rows[min(self.cursor, len(rows) - 1)].get("saved")
+                hint = ("press = forget" if saved else "press = connect") + "  K1 = scan"
+            else:
+                hint = "press = pair   K1 = rescan"
+            d.text((0, 53), hint, font=self.f_small, fill=1)
 
     def draw_box(self, d, text):
         words, lines, line = text.split(), [], ""
@@ -1727,6 +1793,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.wake()
             elif event and event[0] == "request":
                 self.web_request(event[1])
+            elif event and event[0] == "ble_note":        # a Bluetooth MIDI keyboard connected, left, failed
+                self.last_activity = time.monotonic()
+                self.wake()
+                self.say(event[1], 2.5)
+            elif event and event[0] == "ble_saved":       # the keyboards the MIDI process keeps connecting to
+                self.state["ble_keys"] = event[1]
+                self.save_settings()
             elif event and event[0] == "battery":
                 self.last_activity = time.monotonic()
                 self.wake()
@@ -1796,6 +1869,7 @@ def main():
                                    net=box["build"] == "desk",          # network MIDI (a DAW): the Studio
                                    pads=pad_process and pad_process.midi_conn)
         midi.start()
+        midi.set_ble_saved(state["ble_keys"])
         midi.set_clock(state["clock_mode"], state["bpm"])
         midi.set_routes(state["routes"])
     if boot:
@@ -1803,6 +1877,9 @@ def main():
     state["touch_cal"] = list(state["touch_cal"])   # its own list: calibrating changes it in place
     app = App(display, state)
     app.midi, app.box = midi, box
+    if midi:
+        midi.on_note = lambda text: app.post("ble_note", text)
+        midi.on_saved = lambda keys: app.post("ble_saved", keys)
     if not sim and box["build"] == "desk":
         app.pads = pad_process
         app.pads.send("kit", app.kit())

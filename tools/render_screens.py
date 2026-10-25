@@ -48,6 +48,7 @@ class Midi:
     clock = {"bpm": 120, "tempo": 120.0, "source": "box", "playing": True, "bar": time.monotonic() - 0.55}
     notes, chans = [60, 64, 67], (1 << 0) | (1 << 9)     # a C major chord; channels 1 and 10 busy
     controllers = ["SMK-37+VA"]                           # a USB keyboard on a hub
+    ble_keys, ble_found, ble_scanning = [], [], False     # Bluetooth MIDI keyboards the box connects to
 
     def set_routes(self, routes):
         pass
@@ -185,10 +186,14 @@ def scenes(app):
     def saver():
         app.mode = "saver"
 
+    def bt_keys():                            # Settings > MIDI > BT keys: two found by a scan, none connected yet
+        app.midi.ble_found = [["AA:00:00:00:00:01", "microKEY Air"], ["BB:00:00:00:00:02", "WIDI Master"]]
+        app.screen, app.scan_kind, app.cursor = "scan", "midi", 0
+
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
             ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("status-volume", volume),
             ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
-            ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),
+            ("pairing", pairing), ("screensaver", saver), ("recordings", recordings), ("bt-keys", bt_keys),
             ("editor", editor), ("editor-note", editor_note),
             ("player", player), ("job", job)]
 
@@ -368,6 +373,7 @@ def studio_app(state, display, theme, samples):
     seq["steps"][14] = sorted(seq["steps"][14] + [[0, 1, 2]])
     app.state["kit"] = kit
     app.state["routes"] = {"U:EP-136>FM-1": {"on": False}, "U:EP-136>FM-1 B": {"transpose": 12}}
+    deskui.SLOOP_APP = Path(__file__)               # SLOOP on the Studio installed: MORE's PLAY SLOOP, MIX's SLOOP
     ui = deskui.DeskUI(app, display)
     ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
     ui.theme = theme

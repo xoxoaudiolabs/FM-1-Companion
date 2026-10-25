@@ -164,7 +164,7 @@ def test_flows():
     keys(app, "left", "down", "press")                     # Audio ›
     assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]
     keys(app, "left", "down", "press")                     # MIDI ›
-    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "usbkeys", "routes", "presets"]
+    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "btkeys", "usbkeys", "routes", "presets"]
     keys(app, "left", "up", "up")                          # back on Playing, the top
     assert app.settings_menu is None and app.setting == 0
     snap(app, "settings")
@@ -825,8 +825,64 @@ def test_web_link():
     assert library.read_status()["settings"]["metronome"] is True       # the page sees it
 
 
+def test_bt_keyboards():
+    """Settings > MIDI > BT keys: the scan lists the saved keyboards, then the ones found; press connects a found
+    one and forgets a saved one."""
+    class Midi:
+        enabled, error, peer, pairing_until, controllers = True, None, None, 0.0, []
+        ble_keys, ble_found, ble_scanning = [["AA:00:00:00:00:01", "microKEY Air", True]], [], False
+
+        def __init__(self):
+            self.sent = []
+
+        def usb_label(self):
+            return "Felucca"
+
+        def activity(self):
+            return 0.0
+
+        def ble_scan(self):
+            self.sent.append(("scan",))
+            self.ble_scanning = True
+
+        def ble_connect(self, address):
+            self.sent.append(("connect", address))
+
+        def ble_forget(self, address):
+            self.sent.append(("forget", address))
+            self.ble_keys = [k for k in self.ble_keys if k[0] != address]
+
+    app = make_app()
+    app.midi = Midi()
+    app.screen, app.settings_menu = "settings", "midi"
+    rows = [r[0] for r in app.settings_rows()]
+    assert app.settings_rows()[rows.index("btkeys")][2] == "1 of 1"
+    app.setting = rows.index("btkeys")
+    app.on_key("press")
+    assert app.screen == "scan" and app.scan_kind == "midi" and app.midi.sent == [("scan",)]
+    app.on_key("press")                                    # still searching: nothing happens
+    assert app.midi.sent == [("scan",)]
+    snap(app, "bt-keys-searching")
+    app.midi.ble_scanning = False
+    app.midi.ble_found = [["AA:00:00:00:00:01", "microKEY Air"], ["BB:00:00:00:00:02", "WIDI Master"]]
+    assert [(r["name"], r["tag"]) for r in app.scan_rows()] == [("microKEY Air", "on"), ("WIDI Master", "")]
+    snap(app, "bt-keys")
+    app.on_key("down")
+    app.on_key("press")
+    assert app.midi.sent[-1] == ("connect", "BB:00:00:00:00:02")
+    app.on_key("up")
+    app.on_key("press")                                    # a saved one: forgotten
+    assert app.midi.sent[-1] == ("forget", "AA:00:00:00:00:01") and app.message.startswith("Forgot")
+    app.on_key("left")
+    assert app.screen == "settings"
+    app.screen = "status"                                  # KEY1 on the home screen still scans for speakers
+    bridge.bt_scan = lambda: []
+    app.on_key("key1")
+    assert app.scan_kind == "audio"
+
+
 if __name__ == "__main__":
-    for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
+    for name, fn in [("test_bt_keyboards", test_bt_keyboards), ("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
                      ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
                      ("test_clock", test_clock), ("test_recordings", test_recordings),
                      ("test_recording_parts", test_recording_parts),

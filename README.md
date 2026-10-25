@@ -1,7 +1,8 @@
 # FM-1 Companion
 
 **A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder, a sample
-editor, eleven meters and a MIDI matrix, with no computer needed once it's set up. By [XOXO Audio Labs](https://xoxoaudiolabs.com).
+editor, eleven meters and a MIDI matrix, with no computer needed once it's set up. By
+[XOXO Audio Labs](https://xoxoaudiolabs.com).
 
 **[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
 · [The Studio](https://xoxoaudiolabs.com/products/fm1-companion-studio/) ·
@@ -10,7 +11,7 @@ editor, eleven meters and a MIDI matrix, with no computer needed once it's set u
 | The Studio | The Pocket |
 |---|---|
 | [![The Studio tour: its touch screens, the sampler, the sequencer, the meters, with each tap shown](docs/images/studio-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-studio-v1.3.mp4) | [![The Pocket demo: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4) |
-| **[▶ Watch the Studio tour](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-studio-v1.3.mp4)** (1:12, with sound): HOME, the mixer with cue, ten meters, the sampler, SLOOP's sequencer and FX, the recorder, MIDI and MORE, with each tap shown. Two FM-1s and an SMK-37 played by Claude over MIDI, recorded by the Studio. | **[▶ Watch the Pocket demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)** (1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box. |
+| **[▶ Watch the Studio tour](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-studio-v1.3.mp4)** (1:12, with sound): HOME, the mixer with cue, ten meters, the sampler, SLOOP's sequencer and FX, the recorder, MIDI and MORE, with each tap shown (drawn by the Studio's own code on a computer, not filmed). Two FM-1s and an SMK-37 played by Claude over MIDI, recorded by the Studio. | **[▶ Watch the Pocket demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)** (1:46, with sound): the box's own screens (drawn by its code on a computer, not filmed), all eleven meters, the settings, the MIDI matrix and the sample editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box. |
 
 <img src="docs/images/device-with-fm1.jpg" width="560" alt="The Pocket on its PiSugar battery, cabled to the FM-1 running SLOOP">
 
@@ -33,8 +34,11 @@ The installer works out which build it's on, and each build only shows what its 
 
 ## What it does
 
+What's been tried on the real boxes, and what hasn't yet: [Tested on the real hardware](#tested-on-the-real-hardware).
+
 - **Wireless audio and MIDI.** The FM-1 plays on Bluetooth headphones or a speaker, and the box shows up as a
-  Bluetooth MIDI device, **"FM-1 Companion"**, so a phone, iPad, computer, or a keyboard that connects to Bluetooth MIDI devices itself, can play the FM-1.
+  Bluetooth MIDI device, **"FM-1 Companion"**, so a phone, iPad, computer, or a keyboard that connects to
+  Bluetooth MIDI devices itself, can play the FM-1.
 - **More keyboards, a second FM-1.** Through a USB hub (or the Studio's four ports): up to four USB MIDI
   keyboards and a second FM-1, found by themselves. **FM-1 A** and **FM-1 B** keep their names by the hub
   port they're on.
@@ -191,8 +195,8 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
   Live untested); every USB audio device on its own named mixer channel, with an input pair for multichannel
   interfaces.
 - **v1.0:** the Studio's first release: tabs along the bottom, SLOOP's font, palettes and track colours,
-  following FM-1 A's colour theme, the meters redrawn in colour (ten: no tuner), the card slot's pin map and card ID plan (the box doesn't
-  read the ID yet) ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
+  following FM-1 A's colour theme, the meters redrawn in colour (ten: no tuner), the card slot's pin map and
+  card ID plan (the box doesn't read the ID yet) ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
 
 **Pocket**
 - **v2.8.3:** the shared fixes of Studio v1.3 (an SMK-37 running Clipper next to an FM-1 is a keyboard, not a
@@ -209,15 +213,66 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
 - **v2.2:** recording to WAV, the Tape meter, MIDI clock and the MIDI matrix.
 </details>
 
-## Tested with
+## Tested on the real hardware
 
-A Pi Zero W on Raspberry Pi OS Lite (Trixie); SLOOP 2.7 and 2.8; a JBL Go 3; an M-VAVE SMK-37 over Bluetooth MIDI
-and over USB through an ASMedia ASM1074 hub; two FM-1s together on that hub with the SMK-37 running Baud Girl.
-The library was tested on a real FM-1: a backup, a restore (read back byte for byte), a project load, a sample load
-and the update from SLOOP 2.7.1 to 2.8. The meters take about a quarter of the Pi Zero's CPU, with no audio
-dropouts. The Studio: a Pi 3 B+ on Raspberry Pi OS Lite (Trixie), the Hosyond 3.5" touchscreen and a PiSugar
-3 Plus, with two FM-1s on SLOOP 2.8, an M-VAVE SMK-37 running Clipper and a Teenage Engineering K.O. Sidekick
-(EP-136) on its four USB ports, and a JBL Go 3.
+What each box has been seen doing for real. Everything else in [What it does](#what-it-does) is built and has
+automated tests, but hasn't been tried on the real box yet: it's in the second list until it has.
+
+### The Pocket
+
+A Pi Zero W on Raspberry Pi OS Lite (Trixie) with the Waveshare OLED HAT and a PiSugar 3; FM-1s on SLOOP 2.7 and
+2.8; a JBL Go 3; an M-VAVE SMK-37 (over Bluetooth MIDI, and over USB through an ASMedia ASM1074 hub, running Baud
+Girl next to two FM-1s).
+
+**Tested**
+- Bluetooth audio to a JBL Go 3.
+- Bluetooth MIDI: the SMK-37 connecting to the box and playing the FM-1.
+- USB MIDI keyboards through a hub (the SMK-37 on the ASM1074).
+- Two FM-1s at once on the hub.
+- The library on a real FM-1: a backup, a restore (read back byte for byte), a project load, a sample load, and
+  the update from SLOOP 2.7.1 to 2.8 with projects, presets and samples kept.
+- Recording to WAV, and the warning when a take clipped (its threshold measured on real FM-1 takes).
+- Record parts: each source as its own WAV next to the mix.
+- The sample editor, and loading what it saves with Sloop > Load sample.
+- The metronome, the arpeggiator and chord memory.
+- The PiSugar 3: the battery gauge and the low-battery warning.
+- The box as MIDI clock master: exact tempo on average, single ticks about 3 ms early or late (measured while
+  playing to a speaker).
+- Start-up: about 54 s from power-on to the Companion (measured on Trixie).
+- The Bars, VU, Spectrum and Scope meters: about a quarter of the CPU while shown, no audio dropouts.
+
+**Not tested on the real Pocket yet**
+- The web app (tried only in a browser with sample data, [on the website](https://xoxoaudiolabs.com/app/)).
+- The safe shutdown at 5% battery.
+- Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
+- The rest, with automated tests only: the MIDI matrix's route options and presets, the other seven meters,
+  auto backup, SD card import and the Wi-Fi switch.
+
+### The Studio
+
+A Pi 3 B+ on Raspberry Pi OS Lite (Trixie), the Hosyond 3.5" touchscreen and a PiSugar 3 Plus, with two FM-1s
+on SLOOP 2.8, an M-VAVE SMK-37 running Clipper and a Teenage Engineering K.O. Sidekick (EP-136) on its four USB
+ports, and a JBL Go 3.
+
+**Tested**
+- The touchscreen (the piscreen driver at 24 MHz) and touch calibration; the PiSugar 3 Plus.
+- Four USB devices at once (the two FM-1s, the SMK-37 and the EP-136), each routed on its own in the MIDI
+  matrix; the SMK-37 running Clipper told apart from an FM-1.
+- The two FM-1s and the SMK-37 played over MIDI and recorded by the Studio (the audio in the tour video).
+- The RECORDER tab.
+- The headphone jack as a second output, with CUE on each source.
+- Bluetooth audio to a JBL Go 3.
+
+**Not tested on the real Studio yet**
+- The sampler: pads, SLOOP's sequencer, note repeat and the punch-in FX.
+- The DAW tab and network MIDI, with Kraken or Ableton Live.
+- The HDMI mirror.
+- The web app, over Ethernet or Wi-Fi.
+
+### The demo videos
+
+Both videos are drawn by the boxes' own screen code, rendered on a computer with each button press or tap shown;
+they aren't filmed. Their audio is real: played on the FM-1s and recorded by the box.
 
 ## Known limits
 
@@ -233,7 +288,7 @@ dropouts. The Studio: a Pi 3 B+ on Raspberry Pi OS Lite (Trixie), the Hosyond 3.
   packet.
 - **The Pocket only:**
   - **On battery, the FM-1 runs and charges from it too:** the Pi Zero's USB port can't switch its power off, so
-    the battery lasts far less with the FM-1 plugged in. A small hardware switch is being tested.
+    the battery lasts far less with the FM-1 plugged in. A small hardware switch is planned (its parts are on order).
   - **Plugging the FM-1 straight in while the Pi runs can reboot it** (the port has no current limit). Connect
     the FM-1 first, or use a USB hub: replugging the FM-1 on the hub is fine.
   - **USB runs at 12 Mbit/s** so a hub works on the Pi Zero: fine for MIDI and the FM-1's audio, slow for a fast

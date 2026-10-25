@@ -1,7 +1,7 @@
 # FM-1 Companion
 
 **A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder, a sample
-editor, eleven meters and a MIDI matrix, with no computer needed. By [XOXO Audio Labs](https://xoxoaudiolabs.com).
+editor, eleven meters and a MIDI matrix, with no computer needed once it's set up. By [XOXO Audio Labs](https://xoxoaudiolabs.com).
 
 **[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
 · [The Studio](https://xoxoaudiolabs.com/products/fm1-companion-studio/) ·
@@ -25,7 +25,7 @@ your phone.
 | Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
 | Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
-| Adds | Fits in a pocket | An MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken, Ableton Live), four USB ports, Ethernet, HDMI out |
+| Adds | Fits in a pocket | An MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
 | Software | v2.8.3 | Studio v1.3 (running on the real hardware since October 2026) |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
@@ -34,7 +34,7 @@ The installer works out which build it's on, and each build only shows what its 
 ## What it does
 
 - **Wireless audio and MIDI.** The FM-1 plays on Bluetooth headphones or a speaker, and the box shows up as a
-  Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1.
+  Bluetooth MIDI device, **"FM-1 Companion"**, so a phone, iPad, computer, or a keyboard that connects to Bluetooth MIDI devices itself, can play the FM-1.
 - **More keyboards, a second FM-1.** Through a USB hub (or the Studio's four ports): up to four USB MIDI
   keyboards and a second FM-1, found by themselves. **FM-1 A** and **FM-1 B** keep their names by the hub
   port they're on.
@@ -58,14 +58,14 @@ The installer works out which build it's on, and each build only shows what its 
   Installable on your home screen. [Try it with sample data](https://xoxoaudiolabs.com/app/).
 - **A sampler (the Studio).** 16 pads in kits, an MPC's or laid out as SLOOP's drum track. Sample any source
   onto a pad, trim it in the touch sample editor, play it from the screen or any MIDI keyboard. SLOOP's drum
-  sequencer for the pads (up to 64 steps, swing, ratchets, nudge, live recording), note repeat, and SLOOP's
-  sixteen punch-in FX (loops, stutter, reverse, tape stop, filters, crush, gate, echo, wobble).
+  sequencer for the pads (up to 64 steps, swing, ratchets, nudge, live recording), note repeat, and sixteen
+  of SLOOP's punch-in FX (the original set: loops, stutter, reverse, tape stop, filters, crush, gate, echo, wobble).
 - **A recorder and headphones (the Studio).** The RECORDER tab with the reel-to-reel deck; the Pi's 3.5 mm jack
   as a second output with no Bluetooth delay, a cue button on every source (DJ-style, before its fader) and a
   cue/main blend.
 - **Plays with your DAW (the Studio).** A network MIDI device (RTP-MIDI) whose DAW tab is a Mackie Control
-  surface for [Kraken](https://github.com/isod89/sodwave-site) and Ableton Live: 8 touch faders with track names,
-  meters, pan, solo, mute and the transport.
+  surface for [Kraken](https://github.com/isod89/sodwave-site): 8 touch faders with track names, meters, pan,
+  solo, mute and the transport. Ableton Live's Mackie Control should work too, but it hasn't been tried yet.
 - **Coming:** 5-pin DIN / TRS MIDI in, out and thru (the Pocket's v3, the Studio's first expansion card).
 
 ```
@@ -100,12 +100,12 @@ The same jobs on both boxes. Every image is drawn by the Companion's own code (`
 | **Home:** the FM-1s, the speaker, MIDI, the volume, the clock; LIVE and the battery | ![Pocket home](docs/images/screen-status.png) | ![Studio home](docs/images/desk-ui-home-theme.png) |
 | **Mixer:** a level for each FM-1 and USB device, up to 200%, and Record parts | ![Pocket mixer](docs/images/screen-settings-mixer.png) | ![Studio mixer](docs/images/desk-ui-mix-theme.png) |
 | **MIDI routes:** sources down the side, destinations across; FM-1 B and the Studio's NET when connected | ![Pocket MIDI routes](docs/images/screen-matrix-two.png) | ![Studio MIDI routes](docs/images/desk-ui-midi-theme.png) |
-| **Meters:** eleven of them, from LED bars to a tuner, a tape deck and a waterfall | ![Pocket meter](docs/images/screen-meter-spectrum.png) | ![Studio meter](docs/images/desk-ui-meter-theme.png) |
+| **Meters:** eleven on the Pocket (ten on the Studio, no tuner), from LED bars to a tape deck and a waterfall | ![Pocket meter](docs/images/screen-meter-spectrum.png) | ![Studio meter](docs/images/desk-ui-meter-theme.png) |
 | **Settings:** Playing, Audio, MIDI, Recordings, Sloop, FM-1; on the Studio, values with - / + by touch | ![Pocket settings](docs/images/screen-settings-play.png) | ![Studio settings](docs/images/desk-page-settings.png) |
 | **Sample editor:** a take trimmed, faded and tuned into a sample for SLOOP; on the Studio, drag the markers | ![Pocket sample editor](docs/images/screen-editor.png) | ![Studio sample editor](docs/images/desk-ui-editor-theme.png) |
 | **Recorder:** REC and the time; on the Studio, its own tab with the reel-to-reel deck | ![Pocket recording](docs/images/screen-status-rec.png) | ![Studio recorder](docs/images/desk-ui-rec-theme.png) |
 | **Sampler** (the Studio): 16 pads, SLOOP's sequencer, punch-in FX | | ![Studio sampler](docs/images/desk-ui-pads-theme.png) |
-| **DAW** (the Studio): a Mackie Control surface for Kraken or Ableton Live | | ![Studio DAW](docs/images/desk-ui-daw-theme.png) |
+| **DAW** (the Studio): a Mackie Control surface for Kraken (Ableton Live: untested) | | ![Studio DAW](docs/images/desk-ui-daw-theme.png) |
 
 <details><summary>More of the Pocket's screens</summary>
 
@@ -129,7 +129,7 @@ The same jobs on both boxes. Every image is drawn by the Companion's own code (`
 
 **The Studio** (MIXER > METERS; tap the meter for the next)
 
-![The Studio's eleven meters](docs/images/desk-meters.png)
+![The Studio's ten meters](docs/images/desk-meters.png)
 </details>
 
 ## What's new
@@ -141,13 +141,13 @@ The first release made on the real Studio, with a sampler, a recorder and headph
 | The sampler: 16 pads in a kit | SLOOP's sequencer for the pads |
 |---|---|
 | ![The SAMPLER tab: 16 pads in four rows of SLOOP's track colours, two of them lit as they play](docs/images/desk-ui-pads-theme.png) | ![SEQ: the pads in two rows, 16 steps of the page, the playhead, LEN, DIV, SWG and QUANT](docs/images/desk-ui-seq-theme.png) |
-| **SLOOP's sixteen punch-in FX** | **The recorder** |
+| **Sixteen of SLOOP's punch-in FX** | **The recorder** |
 | ![FX: sixteen pads, LOOP 8 latched](docs/images/desk-ui-fx-theme.png) | ![RECORDER: the reel-to-reel deck turning, STOP and TAKES](docs/images/desk-ui-rec-theme.png) |
 
 - **SAMPLER.** 16 pads in kits (MPC notes 36-51, or SLOOP's drum layout so SLOOP's own sequencer plays them),
   sampled from any source, trimmed in the touch **EDITOR** (OPEN lists your samples and takes, TO PAD puts the
   edit on a pad). **SEQ**: SLOOP's drum sequencer, up to 64 steps a pattern with levels, ratchets, nudge, swing
-  and live REC. **RPT**: note repeat. **FX**: SLOOP's sixteen punch-in FX on the pads, held or latched.
+  and live REC. **RPT**: note repeat. **FX**: sixteen of SLOOP's punch-in FX on the pads, held or latched.
 - **RECORDER**, its own tab: the reel-to-reel deck, REC, Record parts and your takes.
 - **Headphones.** The Pi's 3.5 mm jack: speaker, jack or both; a PHONES fader; a CUE button on each source
   (heard on the jack before its fader) and a cue/main blend, as on a DJ mixer.
@@ -187,12 +187,12 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
 **Studio**
 - **v1.2:** every screen drawn for touch (settings, lists, route details, jobs), hold to confirm anything that
   writes to the FM-1, the sample editor by touch, Wi-Fi and Shut down in MORE.
-- **v1.1:** network MIDI (RTP-MIDI) with a music port and a Mackie Control port; the DAW tab for Kraken and
-  Ableton Live; every USB audio device on its own named mixer channel, with an input pair for multichannel
+- **v1.1:** network MIDI (RTP-MIDI) with a music port and a Mackie Control port; the DAW tab for Kraken (Ableton
+  Live untested); every USB audio device on its own named mixer channel, with an input pair for multichannel
   interfaces.
 - **v1.0:** the Studio's first release: tabs along the bottom, SLOOP's font, palettes and track colours,
-  following FM-1 A's colour theme, all eleven meters redrawn in colour, the card slot's pin map and card ID
-  ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
+  following FM-1 A's colour theme, the meters redrawn in colour (ten: no tuner), the card slot's pin map and card ID plan (the box doesn't
+  read the ID yet) ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
 
 **Pocket**
 - **v2.8.3:** the shared fixes of Studio v1.3 (an SMK-37 running Clipper next to an FM-1 is a keyboard, not a
@@ -259,9 +259,9 @@ dropouts. The Studio: a Pi 3 B+ on Raspberry Pi OS Lite (Trixie), the Hosyond 3.
 | `fm1-bt-bridge/deskui.py` | The Studio's touch screens and tabs |
 | `fm1-bt-bridge/deskpads.py` | The Studio's SAMPLER: pads, kits, SEQ, FX, the sample editor's files |
 | `fm1-bt-bridge/pads.py` | The sampler's engine and SLOOP's sequencer, in a process of its own (numpy) |
-| `fm1-bt-bridge/padfx.py` | SLOOP's sixteen punch-in FX, for the sampler |
+| `fm1-bt-bridge/padfx.py` | Sixteen of SLOOP's punch-in FX (its original set), for the sampler |
 | `fm1-bt-bridge/deskboot.py` | The Studio's boot screen |
-| `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the Studio |
+| `fm1-bt-bridge/deskmeters.py` | The meters drawn for the Studio (it shows ten: no tuner) |
 | `fm1-bt-bridge/deskpages.py` | The Studio's pages: settings, lists, confirmations, jobs, a route's details |
 | `fm1-bt-bridge/desk.py` | The Studio's touchscreen and touch input |
 | `fm1-bt-bridge/netmidi.py` | Network MIDI (RTP-MIDI) and the Mackie Control surface (the Studio) |

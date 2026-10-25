@@ -402,8 +402,9 @@ python3 ~/.local/share/fm1-bridge/library.py --help
   battery) briefly drops the supply voltage. A strong 5 V 2.5 A supply with a short cable helps. A
   powered USB hub between the OTG adapter and the FM-1 avoids it completely.
 - **Latency:** headphone audio (Bluetooth SBC) adds roughly 150–250 ms. That's fine for listening
-  and practising, and noticeable when you play tightly in time. Bluetooth MIDI adds only about
-  10–20 ms.
+  and practising, and noticeable when you play tightly in time. Bluetooth MIDI adds about 10–20 ms
+  a note; chords from keyboards that send each note in its own packet can arrive rolled by up to
+  about 50 ms.
 - **MIDI clock over Bluetooth** jitters slightly with the Bluetooth connection timing. That's usable,
   but a cable is tighter if Sloop has to follow a DAW's tempo exactly.
 - **Audio and MIDI share one radio.** With Wi-Fi off it copes well. If the headphones drop out

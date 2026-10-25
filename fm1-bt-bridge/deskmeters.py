@@ -1,7 +1,8 @@
-"""The eleven meters drawn for the desk box's touchscreen: full width, in colour, in SLOOP's style and the theme's
-colours (sloopstyle.Theme). The sound comes from the same reader as the pocket box's meters (meters.LevelReader,
-the mix the box plays) and the sums are meters.py's own; only the pictures are new, and their smoothing (peak
-holds, needles, the waterfall's history) lives here, apart from the pocket box's.
+"""The meters drawn for the desk box's touchscreen (it shows ten: deskui hides the tuner): full width, in
+colour, in SLOOP's style and the theme's colours (sloopstyle.Theme). The sound comes from the same reader as
+the pocket box's meters (meters.LevelReader, the mix the box plays) and the sums are meters.py's own; only the
+pictures are new, and their smoothing (peak holds, needles, the waterfall's history) lives here, apart from the
+pocket box's.
 
 Levels colour like SLOOP's meters: the green track colour, yellow from -12 dBFS, orange from -3.
 """

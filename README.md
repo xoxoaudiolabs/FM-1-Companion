@@ -1,7 +1,7 @@
 # FM-1 Companion
 
 **A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder, a sample
-editor, eleven meters and a MIDI matrix, with no computer needed once it's set up. By
+editor, eleven meters (ten on the Studio) and a MIDI matrix, with no computer needed once it's set up. By
 [XOXO Audio Labs](https://xoxoaudiolabs.com).
 
 **[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
@@ -125,7 +125,7 @@ The same jobs on both boxes. Every image is drawn by the Companion's own code (`
 | Speakers found by a scan | A SLOOP update running | The screensaver |
 </details>
 
-<details><summary>All eleven meters on each box</summary>
+<details><summary>Every meter on each box (eleven on the Pocket, ten on the Studio)</summary>
 
 **The Pocket** (joystick left from home; up/down changes meter, press records)
 

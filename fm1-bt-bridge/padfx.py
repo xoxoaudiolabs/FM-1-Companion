@@ -1,6 +1,6 @@
-"""The Studio sampler's punch-in FX: SLOOP's sixteen (punch.c, GPL-3.0), pocket-operator style. Hold one and
-the pads' sound goes through it while it's held; let go and it comes back. Beat-synced to the tempo, the loops
-on the grid of the running sequencer. One at a time; every change crossfades over 64 frames.
+"""The Studio sampler's punch-in FX: sixteen of SLOOP's, its original set (punch.c, GPL-3.0), pocket-operator
+style. Hold one and the pads' sound goes through it while it's held; let go and it comes back. Beat-synced to
+the tempo, the loops on the grid of the running sequencer. One at a time; every change crossfades over 64 frames.
 
 LOOP 4 / 8 / 16 / 32 (a beat, an 8th, a 16th, a 32nd), STUTTER (a beat / 6), REVERSE (the last beat
 backwards), STOP (a tape stop over a beat), HALF (half speed), LOW and HIGH (filters closing / opening), PHONE

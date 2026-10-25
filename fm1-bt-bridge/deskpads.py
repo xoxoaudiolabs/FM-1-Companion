@@ -10,7 +10,7 @@ page (an empty pad opens it anyway).
 SEQ: SLOOP's drum sequencer for the pads (pads.Sequencer): pick a pad, tap steps; up to 64 steps, 16 a page;
 hold a step for its level, ratchet and nudge; LEN, DIV, SWG, QUANT; PLAY, and REC to play pads into it.
 RPT: note repeat, a pad held plays again at its division (recorded too while REC runs).
-FX: the punch-in FX (padfx.py, SLOOP's sixteen) on the pads' sound: hold one, or LATCH it on.
+FX: the punch-in FX (padfx.py, sixteen of SLOOP's) on the pads' sound: hold one, or LATCH it on.
 """
 
 from pathlib import Path

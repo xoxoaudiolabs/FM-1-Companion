@@ -23,7 +23,7 @@ runs go on the nearest step (QUANT off: the step's nudge keeps the timing).
 Note repeat (an MPC's): while it's on, a pad held plays again at the repeat's division (1/4 .. 16T) on the same
 grid (stopped: at the box's tempo, from the press), recorded with live REC as any hit.
 
-Punch-in FX (padfx.py, SLOOP's sixteen): the pads' sound through one while it's held.
+Punch-in FX (padfx.py, sixteen of SLOOP's): the pads' sound through one while it's held.
 """
 
 import json

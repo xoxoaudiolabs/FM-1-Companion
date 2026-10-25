@@ -85,13 +85,16 @@ def make_app(block):
 
 
 def test_clipping():
-    """A take the FM-1 clipped (flat tops) is flagged; a clean one, or one track brushing the ceiling, isn't."""
+    """A take the FM-1 clipped (flat tops) is flagged; a clean one, or one track brushing the ceiling, isn't. A deep
+    sub (an 808 at 33-40 Hz) stays on one value for a few samples at each peak without clipping: not flagged; the
+    same sub clipped is."""
     import wave
     meters.load_numpy()
 
-    def take(name, peak, ceiling, seconds=60):
+    def take(name, peak, ceiling, seconds=60, hz=110, notes=False):
         t = np.arange(48000 * seconds) / 48000
-        x = np.clip(peak * np.sin(2 * np.pi * 110 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 0.5 * t)), -ceiling, ceiling)
+        env = np.exp(-(t % 0.5) * 3) if notes else 0.6 + 0.4 * np.sin(2 * np.pi * 0.5 * t)  # notes: 808 hits
+        x = np.clip(peak * np.sin(2 * np.pi * hz * t) * env, -ceiling, ceiling)
         path = TMP / name
         with wave.open(str(path), "wb") as w:
             w.setnchannels(2)
@@ -103,6 +106,25 @@ def test_clipping():
     count, seconds = meters.clip_count(hot)
     assert meters.clipped(count, seconds) and 55 < seconds <= 60, (count, seconds)
     assert meters.clip_count(clean)[0] == 0 and not meters.clipped(*meters.clip_count(clean))
+    for hz in (32.7, 40):                                    # an 808 sub, loud but whole: its peaks aren't clipping
+        sub = take(f"sub{hz}.wav", 24000, 32767, seconds=20, hz=hz, notes=True)
+        assert meters.clip_count(sub)[0] == 0, (hz, meters.clip_count(sub))
+    sub_hot = take("sub-hot.wav", 32000, 17994, seconds=20, hz=40, notes=True)
+    assert meters.clipped(*meters.clip_count(sub_hot))       # the same sub clipped: flagged
+    rng, t = np.random.default_rng(1), np.arange(48000 * 20) / 48000
+    kicks = np.zeros_like(t)                                 # 808 kicks: 150 Hz falling to 45 Hz, each its own strength
+    for i in range(40):                                      # (their fast drop steps hard; their peaks all differ)
+        hit = (t >= i / 2) & (t < i / 2 + 0.5)
+        tt = t[hit] - i / 2
+        f = 45 + 105 * np.exp(-tt * 30)                      # its pitch, falling
+        kicks[hit] = rng.uniform(15000, 26000) * np.sin(np.cumsum(2 * np.pi * f / 48000)) * np.exp(-tt * 4)
+    for name, x, flagged in (("kicks.wav", kicks, False), ("kicks-hot.wav", np.clip(kicks * 1.6, -18000, 18000), True)):
+        with wave.open(str(TMP / name), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(np.repeat(np.round(x).astype("<i2"), 2).tobytes())
+        assert meters.clipped(*meters.clip_count(TMP / name)) == flagged, (name, meters.clip_count(TMP / name))
     app = bridge.App(Capture(), dict(bridge.DEFAULTS))
     app.message = None
     app.check_clipping(hot)                                  # what runs after a recording stops

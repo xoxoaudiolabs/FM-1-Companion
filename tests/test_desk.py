@@ -802,9 +802,9 @@ def test_daw_surface():
     assert app.midi.sent[-1] == bytes([0xB0, 0x10, 2])                          # BASS panned right
 
 
-def test_sloop_on_the_studio():
-    """SLOOP on the Studio (sloop-remote-out): MORE starts it, its level is a MIXER channel and the margin's + / -,
-    the "< HOME" corner hides it (it keeps running) and PLAY SLOOP shows it again; the Companion has the screen
+def test_studio_apps():
+    """Studio apps (SLOOP, X0X: deskui.APPS): MORE starts one, its level is a MIXER channel and the margin's + / -,
+    the "< HOME" corner hides it (it keeps running) and its PLAY tile shows it again; the Companion has the screen
     back for good when it stops"""
     import os
     os.environ.setdefault("FM1_SETTINGS", str(Path(tempfile.mkdtemp()) / "settings.json"))
@@ -836,20 +836,23 @@ def test_sloop_on_the_studio():
     app.save_settings = lambda: None
     ui = deskui.DeskUI(app, app.display)
     ui.theme_check = 1e12
-    deskui.SLOOP_APP = Path(__file__)                       # (installed)
+    deskui.APPS = {k: (n, Path(__file__)) for k, (n, _) in deskui.APPS.items()}   # (both installed)
     ui.open_tab("MIX")
     ui.render(0.0, force=True)
     assert any(w[3] == ("slide", "sloop") for w in ui.widgets) and app.mix_level("sloop") == 100
+    assert any(w[3] == ("slide", "x0x") for w in ui.widgets) and app.mix_level("x0x") == 100
     ui.tab = "MORE"
     ui.render(0.0, force=True)
     assert any(w[3] == ("more", "PLAY SLOOP") for w in ui.widgets)
-    ui.external = proc = Proc()                             # (as start_sloop leaves it)
-    ui.draw_sloop_margins()
+    assert any(w[3] == ("more", "PLAY X0X") for w in ui.widgets)
+    ui.app_proc, ui.app_key = Proc(), "sloop"               # (as start_app("sloop") leaves it)
+    proc = ui.app_proc
+    ui.draw_app_margins()
     margins = app.display.image
     ui.render(1.0, force=True)
     assert app.display.image is margins                     # SLOOP's screen: the Companion draws nothing over it
-    up, down = deskui.SLOOP_UP, deskui.SLOOP_DOWN
-    t0 = ui.sloop_shown_at
+    up, down = deskui.APP_UP, deskui.APP_DOWN
+    t0 = ui.app_shown_at
 
     def tap(x, y, at, held=0.1):                            # as the resistive screen sends one: moves throughout
         ui.touch("down", x, y, at)
@@ -864,25 +867,30 @@ def test_sloop_on_the_studio():
     tap(up[0] + 5, up[1] + 5, t0 + 3)
     tap(down[0] + 5, down[1] + 5, t0 + 4)
     assert app.mix_level("sloop") == 110 and len(app.display.regions) == 3
-    assert all(box == deskui.SLOOP_MARGIN for box, _ in app.display.regions)    # only the margin, not SLOOP
+    assert all(box == deskui.APP_MARGIN for box, _ in app.display.regions)      # only the margin, not SLOOP
+    assert app.mix_level("x0x") == 100                      # (SLOOP's level only)
     tap(240, 160, t0 + 5)                                   # SLOOP's picture: not ours
     assert not proc.signals
     tap(20, 20, t0 + 6)                                     # < HOME: hidden, still running
-    assert proc.signals == [deskui.SLOOP_HIDE] and ui.external is proc and ui.tab == "HOME"
+    assert proc.signals == [deskui.APP_HIDE] and ui.app_proc is proc and ui.tab == "HOME"
     ui.render(2.0)
     assert app.display.image is not margins                 # the Companion's screen again
     ui.tab = "MORE"
     ui.render(2.0, force=True)
     tile = next(w for w in ui.widgets if w[3] == ("more", "PLAY SLOOP"))
     tile[2]()                                               # PLAY SLOOP (it says ON): shown again, as it was
-    assert proc.signals == [deskui.SLOOP_HIDE, deskui.SLOOP_SHOW] and not ui.sloop_hidden
+    assert proc.signals == [deskui.APP_HIDE, deskui.APP_SHOW] and not ui.app_hidden
     shown_again = app.display.image
     ui.render(3.0, force=True)
     assert app.display.image is shown_again                 # SLOOP's screen: nothing drawn over it
-    t1 = ui.sloop_shown_at
+    t1 = ui.app_shown_at
     tap(20, deskui.H - 20, t1 + 2, held=1.2)                # OFF held: it saves and stops
     ui.render(4.0)
-    assert ui.external is None and app.display.image is not shown_again
+    assert ui.app_proc is None and ui.app_key is None and app.display.image is not shown_again
+    ui.app_proc, ui.app_key = Proc(), "x0x"                 # X0X's margins: its name, its own level
+    ui.draw_app_margins()
+    tap(up[0] + 5, up[1] + 5, ui.app_shown_at + 2)
+    assert app.mix_level("x0x") == 110 and app.mix_level("sloop") == 110
     if os.environ.get("SNAP_DIR"):                         # (to look at: SNAP_DIR=dir)
         margins.save(Path(os.environ["SNAP_DIR"]) / "sloop-margins.png")
 

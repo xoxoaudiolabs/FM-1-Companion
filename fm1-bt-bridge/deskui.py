@@ -41,16 +41,19 @@ MORE = [("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("m
         ("AUDIO", ("menu", "audio")), ("MIDI SETTINGS", ("menu", "midi")), ("WI-FI", ("wifi", None)),
         ("THEME", ("theme", None)), ("TOUCH SETUP", ("calibrate", None)), ("SHUT DOWN", ("off", None))]
 THEMES = ["FOLLOW FM-1 A"] + st.NAMES
-SLOOP_APP = Path.home() / ".local/share/sloop-remote-out/sloop-remote-out"   # SLOOP on the Studio (SLOOP Remote Out)
-SLOOP_CH = 16                                   # the MIDI channel of FM-1 A's REMOTE OUT (the sloop-remote fork)
-HOME_CORNER = (0, 0, 80, 64)                    # while SLOOP shows: back to the Companion, SLOOP still running
-SLOOP_OFF = (0, H - 64, 80, H)                  # ... and, held SLOOP_HOLD s, SLOOP off (its project saved first)
-SLOOP_HOLD = 1.0                                # (PLAY SLOOP sits right there in MORE: a second tap mustn't stop it)
-SLOOP_SETTLE = 0.8                              # taps in the first moment after SLOOP shows: ignored
-SLOOP_MARGIN = (400, 0, W, H)                   # ... and here its level: + and - (mixer key "sloop")
-SLOOP_UP, SLOOP_DOWN = (406, 58, 474, 118), (406, 160, 474, 220)
-SLOOP_HIDE = getattr(signal, "SIGUSR1", 10)      # sloop-remote-out: stop drawing (it keeps running); draw again
-SLOOP_SHOW = getattr(signal, "SIGUSR2", 12)      # (Linux's numbers where there are none: tests on a PC)
+APPS = {                                        # FM-1 firmwares running on the Studio itself, played from FM-1 A's
+    "sloop": ("SLOOP", Path.home() / ".local/share/sloop-remote-out/sloop-remote-out"),       # REMOTE OUT (SLOOP
+    "x0x": ("X0X", Path.home() / ".local/share/x0x-companion-studio/x0x-companion-studio"),   # Remote Out): key ->
+}                                               # (name, program); the key is its mixer key, bridge.APP_NODES its sound
+APP_CH = 16                                     # the MIDI channel of FM-1 A's REMOTE OUT
+HOME_CORNER = (0, 0, 80, 64)                    # while an app shows: back to the Companion, the app still running
+APP_OFF = (0, H - 64, 80, H)                    # ... and, held APP_HOLD s, the app off (what it saves, saved first)
+APP_HOLD = 1.0                                  # (its MORE tile may sit right there: a second tap mustn't stop it)
+APP_SETTLE = 0.8                                # taps in the first moment after an app shows: ignored
+APP_MARGIN = (400, 0, W, H)                     # ... and here its level: + and - (its mixer key)
+APP_UP, APP_DOWN = (406, 58, 474, 118), (406, 160, 474, 220)
+APP_HIDE = getattr(signal, "SIGUSR1", 10)       # the app: stop drawing (it keeps running); draw again
+APP_SHOW = getattr(signal, "SIGUSR2", 12)       # (Linux's numbers where there are none: tests on a PC)
 HIDDEN_METERS = ("Tuner",)                      # meters the Studio leaves out (the Pocket keeps all eleven)
 
 
@@ -66,10 +69,10 @@ class DeskUI(DeskPages, DeskPads):
         self.cal = None                           # calibrating the touch: the raw readings so far (desk.Touch)
         self.daw_local = {}                       # strip -> (fader value, when): ours, until the DAW's catches up
         self.ed_view, self.ed_wave, self.ed_drag = None, None, None   # the editor's zoom, its waveform, a marker
-        self.external = None                      # SLOOP running on the Studio (start_sloop): its process
-        self.sloop_hidden = False                 # ... running behind the Companion's screens (HOME)
-        self.sloop_shown_at, self.sloop_down = 0.0, None   # when it showed; a finger down on its margins (when, x, y)
-        self.sloop_poke = 0.0                     # until then, look for SLOOP's sound often (its level set soon)
+        self.app_proc, self.app_key = None, None  # a Studio app running (start_app): its process, its APPS key
+        self.app_hidden = False                   # ... running behind the Companion's screens (HOME)
+        self.app_shown_at, self.app_down = 0.0, None   # when it showed; a finger down on its margins (when, x, y)
+        self.app_poke = 0.0                       # until then, look for its sound often (its level set soon)
         import deskmeters
         self.meters = deskmeters.DeskMeters()     # the meters' own pictures and smoothing
 
@@ -162,14 +165,14 @@ class DeskUI(DeskPages, DeskPads):
             self.open_tab(self.tab if self.tab == "PADS" else "MORE")   # back where the list was opened from
 
     def render(self, now, force=False):
-        if self.external is not None:               # SLOOP has the screen, unless it's hidden (HOME)
-            if self.external.poll() is None:
-                if now < self.sloop_poke:           # its sound shows up a moment after it starts: its level
+        if self.app_proc is not None:               # a Studio app has the screen, unless it's hidden (HOME)
+            if self.app_proc.poll() is None:
+                if now < self.app_poke:             # its sound shows up a moment after it starts: its level
                     self.app.scan_now = True
-                if not self.sloop_hidden:
+                if not self.app_hidden:
                     return
             else:
-                self.end_sloop()
+                self.end_app()
         self.current_theme(now)
         self.settle()
         if self.held and self.held[1] == "hold" and now - self.held[5] >= HOLD:   # held long enough: confirmed
@@ -559,8 +562,9 @@ class DeskUI(DeskPages, DeskPads):
         parts = "ON" if a.state.get("rec_parts") else "OFF"
         self.header(img, d, "MIXER", self.status_right())
         cols = [(key, label, k, a.mix_level(key), 200) for key, label, _, k in self.sources()][:6]
-        if SLOOP_APP.exists():               # SLOOP on the Studio: its level, set before or while it plays
-            cols.append(("sloop", "SLOOP", 1, a.mix_level("sloop"), 200))
+        for key, (name, program) in APPS.items():   # a Studio app: its level, set before or while it plays
+            if program.exists():
+                cols.append((key, name, 1, a.mix_level(key), 200))
         cols.append(("spk", "SPKR", 3, a.volume or 0, 100))
         if a.jack:                           # the 3.5 mm jack
             cols.append(("phones", "PHONES", 2, a.state.get("phones", 80), 100))
@@ -802,7 +806,8 @@ class DeskUI(DeskPages, DeskPads):
     def draw_more(self, img, d, now):
         t = self.theme
         self.header(img, d, "MORE", self.status_right())
-        items = MORE + ([("PLAY SLOOP", ("sloop_app", None))] if SLOOP_APP.exists() else [])
+        items = MORE + [(f"PLAY {name}", ("studio_app", key)) for key, (name, program) in APPS.items()
+                        if program.exists()]
         cols = 3                                   # tiles, three a row: everything on one screen, no scrolling
         rows = (len(items) + cols - 1) // cols
         top, bottom = HDR_H + 4, H - TAB_H - 4
@@ -816,7 +821,8 @@ class DeskUI(DeskPages, DeskPads):
                         width=2 if off else 0)
             value = (self.theme_label() if what[0] == "theme" else
                      ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else
-                     ("ON" if self.external is not None else "OFF") if what[0] == "sloop_app" else "")
+                     ("ON" if self.app_proc is not None and self.app_key == what[1] else "OFF")
+                     if what[0] == "studio_app" else "")
             dy = -8 if value else 0
             self.centre(img, (box[0], box[1] + dy, box[2], box[3] + dy), label,
                         t.bg if hot else (255, 112, 92) if off else t.c[4])
@@ -849,8 +855,8 @@ class DeskUI(DeskPages, DeskPads):
         if kind == "calibrate":
             self.calibrate()
             return
-        if kind == "sloop_app":
-            self.start_sloop()
+        if kind == "studio_app":
+            self.start_app(arg)
             return
         if kind == "off":                          # the Studio has no power key: shut down, held to confirm
             a.ask("Shut down?", ["The Studio switches off.", "Recordings are finished first."], a.shutdown,
@@ -866,122 +872,130 @@ class DeskUI(DeskPages, DeskPads):
             a.setting = keys.index(key)
             a.change_setting()
 
-    # ---- SLOOP itself on the Studio (the sloop-remote-out program), played from FM-1 A's REMOTE OUT
+    # ---- Studio apps: FM-1 firmwares running on the Studio (APPS), played from FM-1 A's REMOTE OUT
 
-    def start_sloop(self):
-        """SLOOP's picture in the middle of the screen, its sound into PipeWire, FM-1 A's panel playing it: the MIDI
-        process passes FM-1 A's MIDI on through a FIFO (set FM-1 A's GLO > MIDI 3 > REMOTE to OUT SLOOP_CH). The
-        margins are ours: the "< HOME" corner hides it (hide_sloop), and this shows it again as it was. It keeps
-        its working project in a file (sloop-remote-out --state) and dies with the Companion (PR_SET_PDEATHSIG)"""
+    def start_app(self, key):
+        """an app's picture in the middle of the screen, its sound into PipeWire, FM-1 A's panel playing it: the
+        MIDI process passes FM-1 A's MIDI on through a FIFO (set FM-1 A's GLO > MIDI 3 > REMOTE to OUT APP_CH). The
+        margins are ours: the "< HOME" corner hides it (hide_app), and this shows it again as it was. One runs at a
+        time: another one running is stopped first (it saves). Each keeps what it saves in a file of its own and
+        dies with the Companion (PR_SET_PDEATHSIG)"""
         import ctypes
         import subprocess
+        name, program = APPS[key]
         run = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
-        fifo = run / "fm1-sloop-midi"
-        if self.external is not None and self.external.poll() is None:     # running behind: shown again
-            self.draw_sloop_margins()
-            self.sloop_hidden = False
-            self.external.send_signal(SLOOP_SHOW)
-            if hasattr(self.app.midi, "set_tap"):
-                self.app.midi.set_tap(str(fifo))
-            return
+        fifo = run / f"fm1-{key}-midi"
+        if self.app_proc is not None and self.app_proc.poll() is None:
+            if self.app_key == key:             # running behind: shown again
+                self.app_hidden = False
+                self.draw_app_margins()
+                self.app_proc.send_signal(APP_SHOW)
+                if hasattr(self.app.midi, "set_tap"):
+                    self.app.midi.set_tap(str(fifo))
+                return
+            self.app_proc.terminate()           # another one: it saves and stops first
+            try:
+                self.app_proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self.app_proc.kill()
+            self.end_app()
         try:
             if not fifo.exists():
                 os.mkfifo(fifo, 0o600)
-            log = open(run / "sloop-remote-out.log", "w")
+            log = open(run / f"{key}-studio.log", "w")
         except OSError as e:
-            self.app.say(f"SLOOP: {e.strerror}", 3)
+            self.app.say(f"{name}: {e.strerror}", 3)
             return
-        self.draw_sloop_margins()
-        self.sloop_hidden = False
-        self.sloop_poke = time.monotonic() + 8
+        self.app_key, self.app_hidden = key, False
+        self.draw_app_margins()
+        self.app_poke = time.monotonic() + 8
         libc = ctypes.CDLL(None)
         try:
-            self.external = subprocess.Popen(
-                [str(SLOOP_APP), "--fb", self.display.device, "--midi", str(fifo), "--ch", str(SLOOP_CH)],
+            self.app_proc = subprocess.Popen(
+                [str(program), "--fb", self.display.device, "--midi", str(fifo), "--ch", str(APP_CH)],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, preexec_fn=lambda: libc.prctl(1, signal.SIGTERM))
         except OSError as e:
-            self.app.say(f"SLOOP: {e.strerror}", 3)
-            self.end_sloop()
+            self.app.say(f"{name}: {e.strerror}", 3)
+            self.end_app()
             return
         finally:
             log.close()
         if hasattr(self.app.midi, "set_tap"):
             self.app.midi.set_tap(str(fifo))
 
-    def sloop_margins(self):
-        """the screen around SLOOP's 320x320 picture (x 80..399): the way home on the left; on the right its
-        level (+ / -) and what plays it"""
-        t = self.theme
+    def app_margins(self):
+        """the screen around the app's 320x320 picture (x 80..399): the way home and off on the left; on the
+        right its level (+ / -) and what plays it"""
+        t, key = self.theme, self.app_key
         img = Image.new("RGB", (W, H), (0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rectangle((HOME_CORNER[0] + 4, HOME_CORNER[1] + 4, HOME_CORNER[2] - 6, HOME_CORNER[3] - 6), fill=t.grey[0])
         self.centre(img, HOME_CORNER, "< HOME", t.c[4])
-        d.rectangle((SLOOP_OFF[0] + 4, SLOOP_OFF[1] + 6, SLOOP_OFF[2] - 6, SLOOP_OFF[3] - 4), outline=(255, 112, 92),
-                    width=2)
-        self.centre(img, (SLOOP_OFF[0], SLOOP_OFF[1] + 8, SLOOP_OFF[2], SLOOP_OFF[3] - 22), "HOLD", t.c[3])
-        self.centre(img, (SLOOP_OFF[0], SLOOP_OFF[1] + 22, SLOOP_OFF[2], SLOOP_OFF[3]), "OFF", (255, 112, 92))
-        self.centre(img, (400, 14, W, 44), "SLOOP", t.hi)
-        for box, sign in ((SLOOP_UP, "+"), (SLOOP_DOWN, "-")):
+        d.rectangle((APP_OFF[0] + 4, APP_OFF[1] + 6, APP_OFF[2] - 6, APP_OFF[3] - 4), outline=(255, 112, 92), width=2)
+        self.centre(img, (APP_OFF[0], APP_OFF[1] + 8, APP_OFF[2], APP_OFF[3] - 22), "HOLD", t.c[3])
+        self.centre(img, (APP_OFF[0], APP_OFF[1] + 22, APP_OFF[2], APP_OFF[3]), "OFF", (255, 112, 92))
+        self.centre(img, (400, 14, W, 44), APPS[key][0], t.hi)
+        for box, sign in ((APP_UP, "+"), (APP_DOWN, "-")):
             d.rectangle(box, fill=t.grey[0])
             self.centre(img, box, sign, t.c[4], 2)
-        self.centre(img, (400, SLOOP_UP[3], W, SLOOP_DOWN[1]), f"{self.app.mix_level('sloop')}%", t.hi)
+        self.centre(img, (400, APP_UP[3], W, APP_DOWN[1]), f"{self.app.mix_level(key)}%", t.hi)
         self.centre(img, (400, 250, W, 274), "FM-1 A", t.c[3])
-        self.centre(img, (400, 274, W, 298), f"OUT {SLOOP_CH}", t.c[3])
+        self.centre(img, (400, 274, W, 298), f"OUT {APP_CH}", t.c[3])
         return img
 
-    def draw_sloop_margins(self):
-        self.sloop_shown_at, self.sloop_down = time.monotonic(), None
+    def draw_app_margins(self):
+        self.app_shown_at, self.app_down = time.monotonic(), None
         self.display.last = None                  # (everything written, not just what changed)
-        self.display.show_rgb(self.sloop_margins())
+        self.display.show_rgb(self.app_margins())
 
-    def sloop_level(self, step):
-        """the margin's + / -: SLOOP's level in 10s (the MIXER's "SLOOP"), shown at once, set on its sound"""
+    def app_level(self, step):
+        """the margin's + / -: the app's level in 10s (its MIXER channel), shown at once, set on its sound"""
         a = self.app
-        a.set_mix_level("sloop", a.mix_level("sloop") + step)
-        self.display.show_region(self.sloop_margins(), SLOOP_MARGIN)
+        a.set_mix_level(self.app_key, a.mix_level(self.app_key) + step)
+        self.display.show_region(self.app_margins(), APP_MARGIN)
 
-    def hide_sloop(self):
-        """the "< HOME" corner: back to the Companion, SLOOP still running (and playing, if it plays) behind it.
-        FM-1 A's panel is the FM-1's own again meanwhile: nothing changes in SLOOP until it's shown"""
-        self.external.send_signal(SLOOP_HIDE)
-        self.sloop_hidden = True
+    def hide_app(self):
+        """the "< HOME" corner: back to the Companion, the app still running (and playing, if it plays) behind it.
+        FM-1 A's panel is the FM-1's own again meanwhile: nothing changes in the app until it's shown"""
+        self.app_proc.send_signal(APP_HIDE)
+        self.app_hidden = True
         if hasattr(self.app.midi, "set_tap"):
             self.app.midi.set_tap(None)
-        self.display.last = None                  # SLOOP drew over it: the next frame is written whole
+        self.display.last = None                  # the app drew over it: the next frame is written whole
         self.shown = None
         self.open_tab("HOME")
 
-    def end_sloop(self):
+    def end_app(self):
         if hasattr(self.app.midi, "set_tap"):
             self.app.midi.set_tap(None)
-        self.external, self.sloop_hidden = None, False
-        self.display.last = None                  # SLOOP drew over it: the next frame is written whole
+        self.app_proc, self.app_key, self.app_hidden = None, None, False
+        self.display.last = None                  # the app drew over it: the next frame is written whole
         self.shown = None
 
     # ---- touch
 
     def touch(self, kind, x, y, now):
         """a finger down, moving or up at (x, y) (screen pixels); calibrating: "raw" (the chip's own reading)"""
-        if self.external is not None and not self.sloop_hidden:     # SLOOP's screen: only its margins are ours
+        if self.app_proc is not None and not self.app_hidden:     # an app's screen: only its margins are ours
             inside = lambda box: box[0] <= x < box[2] and box[1] <= y < box[3]   # noqa: E731
-            if now - self.sloop_shown_at < SLOOP_SETTLE:
+            if now - self.app_shown_at < APP_SETTLE:
                 return                              # (the tap that opened it, or a second one: not for the margins)
             if kind == "down":
-                self.sloop_down = (now, x, y)
+                self.app_down = (now, x, y)
             if kind != "up":                        # (a resistive screen sends moves all through a tap)
                 return
-            down, self.sloop_down = self.sloop_down, None
-            if down is None:                        # a lift whose touch began before SLOOP showed: nothing
+            down, self.app_down = self.app_down, None
+            if down is None:                        # a lift whose touch began before the app showed: nothing
                 return
             started = lambda box: box[0] <= down[1] < box[2] and box[1] <= down[2] < box[3]   # noqa: E731
             if inside(HOME_CORNER) and started(HOME_CORNER):
-                self.hide_sloop()
-            elif inside(SLOOP_OFF) and started(SLOOP_OFF) and now - down[0] >= SLOOP_HOLD:
-                self.external.terminate()           # SIGTERM: it saves its project and stops; render sees it go
-            elif inside(SLOOP_UP) and started(SLOOP_UP):
-                self.sloop_level(10)
-            elif inside(SLOOP_DOWN) and started(SLOOP_DOWN):
-                self.sloop_level(-10)
+                self.hide_app()
+            elif inside(APP_OFF) and started(APP_OFF) and now - down[0] >= APP_HOLD:
+                self.app_proc.terminate()           # SIGTERM: it saves and stops; render sees it go
+            elif inside(APP_UP) and started(APP_UP):
+                self.app_level(10)
+            elif inside(APP_DOWN) and started(APP_DOWN):
+                self.app_level(-10)
             return
         if self.cal is not None:
             if kind == "raw":

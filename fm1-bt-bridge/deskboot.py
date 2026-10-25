@@ -14,7 +14,7 @@ import sloopstyle as st
 
 W, H = 480, 320
 STEPS = ("STARTING THE SAMPLER", "STARTING MIDI", "STARTING AUDIO", "FINDING YOUR DEVICES")
-VERSION = "STUDIO 1.3"
+VERSION = "STUDIO 1.5"
 SPLASH = Path.home() / ".local" / "share" / "fm1-bridge" / "splash.raw"   # RGB565, what udev copies at boot
 
 

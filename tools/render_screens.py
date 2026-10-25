@@ -373,7 +373,8 @@ def studio_app(state, display, theme, samples):
     seq["steps"][14] = sorted(seq["steps"][14] + [[0, 1, 2]])
     app.state["kit"] = kit
     app.state["routes"] = {"U:EP-136>FM-1": {"on": False}, "U:EP-136>FM-1 B": {"transpose": 12}}
-    deskui.SLOOP_APP = Path(__file__)               # SLOOP on the Studio installed: MORE's PLAY SLOOP, MIX's SLOOP
+    deskui.APPS = {k: (n, Path(__file__)) for k, (n, _) in deskui.APPS.items()}   # the Studio apps installed:
+                                                    # MORE's PLAY SLOOP and PLAY X0X, MIX's SLOOP and X0X
     ui = deskui.DeskUI(app, display)
     ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
     ui.theme = theme

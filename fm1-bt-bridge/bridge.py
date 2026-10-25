@@ -513,7 +513,8 @@ class Loopback:
 
 
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
-SLOOP_NODE = "sloop-remote-out"         # SLOOP on the Studio's sound (SLOOP Remote Out): its level is mixer key "sloop"
+APP_NODES = {"sloop": "sloop-remote-out",          # the Studio apps' sound (deskui.APPS): mixer key -> its
+             "x0x": "x0x-companion-studio"}           # PipeWire node, its level set there
 
 
 def link_ports(links):
@@ -793,7 +794,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.jack_loop = Loopback(state["audio_rate"])  # output "both": the speaker's sound copied to the jack
         self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
         self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
-        self.sloop_set = None                 # (node id, level) last set on SLOOP's sound (deskui.start_sloop)
+        self.app_set = {}                     # mixer key -> (node id, level) last set on a Studio app's sound
         self.box = {"build": "pocket", "board": "", "screen": None, "can": set()}   # main() fills it in
         self.desk = None                      # the desk box's touch screens (deskui.DeskUI), from main()
         self.pads = None                      # the Studio's sampler (pads.PadProcess), from main()
@@ -917,11 +918,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if copy_id is not None and self.copy_set != (copy_id, main_level):
             run(["wpctl", "set-volume", str(copy_id), f"{main_level / 100:.2f}"], timeout=5)
             self.copy_set = (copy_id, main_level)
-        sloop_id = next((o.get("id") for o in objects       # SLOOP playing (it goes to the speaker by itself)
-                         if ((o.get("info") or {}).get("props") or {}).get("node.name") == SLOOP_NODE), None)
-        if sloop_id is not None and self.sloop_set != (sloop_id, self.mix_level("sloop")):
-            run(["wpctl", "set-volume", str(sloop_id), f"{self.mix_level('sloop') / 100:.2f}"], timeout=5)
-            self.sloop_set = (sloop_id, self.mix_level("sloop"))
+        for key, node in APP_NODES.items():   # a Studio app playing (it goes to the speaker by itself): its level
+            app_id = next((o.get("id") for o in objects
+                           if ((o.get("info") or {}).get("props") or {}).get("node.name") == node), None)
+            if app_id is not None and self.app_set.get(key) != (app_id, self.mix_level(key)):
+                run(["wpctl", "set-volume", str(app_id), f"{self.mix_level(key) / 100:.2f}"], timeout=5)
+                self.app_set[key] = (app_id, self.mix_level(key))
         if len(channels) > 1:                 # more than one source: through the mixer, each at its level
             self.loop.ensure(None, None)
             self.mixer.ensure(main, [(key, node["name"], self.input_pair(key, node))

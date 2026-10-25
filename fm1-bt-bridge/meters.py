@@ -270,6 +270,8 @@ class LevelReader:
 
 
 CLIP_LEVEL = 8000                    # a flat top counts above -12 dBFS
+CLIP_STEP = 32                       # ... and only one the wave jumps onto or off (a clipped wave, cut mid-slope)
+CLIP_SAME = 3                        # ... at a ceiling: a value at least this many such flat tops share
 CLIP_WARN, CLIP_RATE = 5, 6.0        # warn from 5 flat tops, and 6 a minute of sound: measured on the FM-1, its
                                      # four tracks at full USB level gave 7-13 a minute (crackly), on master at
                                      # half 4 (clean), one track alone 0
@@ -277,11 +279,14 @@ CLIP_WARN, CLIP_RATE = 5, 6.0        # warn from 5 flat tops, and 6 a minute of 
 
 def clip_count(path, level=CLIP_LEVEL):
     """-> (flat tops, seconds of sound) in a 16-bit WAV. A flat top is three or more samples in a row at the
-    same loud value, which is what a clipped wave looks like. The FM-1 set to send USB at full level clips like
-    this inside, before the sound reaches the box (at about -5 dBFS, so the Bars meter's CLIP never shows it).
-    Read a second at a time."""
+    same loud value, reached or left by a step of CLIP_STEP or more, at a value CLIP_SAME or more of them share:
+    what a clipped wave looks like, cut off mid-slope at its ceiling. The FM-1 set to send USB at full level clips
+    like this inside, before the sound reaches the box (at about -5 dBFS, so the Bars meter's CLIP never shows
+    it). A slow wave's own peak (a 40 Hz 808 sub) also stays on one value for a few samples, but it rolls onto it
+    in steps of a few units; a kick's fast pitch drop can step harder, but its peaks each land somewhere else:
+    neither is counted. Read a second at a time."""
     np = _np
-    count, sound = 0, 0
+    tops, sound = {}, 0                       # |value| -> flat tops there (both channels: a ceiling is either sign)
     try:
         with wave.open(str(path)) as w:
             channels, frames = w.getnchannels(), w.getframerate()
@@ -294,15 +299,20 @@ def clip_count(path, level=CLIP_LEVEL):
                 x = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
                 sound += int((np.abs(x).max(axis=1) > 600).sum())
                 for c in range(channels):     # both channels: one alone misses half the evidence
-                    v = x[:, c]
+                    v = x[:, c].astype(np.int32)
                     same = (v[1:] == v[:-1]) & (np.abs(v[1:]) >= level)     # a sample equal to the one before
                     edges = np.diff(np.concatenate([[0], same.astype(np.int8), [0]]))
                     starts, ends = np.nonzero(edges == 1)[0], np.nonzero(edges == -1)[0]
-                    count += int(((ends - starts) >= 2).sum())             # two equal steps: three samples
+                    long = (ends - starts) >= 2                             # two equal steps: three samples
+                    a, b = starts[long], ends[long]                         # the flat top is v[a] .. v[b]
+                    into = np.where(a > 0, np.abs(v[a] - v[np.maximum(a - 1, 0)]), 0)
+                    off = np.where(b + 1 < len(v), np.abs(v[np.minimum(b + 1, len(v) - 1)] - v[b]), 0)
+                    for value in np.abs(v[a][np.maximum(into, off) >= CLIP_STEP]):
+                        tops[int(value)] = tops.get(int(value), 0) + 1
                 time.sleep(0.02)              # a breath between seconds: the audio and the screen come first
     except (OSError, EOFError, wave.Error):
         return 0, 0.0
-    return count, sound / frames
+    return sum(n for n in tops.values() if n >= CLIP_SAME), sound / frames
 
 
 def clipped(count, seconds):

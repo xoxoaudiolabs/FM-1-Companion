@@ -845,7 +845,7 @@ def test_studio_apps():
     ui.render(0.0, force=True)
     assert any(w[3] == ("more", "PLAY SLOOP") for w in ui.widgets)
     assert any(w[3] == ("more", "PLAY X0X") for w in ui.widgets)
-    ui.app_proc, ui.app_key = Proc(), "sloop"               # (as start_app("sloop") leaves it)
+    ui.app_procs["sloop"], ui.app_key = Proc(), "sloop"     # (as start_app("sloop") leaves it)
     proc = ui.app_proc
     ui.draw_app_margins()
     margins = app.display.image
@@ -887,10 +887,52 @@ def test_studio_apps():
     tap(20, deskui.H - 20, t1 + 2, held=1.2)                # OFF held: it saves and stops
     ui.render(4.0)
     assert ui.app_proc is None and ui.app_key is None and app.display.image is not shown_again
-    ui.app_proc, ui.app_key = Proc(), "x0x"                 # X0X's margins: its name, its own level
-    ui.draw_app_margins()
-    tap(up[0] + 5, up[1] + 5, ui.app_shown_at + 2)
+    assert not ui.app_procs
+
+    # both at once: SLOOP playing behind while X0X has the screen, each one's clock into the other's FIFO
+    import ctypes
+    import subprocess
+    started, taps = [], []
+
+    def popen(args, **kw):
+        started.append(args)
+        return Proc()
+    run = tempfile.mkdtemp()
+    saved = (subprocess.Popen, ctypes.CDLL, getattr(deskui.os, "mkfifo", None), os.environ.get("XDG_RUNTIME_DIR"))
+    subprocess.Popen, ctypes.CDLL, deskui.os.mkfifo = popen, lambda name: None, lambda path, mode: None
+    os.environ["XDG_RUNTIME_DIR"] = run
+    midi_was, app.midi = app.midi, type("Midi", (), {"set_tap": staticmethod(taps.append)})()
+    try:
+        ui.start_app("sloop")
+        sloop = ui.app_proc
+        tap(20, 20, ui.app_shown_at + 1)                    # < HOME: SLOOP behind, still playing
+        ui.start_app("x0x")
+    finally:
+        subprocess.Popen, ctypes.CDLL = saved[0], saved[1]
+        app.midi = midi_was
+        if saved[2] is None:
+            del deskui.os.mkfifo
+        else:
+            deskui.os.mkfifo = saved[2]
+        if saved[3] is None:
+            del os.environ["XDG_RUNTIME_DIR"]
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = saved[3]
+    fifo = lambda key: str(Path(run) / f"fm1-{key}-midi")  # noqa: E731
+    assert started[0][started[0].index("--clock-out") + 1] == fifo("x0x")
+    assert started[1][started[1].index("--clock-out") + 1] == fifo("sloop")
+    assert sloop.signals == [deskui.APP_HIDE] and sloop.code is None          # not stopped: it plays on
+    assert set(ui.app_procs) == {"sloop", "x0x"} and ui.app_key == "x0x" and taps[-1] == fifo("x0x")
+    tap(up[0] + 5, up[1] + 5, ui.app_shown_at + 2)          # X0X's margins: its own level
     assert app.mix_level("x0x") == 110 and app.mix_level("sloop") == 110
+    tap(20, deskui.H - 20, ui.app_shown_at + 3, held=1.2)   # X0X off: SLOOP still plays behind the Companion
+    ui.render(5.0)
+    assert set(ui.app_procs) == {"sloop"} and ui.app_key is None and sloop.code is None
+    ui.tab = "MORE"
+    ui.render(5.0, force=True)
+    assert ui.app_proc is None and app.display.image is not None
+    tile = lambda label: next(w for w in ui.widgets if w[3] == ("more", label))   # noqa: E731
+    assert tile("PLAY SLOOP") and tile("PLAY X0X")
     if os.environ.get("SNAP_DIR"):                         # (to look at: SNAP_DIR=dir)
         margins.save(Path(os.environ["SNAP_DIR"]) / "sloop-margins.png")
 

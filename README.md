@@ -148,6 +148,20 @@ and X0X on the Studio, whose middle is X0X's own picture captured on the real St
 
 ## What's new
 
+### Since Studio v1.5 (on main, not a numbered release yet): SLOOP and X0X together, in time
+
+- **Both at once.** Opening PLAY X0X no longer stops SLOOP, or the other way round: one is on the screen, the other
+  keeps playing behind it. MORE says ON for each one running; HOLD OFF stops only the one on the screen.
+- **One clock.** The Companion connects each app's MIDI clock to the other, as two FM-1s cabled both ways. SLOOP
+  leads by default (its CLK OUT starts ON on the Studio): PLAY on SLOOP starts both from the top, its tempo is
+  both apps' tempo, STOP stops both; X0X shows its tempo in amber while it follows. To have X0X lead, set SLOOP's
+  GLO › SYSTEM › SYNC to USB (SLOOP keeps both settings now). An app follows the other's clock only while the
+  other plays, so one playing on its own isn't pulled off its beat when the other opens.
+- **FM-1 A's own clock** is no longer passed to the apps, so it can't fight theirs.
+- It needs both apps rebuilt from their repos' current main (their `studio/` READMEs).
+- **Tried:** by hand from FM-1 A, SLOOP leading; by a script, both directions. Details and what isn't tried yet:
+  [Tested on the real hardware](#the-studio).
+
 ### Studio v1.5: X0X on the Studio
 
 | X0X on the Studio (X0X's picture captured on the real Studio; the margins drawn by the Companion's code) | MORE › PLAY X0X, and X0X's level in the MIXER |
@@ -161,8 +175,9 @@ for the Pi the way X0X's browser version is built. Its repo:
 
 - **Played from the same FM-1 A** as SLOOP on the Studio: SLOOP Remote Out with REMOTE on **OUT 16**. X0X's panel
   is the FM-1's, so every control does what it does on an FM-1 running X0X.
-- **MORE › PLAY X0X**, **< HOME**, **HOLD OFF**, its + / − and its MIXER channel work as SLOOP's do. One app runs at
-  a time: starting X0X stops SLOOP (it saves first), and the other way round.
+- **MORE › PLAY X0X**, **< HOME**, **HOLD OFF**, its + / − and its MIXER channel work as SLOOP's do. In v1.5 one
+  app runs at a time: starting X0X stops SLOOP (it saves first), and the other way round. On main since then, both
+  run at once with a shared clock (above).
 - **It keeps what X0X saves** (settings, sounds, patterns, song) in a file of its own, loaded when it starts.
 - **REMOTE OUT sends every knob now** (SLOOP Remote Out, updated): every turn of the seven knobs, on any page, and
   MASTER as CC 123, so the Studio's apps get the whole panel, not only what FM-1 A's own SLOOP page uses.
@@ -365,13 +380,21 @@ ports, and a JBL Go 3.
   X0X with SLOOP at once for 33 s, run as test programs of their own (the Companion runs one app at a time).
   No gaps in the sound, 0 PipeWire errors, the clip check clean; X0X about 20% of one core, SLOOP about 9%.
 - The new clip check on real takes: the stress tests' takes, with an 808 sub-bass, not flagged.
+- SLOOP and X0X at once with one clock (main, after v1.5), by hand from FM-1 A through the PLAY tiles: SLOOP
+  leading, both playing together in time by ear. A stutter in X0X when SLOOP opened was found this way and fixed;
+  by hand afterwards, it was gone.
+- The same by a script, each app's sound recorded: X0X following SLOOP at 120 and 130 BPM and through STOP and
+  PLAY with no drift, SLOOP following X0X the same way; a follower 9–13 ms after its leader on average, about
+  8–9 ms of jitter (two X0Xs in one recording); X0X's beat steady while SLOOP opened and closed.
 
 **Not tested on the real Studio yet**
 - Connecting to a real Bluetooth MIDI keyboard (BT KEYS), and two Bluetooth MIDI devices at once.
 - The MIXER tab's SLOOP slider (the + / − in SLOOP's margin were tried).
 - X0X's < HOME, HOLD OFF, + / − and MIXER slider; X0X's song mode; X0X loading its save back after a restart;
   every X0X control tried one by one by hand.
-- Switching straight from one app to the other (PLAY X0X while SLOOP runs).
+- X0X leading SLOOP (SLOOP's SYNC on USB) by hand: only by a script.
+- Turning off the leading app with HOLD OFF while both play: the other should carry on at its own tempo, after a
+  stop of about half a second.
 - A real clipped take caught by the new clip check (automated tests only).
 - SLOOP's project loading back after a reboot of the Studio (after a Companion restart, it did).
 - The sampler: pads, SLOOP's sequencer, note repeat and the punch-in FX.
@@ -406,7 +429,8 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
   - **Start-up takes about a minute** on the Zero's single core; Wi-Fi comes up about 40 s later (the optional
     `config/fm1-native-wifi` step in the [box README](fm1-bt-bridge/README.md) saves about a minute more).
 - **SLOOP and X0X on the Studio:**
-  - One runs at a time; they share no clock with each other or with FM-1 A.
+  - In v1.5 one runs at a time. On main both run at once, sharing one app's clock (not FM-1 A's); the follower
+    sounds about 10 ms after the leader, give or take about 9 ms, as two boxes on MIDI clock do.
   - X0X's own break loops (its user sample slots) aren't there: the built-in breaks are.
   - They need FM-1 A running SLOOP with REMOTE OUT (a build of our own, not isod89's release); the official SLOOP
     sends only its keys, not its buttons or knobs.

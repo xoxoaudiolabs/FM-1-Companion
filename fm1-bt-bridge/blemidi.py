@@ -1382,8 +1382,8 @@ class MidiBridge:
 
     def from_fm1(self, source, message):
         """from FM-1 A or B (source), on rtmidi's thread"""
-        if source == "FM-1" and self.tap_path:
-            self.tap(message)
+        if source == "FM-1" and self.tap_path and message and message[0] < 0xF8:
+            self.tap(message)                 # (not FM-1 A's clock: the apps follow each other's, never its)
         if is_library_sysex(message) or not self.passes(source, message):
             return
         self.note_watch(message, time.monotonic())

@@ -69,7 +69,8 @@ class DeskUI(DeskPages, DeskPads):
         self.cal = None                           # calibrating the touch: the raw readings so far (desk.Touch)
         self.daw_local = {}                       # strip -> (fader value, when): ours, until the DAW's catches up
         self.ed_view, self.ed_wave, self.ed_drag = None, None, None   # the editor's zoom, its waveform, a marker
-        self.app_proc, self.app_key = None, None  # a Studio app running (start_app): its process, its APPS key
+        self.app_procs = {}                       # the Studio apps running (start_app): APPS key -> its process
+        self.app_key = None                       # the one with the screen (or behind the Companion's: app_hidden)
         self.app_hidden = False                   # ... running behind the Companion's screens (HOME)
         self.app_shown_at, self.app_down = 0.0, None   # when it showed; a finger down on its margins (when, x, y)
         self.app_poke = 0.0                       # until then, look for its sound often (its level set soon)
@@ -164,15 +165,19 @@ class DeskUI(DeskPages, DeskPads):
             a.screen = "status"
             self.open_tab(self.tab if self.tab == "PADS" else "MORE")   # back where the list was opened from
 
+    @property
+    def app_proc(self):
+        """the process of the app with the screen (app_key), or None"""
+        return self.app_procs.get(self.app_key)
+
     def render(self, now, force=False):
-        if self.app_proc is not None:               # a Studio app has the screen, unless it's hidden (HOME)
-            if self.app_proc.poll() is None:
-                if now < self.app_poke:             # its sound shows up a moment after it starts: its level
-                    self.app.scan_now = True
-                if not self.app_hidden:
-                    return
-            else:
-                self.end_app()
+        for key, proc in list(self.app_procs.items()):
+            if proc.poll() is not None:             # stopped (HOLD OFF, or it ended): gone
+                self.end_app(key)
+        if self.app_procs and now < self.app_poke:  # a sound shows up a moment after it starts: its level
+            self.app.scan_now = True
+        if self.app_proc is not None and not self.app_hidden:   # a Studio app has the screen
+            return
         self.current_theme(now)
         self.settle()
         if self.held and self.held[1] == "hold" and now - self.held[5] >= HOLD:   # held long enough: confirmed
@@ -821,7 +826,7 @@ class DeskUI(DeskPages, DeskPads):
                         width=2 if off else 0)
             value = (self.theme_label() if what[0] == "theme" else
                      ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else
-                     ("ON" if self.app_proc is not None and self.app_key == what[1] else "OFF")
+                     ("ON" if what[1] in self.app_procs else "OFF")
                      if what[0] == "studio_app" else "")
             dy = -8 if value else 0
             self.centre(img, (box[0], box[1] + dy, box[2], box[3] + dy), label,
@@ -877,28 +882,27 @@ class DeskUI(DeskPages, DeskPads):
     def start_app(self, key):
         """an app's picture in the middle of the screen, its sound into PipeWire, FM-1 A's panel playing it: the
         MIDI process passes FM-1 A's MIDI on through a FIFO (set FM-1 A's GLO > MIDI 3 > REMOTE to OUT APP_CH). The
-        margins are ours: the "< HOME" corner hides it (hide_app), and this shows it again as it was. One runs at a
-        time: another one running is stopped first (it saves). Each keeps what it saves in a file of its own and
-        dies with the Companion (PR_SET_PDEATHSIG)"""
+        margins are ours: the "< HOME" corner hides it (hide_app), and this shows it again as it was. Several run
+        at once, one on the screen, the others playing behind; each app's MIDI clock goes into the others' FIFOs
+        (--clock-out), so one can follow another as two FM-1s cabled together do. Each keeps what it saves in a
+        file of its own and dies with the Companion (PR_SET_PDEATHSIG)"""
         import ctypes
         import subprocess
         name, program = APPS[key]
         run = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
         fifo = run / f"fm1-{key}-midi"
-        if self.app_proc is not None and self.app_proc.poll() is None:
-            if self.app_key == key:             # running behind: shown again
-                self.app_hidden = False
-                self.draw_app_margins()
-                self.app_proc.send_signal(APP_SHOW)
-                if hasattr(self.app.midi, "set_tap"):
-                    self.app.midi.set_tap(str(fifo))
-                return
-            self.app_proc.terminate()           # another one: it saves and stops first
-            try:
-                self.app_proc.wait(5)
-            except subprocess.TimeoutExpired:
-                self.app_proc.kill()
-            self.end_app()
+        proc = self.app_procs.get(key)
+        if proc is not None and proc.poll() is None:   # running behind: shown again
+            self.app_key, self.app_hidden = key, False
+            self.draw_app_margins()
+            proc.send_signal(APP_SHOW)
+            if hasattr(self.app.midi, "set_tap"):
+                self.app.midi.set_tap(str(fifo))
+            return
+        clocks = []
+        for other in APPS:
+            if other != key:
+                clocks += ["--clock-out", str(run / f"fm1-{other}-midi")]
         try:
             if not fifo.exists():
                 os.mkfifo(fifo, 0o600)
@@ -911,12 +915,12 @@ class DeskUI(DeskPages, DeskPads):
         self.app_poke = time.monotonic() + 8
         libc = ctypes.CDLL(None)
         try:
-            self.app_proc = subprocess.Popen(
-                [str(program), "--fb", self.display.device, "--midi", str(fifo), "--ch", str(APP_CH)],
+            self.app_procs[key] = subprocess.Popen(
+                [str(program), "--fb", self.display.device, "--midi", str(fifo), "--ch", str(APP_CH)] + clocks,
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, preexec_fn=lambda: libc.prctl(1, signal.SIGTERM))
         except OSError as e:
             self.app.say(f"{name}: {e.strerror}", 3)
-            self.end_app()
+            self.end_app(key)
             return
         finally:
             log.close()
@@ -965,10 +969,14 @@ class DeskUI(DeskPages, DeskPads):
         self.shown = None
         self.open_tab("HOME")
 
-    def end_app(self):
+    def end_app(self, key):
+        """an app gone (HOLD OFF, or it stopped): if it had the screen, the Companion's again"""
+        self.app_procs.pop(key, None)
+        if key != self.app_key:                   # (one playing behind: nothing else changes)
+            return
         if hasattr(self.app.midi, "set_tap"):
             self.app.midi.set_tap(None)
-        self.app_proc, self.app_key, self.app_hidden = None, None, False
+        self.app_key, self.app_hidden = None, False
         self.display.last = None                  # the app drew over it: the next frame is written whole
         self.shown = None
 

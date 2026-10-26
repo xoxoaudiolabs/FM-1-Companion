@@ -78,7 +78,7 @@ What's been tried on the real boxes, and what hasn't yet: [Tested on the real ha
 - **Plays with your DAW (the Studio).** A network MIDI device (RTP-MIDI) whose DAW tab is a Mackie Control
   surface for [Kraken](https://github.com/isod89/sodwave-site): 8 touch faders with track names, meters, pan,
   solo, mute and the transport. Ableton Live's Mackie Control should work too, but it hasn't been tried yet.
-- **Coming:** 5-pin DIN / TRS MIDI in, out and thru (the Pocket's v3, the Studio's first expansion card).
+- **Coming:** 5-pin DIN MIDI in, out and thru, on an expansion card of its own (in development, in its own repository).
 
 ```
                                ┌── Bluetooth audio ──▶ headphones / speaker
@@ -299,7 +299,7 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
   interfaces.
 - **v1.0:** the Studio's first release: tabs along the bottom, SLOOP's font, palettes and track colours,
   following FM-1 A's colour theme, the meters redrawn in colour (ten: no tuner), the card slot's pin map and
-  card ID plan (the box doesn't read the ID yet) ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
+  card ID plan (the box doesn't read the ID yet; the cards' plans now live with the cards' own project).
 
 **Pocket**
 - **v2.8.3:** the shared fixes of Studio v1.3 (an SMK-37 running Clipper next to an FM-1 is a keyboard, not a
@@ -475,7 +475,7 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
 | `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for everything else (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
 | `tools/render_screens.py` | Draws the screens as PNG files for this README, without a Pi |
 | `tools/midi_timing.py` | Analyses the Bluetooth MIDI timing log |
-| `docs/` | The Studio's expansion cards, the TRS MIDI jacks' build plan, and the images |
+| `docs/` | The images and videos on this page |
 </details>
 
 ## License

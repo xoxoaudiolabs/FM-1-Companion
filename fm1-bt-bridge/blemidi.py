@@ -1187,7 +1187,8 @@ class MidiBridge:
         self.routes = {key: Route(route_default(key)) for key in ROUTES}
         self.saved = {}                       # the routes as the app last sent them (a USB device's, made on use)
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
-        self.tap_path, self.tap_fd = None, None     # SLOOP on the Studio (deskui.start_sloop): FM-1 A's MIDI, its FIFO
+        self.tap_path, self.tap_fd = None, None
+        self.midi_log, self.source_names = None, {}   # MIDI recording (start_midi_log); a USB key's name by key     # SLOOP on the Studio (deskui.start_sloop): FM-1 A's MIDI, its FIFO
 
     def set_routes(self, routes):
         self.saved = dict(routes or {})
@@ -1420,6 +1421,8 @@ class MidiBridge:
         self.tap_path, self.tap_fd = path, None
 
     def route_from(self, source, message):
+        if self.midi_log is not None:
+            self.log_midi(source, message)
         for dest in self.dests():
             if dest != source:
                 key = f"{source}>{dest}"
@@ -1443,10 +1446,40 @@ class MidiBridge:
         mcu = self.mackie.state() if self.mcu.names() else None
         return {"net": self.net.names(), "mcu": mcu, "net_error": self.net.error}
 
+    # ---- MIDI recording: what's played in, while the recorder records, kept for a .mid beside the take
+
+    def start_midi_log(self):
+        self.midi_log = []
+
+    def stop_midi_log(self):
+        """-> the log ([(time, source, message)]), the logging stopped"""
+        log, self.midi_log = self.midi_log or [], None
+        return log
+
+    def log_midi(self, source, message):
+        """one message routed from source, its time taken now. Left out: clock and transport (the file has
+        the tempo), SysEx, and an FM-1's channel 16 (its REMOTE OUT: its panel driving SLOOP or X0X)"""
+        if not message or message[0] >= 0xF0:
+            return
+        if source in ("FM-1", "FM-1 B") and message[0] & 0x0F == 15:
+            return
+        log = self.midi_log
+        if log is not None and len(log) < MIDI_LOG_MAX:
+            log.append((time.monotonic(), source, bytes(message)))
+
+    def source_label(self, source):
+        """a track's name: FM-1 A, FM-1 B, a USB keyboard's own name, Bluetooth MIDI, Network MIDI"""
+        if source == "FM-1":
+            return "FM-1 A" if self.usb_b.label() else "FM-1"
+        return {"FM-1 B": "FM-1 B", "BT": "Bluetooth MIDI", "NET": "Network MIDI",
+                "USB": "USB keys"}.get(source) or self.source_names.get(source) or source
+
     # USB controllers -> the FM-1 (and Bluetooth, if that route is on); called on rtmidi's thread
     def from_controllers(self, message, name=None):
         """name: the controller it came from (the Studio routes each on its own)"""
         source = device_key(name) if self.split and name else "USB"
+        if name and source != "USB":
+            self.source_names[source] = name
         if is_library_sysex(message) or not self.passes(source, message):
             return
         self.route_from(source, message)
@@ -1610,7 +1643,16 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 bridge.keyboard_command(*command[1:])
             elif command[0] == "tap":              # ("tap", FIFO path or None): FM-1 A's MIDI to SLOOP on the Studio
                 bridge.set_tap(command[1])
+            elif command[0] == "midirec":          # ("midirec", True): log what's played in; (.., False): stop
+                if command[1]:
+                    bridge.start_midi_log()
+                else:
+                    held_log[:] = bridge.stop_midi_log()
+            elif command[0] == "midiwrite":        # ("midiwrite", .mid path, the audio's start, BPM): the log
+                write_midi(held_log, command[1], float(command[2]), float(command[3]), bridge.source_label)
+                held_log[:] = []
 
+    held_log = []                              # the last take's MIDI, until its .mid is written
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
     while True:
@@ -1636,6 +1678,51 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 os._exit(0)
             last = status
         time.sleep(0.2)
+
+
+MIDI_LOG_MAX = 200000                          # (a take's messages: ~6 MB at most, then the rest left out)
+PPQ = 480                                      # the .mid's ticks a beat
+
+
+def write_midi(log, path, audio_start, bpm, label=str):
+    """a Standard MIDI File (type 1) of log ([(time.monotonic(), source, message bytes)]): a track a source,
+    named after it; time 0 is audio_start (the WAV's first frame), so the notes line up with the take in a DAW;
+    one tempo (bpm). A message before 0 lands on 0; a note still held at the end is let go there."""
+    import mido
+    bpm = bpm if 20 <= bpm <= 400 else 120.0
+    mid = mido.MidiFile(type=1, ticks_per_beat=PPQ)
+    head = mido.MidiTrack()
+    head.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0))
+    head.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
+    mid.tracks.append(head)
+    by_source = {}
+    for t, source, msg in log:
+        by_source.setdefault(source, []).append((max(0.0, t - audio_start), msg))
+    for source, events in by_source.items():
+        track = mido.MidiTrack()
+        track.append(mido.MetaMessage("track_name", name=str(label(source))[:60], time=0))
+        last, held = 0, set()
+        end = 0
+        for when, msg in sorted(events, key=lambda e: e[0]):
+            try:
+                m = mido.Message.from_bytes(list(msg))
+            except (ValueError, TypeError):
+                continue
+            tick = int(round(when * bpm / 60.0 * PPQ))
+            track.append(m.copy(time=tick - last))
+            last = end = tick
+            if m.type == "note_on" and m.velocity:
+                held.add((m.channel, m.note))
+            elif m.type in ("note_off", "note_on"):
+                held.discard((m.channel, m.note))
+        for channel, note in sorted(held):    # let go at the end: no note hangs in a DAW
+            track.append(mido.Message("note_off", channel=channel, note=note, velocity=0, time=end - last))
+            last = end
+        mid.tracks.append(track)
+    if len(mid.tracks) > 1:                   # (nothing played: no file)
+        mid.save(str(path))
+        return True
+    return False
 
 
 class MidiProcess:
@@ -1694,6 +1781,20 @@ class MidiProcess:
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
+
+    def midi_record(self, on):
+        """the MIDI played in logged while a take records (on), or stopped (kept for midi_write)"""
+        self.send_command(("midirec", bool(on)))
+
+    def midi_write(self, path, audio_start, bpm):
+        """the take's MIDI as a .mid at path, its time 0 the audio's first frame (a time.monotonic())"""
+        self.send_command(("midiwrite", str(path), float(audio_start), float(bpm)))
+
+    def send_command(self, command):
+        try:
+            self.conn.send(command)
+        except (BrokenPipeError, OSError):
+            pass
 
     def usb_label(self):
         return self.usb

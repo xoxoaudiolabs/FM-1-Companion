@@ -152,6 +152,35 @@ capture of the real Studio's screen.
 
 ## What's new
 
+### Since Studio v1.6 (on main, not a numbered release yet): MIDI recording, an 808 kit, a speaker that comes back
+
+- **MIDI recording:** each take the RECORDER makes now has a `.mid` beside its WAV, of the same name: the MIDI
+  played into the box while it recorded, a track for each source (FM-1 A, FM-1 B, each USB keyboard by its own
+  name, Bluetooth MIDI, Network MIDI), at the box's tempo when the take started. Its time 0 is the WAV's first
+  sample, so both drop into a DAW lined up. A take recorded off the mixer (the usual one on the Studio: more than
+  one source, the speaker) has its notes moved 72 ms later, the time its sound takes to get through the mixer into
+  the take, measured on the Studio. Left out: clock and transport, SysEx, and an FM-1's channel 16 (its REMOTE
+  OUT, the panel driving SLOOP or X0X). A note still held at the end is let go there. With nothing played, no
+  `.mid` is made.
+  - The tempo written in the file is the box's own (its clock, or the tempo setting): one an FM-1 plays at
+    without the box following its clock isn't the file's, so the bars in a DAW won't match it (the notes are still
+    at their times).
+- **A ready-made 808 KIT for the sampler** (PADS › KITS), there the first time KITS opens: sixteen recordings of a
+  real Roland TR-808 by Michael Fischer (1994, CC0 1.0), on SLOOP's drum keys
+  ([where each comes from](fm1-bt-bridge/kits/808/CREDITS.md)).
+  - Its sounds go into the samples folder (listed after your own) and can be moved, trimmed or swapped like any
+    other. Deleted, the kit isn't made again, and a sample of the same name you have already is left alone.
+  - Not affiliated with Roland: TR-808 is Roland's trademark.
+- **KITS scrolls** (^ v) when there are more than four.
+- **A speaker that comes back by itself is reconnected once:** switched on, a Bluetooth speaker calls the box it
+  knows, and once (a JBL Go 3 on the Studio) that connection came up silent: connected, the box playing to it,
+  nothing heard. So when the speaker connects by itself (not by the box's own connect), the box disconnects it and
+  connects it again a few seconds in: a moment of silence, then sound. Never during a recording.
+- **A source or speaker back after a short drop is heard again at once:** an FM-1 off USB for a few seconds (or a
+  speaker reconnected) comes back as a new PipeWire node of the same name, and its sound path stayed unlinked: FM-1
+  A's sound took 90 s to come back after a 5 s drop. Each sound path now notices its ends came back anew and is
+  made again within the next look at PipeWire (about 2 s).
+
 ### Studio v1.6: DJ decks
 
 | The DECKS screen on the real Studio (a capture of its screen), two tracks synced | MORE › DJ DECKS |
@@ -468,10 +497,26 @@ DJ: its tags in them).
     then loaded from the flash file alone.
   - X0X: the user's X0X project backed up to a `.x0b` (X0X's own `tools/x0x_backup.py info` reads it), restored
     into a copy, which X0X opened with the same screen, pixel for pixel.
+- A speaker that comes back by itself (on main, after v1.6), by hand with the JBL Go 3: switched off and on, it
+  connected itself, the box reconnected it 3 s later (BlueZ's log shows both), and the pads played on it. Once:
+  the silent connection it guards against was seen once (that morning) and wasn't brought about again on purpose,
+  so whether a given connection by the speaker would have stayed silent isn't known.
+- A short USB drop (on main, after v1.6), by hand: FM-1 A unplugged and plugged back in within 3 s (14:08:57 to
+  14:09:00); its sound path was made again in the same second and it was heard on the JBL Go 3. (Before the fix, a
+  5 s drop left it silent for 90 s.) FM-1 B, a USB keyboard, and a speaker reconnecting this way, not tried.
+- The MIXER tab's SLOOP slider, by hand (SLOOP's level on the JBL Go 3).
+- The sampler with the 808 KIT (on main, after v1.6): made on the Studio and every sound loads in the sampler's
+  engine, by script; its sixteen pads played by hand from the touchscreen and heard on the JBL Go 3, from FM-1 A's keys (its own
+  sound turned down in the MIXER: the sampler played each key's pad), and by a SLOOP drum pattern playing on FM-1 A
+  (GLO > MIDI 2 > OUT = SEQ).
+- MIDI recording (on main, after v1.6), by hand on the Studio with FM-1 A through the mixer to the JBL Go 3, six
+  takes: each made its `.mid` beside the WAV, one track (FM-1), every note let go. How the notes lined up with the
+  sound, measured from the takes (each note against where its sound starts): first 64-82 ms early (SLOOP's kick,
+  median 74 ms over 22; chords 65-76 ms); after the 72 ms shift, the clean single hits of the next take +6 to
+  +18 ms and one -15 ms (median +13 ms over 19, notes played close together or over another sound reading wider).
 
 **Not tested on the real Studio yet**
 - Connecting to a real Bluetooth MIDI keyboard (BT KEYS), and two Bluetooth MIDI devices at once.
-- The MIXER tab's SLOOP slider (the + / − in SLOOP's margin were tried).
 - X0X's < HOME, HOLD OFF, + / − and MIXER slider; X0X's song mode; X0X loading its save back after a restart;
   every X0X control tried one by one by hand.
 - X0X leading SLOOP (SLOOP's SYNC on USB) by hand: only by a script.
@@ -488,7 +533,10 @@ DJ: its tags in them).
   a sample loaded into the Studio's SLOOP heard playing; SLOOP's own SAVE and LOAD of its project slots on its
   screen; a Studio SLOOP backup restored onto a real FM-1; a `.x0b` from an FM-1 running X0X restored onto the
   Studio's X0X, or the other way round.
-- The sampler: pads, SLOOP's sequencer, note repeat and the punch-in FX.
+- The sampler's own sequencer (the SEQ page), note repeat and the punch-in FX.
+- MIDI recording, beyond what's above: a take straight from one source (no mixer; its delay isn't measured, so
+  its notes aren't moved), Record parts takes (the same), FM-1 B, a USB keyboard, Bluetooth or Network MIDI on
+  their own tracks, a long take.
 - The DAW tab and network MIDI, with Kraken or Ableton Live.
 - The HDMI mirror.
 - The web app, over Ethernet or Wi-Fi.
@@ -556,7 +604,8 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
 | `fm1-bt-bridge/djlib.py` | The Studio DJ Music folder's scan: tags (Serato's too), BPM, key and beat found from the sound |
 | `fm1-bt-bridge/x0x.py` | X0X on the Studio: its project to and from X0X's own backups (.x0b) |
 | `fm1-bt-bridge/deskpads.py` | The Studio's SAMPLER: pads, kits, SEQ, FX, the sample editor's files |
-| `fm1-bt-bridge/pads.py` | The sampler's engine and SLOOP's sequencer, in a process of its own (numpy) |
+| `fm1-bt-bridge/pads.py` | The sampler's engine and SLOOP's sequencer, in a process of its own (numpy); its 808 KIT |
+| `fm1-bt-bridge/kits/` | The 808 KIT's sounds, and `make_kits.py`, which picked them from Fischer's set |
 | `fm1-bt-bridge/padfx.py` | Sixteen of SLOOP's punch-in FX (its original set), for the sampler |
 | `fm1-bt-bridge/deskboot.py` | The Studio's boot screen |
 | `fm1-bt-bridge/deskmeters.py` | The meters drawn for the Studio (it shows ten: no tuner) |
@@ -593,6 +642,7 @@ Dimitar Toshkov Zhekov (SIL Open Font License 1.1), as SLOOP ships it.
 |---|---|---|
 | `fm1-bt-bridge/vendor/sloop/` (`fm1_install.py`, `sampleio.py`) | [SLOOP](https://github.com/isod89/sloop-fm1), unchanged ([VENDORED.md](fm1-bt-bridge/vendor/sloop/VENDORED.md)) | GPL-3.0-only |
 | `fm1-bt-bridge/vendor/fonts/` (Terminus) | Dimitar Toshkov Zhekov, as SLOOP ships it ([VENDORED.md](fm1-bt-bridge/vendor/fonts/VENDORED.md)) | SIL Open Font License 1.1 |
+| `fm1-bt-bridge/kits/808/` (the 808 KIT's sixteen sounds) | Michael Fischer's recordings of a Roland TR-808 (1994), from [tidalcycles/sounds-tr808-fischer](https://github.com/tidalcycles/sounds-tr808-fischer) ([CREDITS.md](fm1-bt-bridge/kits/808/CREDITS.md)) | CC0 1.0 |
 
 **Built on** (installed on the box by `install.sh` from Raspberry Pi OS's own packages, or already part of it; not
 copied into this repository, and each under its own licence):

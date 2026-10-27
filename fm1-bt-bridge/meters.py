@@ -38,6 +38,9 @@ BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))   # 4x4 o
 HISTORY_STEP = 0.4                      # seconds per column of the History meter: 128 columns = 51 s
 BAND_EDGES = (50, 7500)                 # Hz: 16 bands evenly spaced in pitch between these
 MIN_FREE = 200 * 1024 * 1024            # bytes left on the SD card: recording stops below this
+MIX_LAG = 0.072                         # s a sound reaches a take recorded off the mixer (the speaker's monitor)
+                                        # after its MIDI: measured on the Studio, FM-1 A to the JBL Go 3, 2026-10-27
+                                        # (SLOOP's kick +74 ms median over 22, chords +65..+76 ms)
 TAPE_SECONDS = 30 * 60                  # the Tape meter's reel: a full side every 30 minutes
 REELS = (30, 98)                        # Tape: the reels' centres (x), at y = REEL_Y
 REEL_Y, REEL_R, HUB_R = 31, 19, 5
@@ -500,6 +503,8 @@ class MeterScreens:
         self.meter_restart = 0.0
         self.recorder = Recorder()
         self.parts_job = None                 # Record parts: {path, keys, levels} of the take being recorded
+        self.rec_midi, self.rec_bpm = False, 120.0   # the take's MIDI logged (a .mid at Stop), at this tempo
+        self.rec_lag = 0.0                    # how late the take's sound is against its MIDI (MIX_LAG off the mixer)
         self.rec_space_check = 0.0
         self.tape_done = 0.0                  # Tape: how far through the reel the last recording got (0..1)
         self.meter_reset()
@@ -544,8 +549,12 @@ class MeterScreens:
 
     def finish_recording(self, text):
         """stop, say text (with the length for {}), then check the take (and its parts) for clipping in the
-        background"""
+        background; the MIDI played meanwhile goes into a .mid beside it"""
+        stopped = time.monotonic()            # (the WAV ends here: its first frame is its length before this)
         raw, seconds = self.recorder.stop()
+        midi = getattr(self, "midi", None) if self.rec_midi else None
+        if midi is not None:
+            midi.midi_record(False)
         job, self.parts_job = self.parts_job, None
         self.say(text.format(clock(seconds)) + (f" + {len(job['keys'])} parts" if job else ""))
         if job and raw:                       # split the one take into the parts and the mix, then check them
@@ -555,10 +564,27 @@ class MeterScreens:
                 except (OSError, EOFError, wave.Error, ValueError):
                     self.say("Couldn't split the parts", 4)
                     return
+                if midi is not None:          # (the mix: the take without its silent start, ending as it did)
+                    self.write_take_midi(midi, job["path"], stopped)
                 self.check_clipping(job["path"], parts)
             threading.Thread(target=finish, daemon=True).start()
         elif raw:
-            threading.Thread(target=self.check_clipping, args=(raw,), daemon=True).start()
+            def finish():
+                if midi is not None:
+                    self.write_take_midi(midi, raw, stopped)
+                self.check_clipping(raw)
+            threading.Thread(target=finish, daemon=True).start()
+
+    def write_take_midi(self, midi, wav_path, stopped):
+        """the take's MIDI as wav_path's .mid, lined up: its time 0 the WAV's first frame (when it stopped, less
+        its length: pw-record starts some ms after it's asked to, so the start time asked isn't the WAV's), less
+        the sound's own delay into the take (rec_lag): its notes land where they're heard in it"""
+        try:
+            with wave.open(str(wav_path)) as w:
+                length = w.getnframes() / w.getframerate()
+        except (OSError, EOFError, wave.Error):
+            return
+        midi.midi_write(Path(wav_path).with_suffix(".mid"), stopped - length - self.rec_lag, self.rec_bpm)
 
     def check_clipping(self, path, parts=()):
         load_numpy()
@@ -596,6 +622,12 @@ class MeterScreens:
             return
         path = folder / f"{datetime.now():%Y-%m-%d_%H%M%S}_fm1.wav"
         channels = (self.mix_channels() if hasattr(self, "mix_channels") else [])[:len(PARTS_MAP) // 2]
+        midi = getattr(self, "midi", None)
+        self.rec_midi = midi is not None and hasattr(midi, "midi_record")
+        if self.rec_midi:                     # the MIDI played in, from now: a .mid beside the take at Stop
+            clock = getattr(midi, "clock", None) or {}
+            self.rec_bpm = float(clock.get("bpm") or self.state.get("bpm") or 120)
+            midi.midi_record(True)
         if self.state.get("rec_parts") and len(channels) > 1:
             # one recorder for every source (a recorder each, and the mix off the speaker, maxed the CPU out);
             # the parts and the mix are made from it after Stop, so they line up to the sample
@@ -603,14 +635,19 @@ class MeterScreens:
             raw.parent.mkdir(exist_ok=True)
             if not self.recorder.start_parts(raw, 2 * len(channels), self.state["audio_rate"]):
                 self.say("Can't record (pw-record?)")
+                self.rec_midi and self.midi.midi_record(False)
                 return
             keys = [key for key, _ in channels]
             self.parts_job = {"path": path, "keys": keys, "levels": {k: self.mix_level(k) for k in keys}}
+            self.rec_lag = 0.0                # (each source straight in: its delay not measured, so not shifted)
             sources = [(node["name"], *self.capture_ports_of(key, node)) for key, node in channels]
             threading.Thread(target=lambda: (time.sleep(1.5), link_parts(sources)), daemon=True).start()
             return
-        if not self.recorder.start(self.capture_target(), path, self.state["audio_rate"]):
+        target = self.capture_target()
+        self.rec_lag = MIX_LAG if str(target).startswith("monitor:") else 0.0    # (straight from a source: not
+        if not self.recorder.start(target, path, self.state["audio_rate"]):      # measured, so not shifted)
             self.say("Can't record (pw-record?)")
+            self.rec_midi and self.midi.midi_record(False)
 
     def recording_tick(self, now):
         """Stops a recording whose pw-record died (the FM-1 went away) or that would fill the SD card;

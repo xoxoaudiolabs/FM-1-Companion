@@ -29,7 +29,7 @@ STEPS = {"level": 5, "pan": 5, "tune": 1, "attack": 10, "release": 25}
 class DeskPads:
     def pads_init(self):
         self.pad_edit, self.pad_mode = None, False     # the pad whose page is open; EDIT on
-        self.pad_top, self.kits_open = 0, False
+        self.pad_top, self.kits_open, self.kits_top = 0, False, 0
         self.browse, self.browse_top = "samples", 0    # the editor's OPEN list: samples or takes, its scroll
         self.ed_files = False                          # the editor showing that list (OPEN) instead of the take
         self.ed_from_browse, self.ed_to_pad = False, False   # the editor: opened from BROWSE; choosing a pad
@@ -48,7 +48,8 @@ class DeskPads:
         seq = (self.seq_pad, self.seq_page, self.seq_edit, self.seq_rec, a.seq_playing(),
                a.pads and a.pads.step, a.clock_text()) if self.seq_open else None
         seq = (seq, self.fx_open, self.fx_on, self.fx_latch)
-        return (str(a.state.get("kit")), sounding, self.pad_edit, self.pad_mode, self.pad_top, self.kits_open,
+        return (str(a.state.get("kit")), sounding, self.pad_edit, self.pad_mode, self.pad_top,
+                self.kits_open and self.kits_top, self.kits_open,
                 self.browse, self.browse_top,
                 rec, self.pad_pick_source, self.held and self.held[3], seq)
 
@@ -585,11 +586,14 @@ class DeskPads:
         self.button(img, d, (4, 3, 84, HDR_H - 5), "< PADS", self.close_kits, key="kits-back")
         st.text(img, (96, 9), "KITS", t.hi)
         d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
-        kits = pads.list_kits()[:4]
+        every = pads.list_kits()
+        self.kits_top = max(0, min(self.kits_top, len(every) - ROWS))
+        kits = every[self.kits_top:self.kits_top + ROWS]
         current = a.kit()["name"]
+        right = W - 64 if len(every) > ROWS else W - 8      # (room for ^ v when they don't all fit)
         for k, name in enumerate(kits):
             y = HDR_H + 4 + k * ROW_H
-            box = (8, y, W - 8, y + ROW_H - 6)
+            box = (8, y, right, y + ROW_H - 6)
             hot = self.lit(("kit", name))
             on = name.replace("-", " ").upper() == current.upper()
             d.rectangle(box, fill=t.hi if hot else t.grey[1] if on else t.grey[0])
@@ -598,12 +602,20 @@ class DeskPads:
             self.widget(box, "tap", lambda name=name: self.load_kit(name), ("kit", name))
         if not kits:
             self.centre(img, (0, HDR_H, W, H - 60), "NO KITS SAVED YET", t.c[2])
+        if len(every) > ROWS:
+            self.button(img, d, (W - 56, HDR_H + 4, W - 8, HDR_H + 2 * ROW_H - 2), "^",
+                        lambda: self.kits_scroll(-2), key="kits-up")
+            self.button(img, d, (W - 56, HDR_H + 2 * ROW_H + 2, W - 8, HDR_H + 4 * ROW_H - 6), "v",
+                        lambda: self.kits_scroll(2), key="kits-down")
         y = H - 54
         self.button(img, d, (8, y, W // 2 - 4, H - 8), "SAVE " + current[:10], self.save_kit, key="kit-save")
         self.button(img, d, (W // 2 + 4, y, W - 8, H - 8), "NEW KIT", self.new_kit, key="kit-new")
 
     def close_kits(self):
         self.kits_open = False
+
+    def kits_scroll(self, step):
+        self.kits_top = max(0, self.kits_top + step)
 
     def browse_to(self, name):
         self.browse, self.browse_top = name, 0

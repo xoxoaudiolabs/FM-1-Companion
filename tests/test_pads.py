@@ -366,8 +366,31 @@ def test_kits():
     k = pads.clean_kit({"name": "BOOM BAP", "pads": [{"sample": "x.wav", "level": 999, "mode": "weird"}]})
     assert len(k["pads"]) == 16 and k["pads"][0]["level"] == 200 and k["pads"][0]["mode"] == "one-shot"
     path = pads.save_kit(k)
-    assert path.name == "BOOM-BAP.json" and pads.list_kits() == ["BOOM-BAP"]
+    assert path.name == "BOOM-BAP.json" and "BOOM-BAP" in pads.list_kits()
     assert pads.load_kit(path)["pads"][0]["sample"] == "x.wav"
+
+
+def test_factory_kits():
+    """the ready-made 808 KIT: made once into the library, its sounds in the samples folder (listed after the
+    user's own), each one playable; deleted, it isn't made again; a sample of the same name the user has already is
+    left alone"""
+    import library
+    samples = library.folder("samples")
+    mine = samples / "808-COWBELL.wav"
+    mine.write_bytes(b"mine")
+    pads._factory_checked = False
+    assert "808-KIT" in pads.list_kits()
+    assert mine.read_bytes() == b"mine" and (samples / "808-KICK.wav").stat().st_mtime < 1e9
+    eight = pads.load_kit(pads.kit_path("808 KIT"))
+    assert eight["map"] == "sloop" and Path(eight["pads"][0]["sample"]).name == "808-KICK.wav"
+    assert [p["choke"] for p in eight["pads"][4:7]] == [1, 1, 1] and eight["pads"][2]["choke"] == 0
+    mine.unlink()
+    e = pads.Engine()
+    for pad in eight["pads"][:15]:
+        assert e.sample(pad["sample"]) is not None, pad["sample"]           # 16-bit WAVs the engine loads
+    pads.kit_path("808 KIT").unlink()
+    pads._factory_checked = False
+    assert "808-KIT" not in pads.list_kits()                                 # deleted: stays deleted
 
 
 def test_pads_tab():

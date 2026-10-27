@@ -11,7 +11,8 @@ The engine runs in a process of its own (PadProcess) that renders blocks of BLOC
 streams them into PipeWire: into a virtual speaker whose other side is a source named "fm1-sampler", so the box
 treats the sampler like any other sound source: a slider in the mixer, a file in Record parts, the meters. The
 MIDI process sends it notes (the routes' SMP), the app sends it taps and kits; it sends back which pads sound.
-Kits are JSON files in ~/fm1-library/kits/.
+Kits are JSON files in ~/fm1-library/kits/. One comes ready-made (factory_kits): 808 KIT, Michael Fischer's
+recordings of a real TR-808 (CC0).
 
 Each kit has a step sequencer for its pads, SLOOP's drum sequencer (seq.c, GPL-3.0): up to 64 steps, a division
 (1/4 .. 2 bars), swing (0 straight, 100: 75/25, odd steps late, not on the triplets or whole beats), and on each
@@ -30,6 +31,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import time
 import wave
@@ -150,7 +152,63 @@ def load_kit(path):
 
 
 def list_kits():
+    factory_kits()
     return sorted(p.stem for p in kits_folder().glob("*.json"))
+
+
+FACTORY = Path(__file__).resolve().parent / "kits"   # the ready-made kits' sounds (kits/make_kits.py made them)
+DRUM_FILES = ("KICK", "KICK-2", "SNARE", "CLAP", "HAT", "OPEN-HAT", "PEDAL-HAT", "RIM", "SNARE-2", "LOW-TOM",
+              "HI-TOM", "CRASH", "RIDE", "SHAKER", "CONGA", "COWBELL")       # SLOOP_DRUMS, as files are named
+FACTORY_KITS = (("808", "808 KIT"),)
+OLD = 946684800                                # 2000-01-01: the ready-made sounds listed after the user's own
+_factory_checked = False
+
+
+def factory_kit(key, name, samples):
+    """one ready-made kit, its pads' samples in the samples folder: the drums on SLOOP's drum keys, its hats in
+    one choke group"""
+    kit = empty_kit(name)
+    kit["map"] = "sloop"
+    for i, sound in enumerate(DRUM_FILES):
+        kit["pads"][i].update(sample=str(samples / f"{key}-{sound}.wav"), choke=1 if sound.endswith("HAT") else 0)
+    return clean_kit(kit)
+
+
+def factory_kits(source=FACTORY):
+    """the ready-made kits into the library, each once: its sounds into the samples folder (one there already of
+    that name is left as it is) and its kit into kits/. A kit made once isn't made again (.factory-kits lists them),
+    so one deleted or changed stays so."""
+    global _factory_checked
+    if _factory_checked:
+        return
+    _factory_checked = True
+    import library
+    kits, samples = kits_folder(), library.folder("samples")
+    done_path = kits / ".factory-kits"
+    try:
+        done = set(done_path.read_text().split())
+    except OSError:
+        done = set()
+    for key, name in FACTORY_KITS:
+        files = sorted((source / key).glob("*.wav"))
+        if key in done or not files:
+            continue
+        try:
+            for f in files:
+                dest = samples / f.name
+                if not dest.exists():
+                    shutil.copyfile(f, dest)
+                    os.utime(dest, (OLD, OLD))
+            path = kit_path(name)
+            if not path.exists():
+                path.write_text(json.dumps(factory_kit(key, name, samples), indent=1))
+            done.add(key)
+        except OSError:
+            continue
+    try:
+        done_path.write_text("\n".join(sorted(done)) + "\n")
+    except OSError:
+        pass
 
 
 def pad_of(note, channel=None, mapping="mpc"):

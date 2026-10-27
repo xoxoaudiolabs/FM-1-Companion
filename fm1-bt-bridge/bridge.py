@@ -83,6 +83,9 @@ SCAN_SECONDS = 10
 TAP_GAP = 2.0                           # seconds: a longer pause between taps starts a new tap tempo
 BPM_RANGE = (30, 300)
 RECONNECT_EVERY = 20
+OWN_CONNECT = 30            # s: a speaker that turns up this soon after the box asked BlueZ to connect it is the box's
+REFRESH_AFTER = 3           # s: a speaker that connected by itself, left to settle before it's reconnected
+REFRESH_GAP = 2             # s: between its disconnect and its connect
 GROUPS = {"g_play": ("play", "Playing"),   # Settings' sections: (row key) -> (settings_menu, title). The first
           "g_audio": ("audio", "Audio"),    # three work whatever you plug in; Sloop is what needs SLOOP's
           "g_midi": ("midi", "MIDI"),       # editor protocol, FM-1 what needs the FM-1 itself (its firmware)
@@ -434,6 +437,7 @@ class Loopback:
         self.proc, self.key = None, None
         self.rate, self.paused_until = rate, 0.0
         self.links, self.started, self.relinked = None, 0.0, 0.0   # a chosen pair's links, to check (heal)
+        self.ends = None                      # (source node id, sink node id) it was linked between (follow)
 
     def ensure(self, source, sink, name=None, pair=None):
         """name: the playback side's node name (a mixer channel's, to set its level there); pair: (left, right)
@@ -493,6 +497,27 @@ class Loopback:
         link_ports(self.links)
         return True
 
+    def follow(self, objects):
+        """stopped (for the next ensure to start afresh) if its source or its sink came back as a new node: an FM-1
+        off USB for a few seconds, a speaker reconnected. A pw-loopback with node.dont-reconnect stays running
+        unlinked when its end goes, and the same name back looked like nothing to do (seen on the Studio: FM-1 A's
+        sound gone for 90 s after a 5 s drop). One end missing just now is left to ensure."""
+        if not self.running() or not self.key:
+            return False
+        source, sink = self.key[0], self.key[1]
+        ids = {str(((o.get("info") or {}).get("props") or {}).get("node.name")): o.get("id") for o in objects
+               if o.get("type") == "PipeWire:Interface:Node"}
+        ends = (ids.get(source[8:] if source.startswith("monitor:") else source), ids.get(sink))
+        if None in ends:
+            return False
+        if self.ends is None:
+            self.ends = ends
+            return False
+        if ends == self.ends:
+            return False
+        self.stop()
+        return True
+
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
@@ -510,7 +535,7 @@ class Loopback:
                 self.proc.wait(3)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-        self.proc, self.key = None, None
+        self.proc, self.key, self.ends = None, None, None
 
 
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
@@ -812,6 +837,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.volume_shown = 0.0               # until when the big volume bar shows
         self.auto = True                      # reconnect the last headphones by itself
         self.connecting = False
+        self.own_connect_at = -1e9            # when the box last connected the speaker itself (refresh_speaker)
         self.screen = "status"                # or "scan", "settings"
         self.back_to = "status"               # where left leaves the scan list for
         self.devices, self.cursor, self.scanning = [], 0, False
@@ -905,10 +931,16 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if sink == self.sink and time.monotonic() - self.volume_at < 3:
             volume = self.volume              # a reading from before the last press landed
         changed = (source, sink, source_b, others) != (self.source, self.sink, self.source_b, self.others)
+        if sink and (not self.sink or self.sink["name"] != sink["name"]):
+            self.speaker_appeared(sink)
         if changed or volume != self.volume:
             self.source, self.sink, self.source_b, self.others, self.volume = source, sink, source_b, others, volume
             self.post("status", changed)
         channels = self.mix_channels()
+        loops = [self.loop, self.jack_loop] + list(self.mixer.channels.values()) + list(self.cue_mixer.channels.values())
+        for loop in loops:
+            if loop.follow(objects):           # an end came back anew: made again below, in this scan
+                self.post("status", False)
         main, copy = self.outputs()
         self.jack_loop.ensure(copy and "monitor:" + main, copy, "fm1-phones")
         app_ids = {key: next((o.get("id") for o in objects
@@ -1109,11 +1141,42 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.healed_at, self.no_source_since = now, None
             run(["systemctl", "--user", "restart", "wireplumber"], timeout=30)
 
+    def speaker_appeared(self, sink):
+        """the speaker is back. One that connected by itself (switched on, it calls the box it knows) can come up
+        with its sound stuck: BlueZ connected, PipeWire playing to it, nothing heard (seen on the Studio with a
+        JBL Go 3, 2026-10-27; a disconnect and a connect from the box brought it back). So one that the box
+        didn't connect itself (no connect of its own worked in the last OWN_CONNECT s) is reconnected once from the
+        box, a few seconds in; never during a recording."""
+        mac = (self.state.get("last_mac") or "").replace(":", "_").upper()
+        if (not mac or mac not in sink["name"].upper() or time.monotonic() - self.own_connect_at < OWN_CONNECT
+                or self.recorder.recording()):
+            return
+        threading.Thread(target=self.refresh_speaker, daemon=True).start()
+
+    def refresh_speaker(self):
+        time.sleep(REFRESH_AFTER)
+        if not self.bt_lock.acquire(blocking=False):
+            return                            # a pairing or connect already under way: it's the box's own
+        try:
+            self.connecting = True
+            self.post("status", False)
+            mac = self.state["last_mac"]
+            bt("disconnect", mac, timeout=10)
+            time.sleep(REFRESH_GAP)
+            bt("connect", mac, timeout=20)
+            self.own_connect_at = time.monotonic()
+        finally:
+            self.connecting = False
+            self.bt_lock.release()
+            self.post("status", False)
+
     def reconnect_quietly(self):
         try:
             self.connecting = True
             self.post("status", False)
-            bt("connect", self.state["last_mac"], timeout=12)
+            _, out = bt("connect", self.state["last_mac"], timeout=12)
+            if "Connection successful" in out:        # (failed tries, the speaker off: not the box's connection)
+                self.own_connect_at = time.monotonic()
         finally:
             self.connecting = False
             self.bt_lock.release()
@@ -1205,6 +1268,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         def work():
             ok, text = bt_pair(device["mac"])
             if ok:
+                self.own_connect_at = time.monotonic()
                 self.state.update(last_mac=device["mac"], last_name=device["name"])
                 save_state(self.state)
                 self.auto, self.screen = True, "status"
@@ -1217,7 +1281,14 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.say("No headphones yet: KEY1")
             return
         self.auto = True
-        self.job("Connecting", lambda: bt_connect(self.state["last_mac"]))
+
+        def work():
+            ok, text = bt_connect(self.state["last_mac"])
+            if ok:
+                self.own_connect_at = time.monotonic()
+            return ok, text
+
+        self.job("Connecting", work)
 
     def disconnect(self):
         if not self.state["last_mac"]:

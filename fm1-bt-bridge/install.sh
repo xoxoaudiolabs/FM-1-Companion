@@ -135,6 +135,8 @@ mkdir -p ~/.local/share/fm1-bridge/vendor/fonts
 install -m 644 "$DIR"/vendor/fonts/*                            ~/.local/share/fm1-bridge/vendor/fonts/
 mkdir -p ~/.local/share/fm1-bridge/icons
 install -m 644 "$DIR"/icons/*.png                              ~/.local/share/fm1-bridge/icons/
+mkdir -p ~/.local/share/fm1-bridge/kits/808       # the sampler's ready-made 808 KIT (pads.factory_kits copies it in)
+install -m 644 "$DIR"/kits/808/*                               ~/.local/share/fm1-bridge/kits/808/
 install -D -m 644 "$DIR/config/pipewire-10-fm1-bridge.conf"     ~/.config/pipewire/pipewire.conf.d/10-fm1-bridge.conf
 install -D -m 644 "$DIR/config/wireplumber-51-fm1-bridge.conf"  ~/.config/wireplumber/wireplumber.conf.d/51-fm1-bridge.conf
 if wireplumber --version 2>/dev/null | grep -q "Linked with libwireplumber 0\.4"; then   # Bookworm: Lua config

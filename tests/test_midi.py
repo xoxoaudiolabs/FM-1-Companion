@@ -45,6 +45,43 @@ def test_tap_leaves_fm1_clock_out():
     assert tapped == [[0xBF, 112, 127], [0x9F, 40, 100]]
 
 
+def test_midi_recording():
+    """while a take records, what's played in is logged a track a source (not clock, not SysEx, not an FM-1's
+    REMOTE OUT channel 16) and written as a .mid whose time 0 is the take's first frame"""
+    import tempfile
+    import mido
+    bridge = make_bridge()
+    bridge.split = True
+    bridge.start_midi_log()
+    t0 = time.monotonic()
+    bridge.from_fm1("FM-1", [0x90, 60, 100])
+    bridge.from_fm1("FM-1", [0xBF, 102, 127])                 # FM-1 A's REMOTE OUT (ch 16): left out
+    bridge.from_fm1("FM-1", [0xF8])                           # clock: left out (the file has the tempo)
+    bridge.from_controllers([0x90, 64, 90], name="SMK-37+VA MIDI 1")
+    log = bridge.stop_midi_log()
+    bridge.from_fm1("FM-1", [0x80, 60, 0])                    # after the take: not logged
+    assert [(s, list(m)) for _, s, m in log] == [("FM-1", [0x90, 60, 100]), ("u-smk37vamid", [0x90, 64, 90])] \
+        or [(s, list(m)) for _, s, m in log][0] == ("FM-1", [0x90, 60, 100])
+    shifted = [(t0 + 0.5, "FM-1", bytes([0x90, 60, 100])), (t0 + 1.0, "FM-1", bytes([0x80, 60, 0])),
+               (t0 + 1.25, log[-1][1], bytes([0x90, 64, 90]))]      # (its note never let go)
+    path = Path(tempfile.mkdtemp()) / "take.mid"
+    assert blemidi.write_midi(shifted, path, t0, 120.0, bridge.source_label)
+    mid = mido.MidiFile(str(path))
+    assert mid.type == 1 and mid.ticks_per_beat == 480 and len(mid.tracks) == 3
+    names = [next((m.name for m in tr if m.type == "track_name"), None) for tr in mid.tracks[1:]]
+    assert names[0] == "FM-1" and names[1].startswith("SMK-37")
+    ticks = []
+    for tr in mid.tracks[1:]:
+        at = 0
+        for m in tr:
+            at += m.time
+            if not m.is_meta:
+                ticks.append((m.type, m.note, at))
+    assert ("note_on", 60, 480) in ticks and ("note_off", 60, 960) in ticks     # 0.5 s, 1 s at 120 BPM
+    assert ("note_on", 64, 1200) in ticks and ("note_off", 64, 1200) in ticks   # let go at its end
+    assert not blemidi.write_midi([], Path(tempfile.mkdtemp()) / "none.mid", t0, 120.0)   # nothing: no file
+
+
 def test_peer_name_after_address():
     """BlueZ often has only the address when a keyboard connects; the name shows up once it has it."""
     bridge = make_bridge()

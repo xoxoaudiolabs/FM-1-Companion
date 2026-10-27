@@ -513,6 +513,99 @@ def test_recording_parts():
     app.state["rec_parts"] = False
 
 
+def test_speaker_reconnected_once():
+    """a speaker that connected by itself (switched on, it calls the box) is reconnected once from the box, in case
+    its sound came up stuck; one the box connected itself, or one that turns up during a recording, is left alone"""
+    app = make_app()
+    app.state["last_mac"] = "20:18:5B:EF:AA:B0"
+    calls = []
+    real = bridge.bt, bridge.REFRESH_AFTER, bridge.REFRESH_GAP
+    bridge.bt = lambda *args, timeout=15: calls.append(args) or (0, "Connection successful")
+    bridge.REFRESH_AFTER = bridge.REFRESH_GAP = 0
+    jbl = {"id": 110, "name": "bluez_output.20_18_5B_EF_AA_B0.1"}
+
+    def appear(sink):
+        before = len(calls)
+        app.sink = None
+        app.speaker_appeared(sink)
+        for _ in range(100):
+            if len(calls) > before or not any(t.name != "MainThread" and t.is_alive() and "refresh" in str(t)
+                                              for t in __import__("threading").enumerate()):
+                time.sleep(0.05)
+                break
+            time.sleep(0.01)
+        return calls[before:]
+    try:
+        assert appear(jbl) == [("disconnect", "20:18:5B:EF:AA:B0"), ("connect", "20:18:5B:EF:AA:B0")]
+        assert appear(jbl) == []                                  # back after the box's own reconnect: left alone
+        app.own_connect_at = -1e9
+        assert appear({"id": 7, "name": "bluez_output.AA_BB_CC_DD_EE_FF.1"}) == []      # not the speaker it knows
+        app.recorder.recording = lambda: True
+        assert appear(jbl) == []                                  # recording: never cut it off
+        app.recorder.recording = lambda: False
+        app.own_connect_at = -1e9
+        bridge.bt = lambda *args, timeout=15: calls.append(args) or (0, "Failed to connect: Host is down")
+        app.bt_lock.acquire()
+        app.reconnect_quietly()                                   # the box's tries failing (the speaker off)...
+        bridge.bt = lambda *args, timeout=15: calls.append(args) or (0, "Connection successful")
+        assert appear(jbl)[-2:] == [("disconnect", "20:18:5B:EF:AA:B0"), ("connect", "20:18:5B:EF:AA:B0")]   # ...then it connects itself
+    finally:
+        bridge.bt, bridge.REFRESH_AFTER, bridge.REFRESH_GAP = real
+
+
+def test_recording_midi():
+    """a take's MIDI: logged from the start, stopped at Stop, written as the take's .mid with time 0 the WAV's first
+    frame (Stop's time less the WAV's length: pw-record starts a little after it's asked); a take off the mixer
+    (the speaker's monitor) less the mixer's delay too, so its notes land where they're heard"""
+    import meters
+    for target, lag in ((None, 0.0), ("monitor:bluez_output.20_18_5B_EF_AA_B0.1", meters.MIX_LAG)):
+        recording_midi_take(target, lag)
+
+
+def recording_midi_take(target, lag):
+    import wave
+    import meters
+    app = make_app()
+    app.source = {"id": 1, "name": "alsa_input.usb-Felucca-00", "label": "Felucca"}
+    app.state["rec_parts"], app.state["bpm"] = False, 128
+    if target:
+        app.capture_target = lambda: target
+
+    class Midi:
+        clock = None
+        calls = []
+
+        def midi_record(self, on):
+            self.calls.append(("record", on))
+
+        def midi_write(self, path, start, bpm):
+            self.calls.append(("write", Path(path).name, start, bpm))
+    app.midi = Midi()
+    fake = FakePwPlay()
+    meters.subprocess.Popen = fake
+    try:
+        app.toggle_recording()
+        path = Path(fake.cmd[-1])
+        with wave.open(str(path), "wb") as w:              # what pw-record wrote: 2 s
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(bytes(48000 * 4 * 2))
+        before = time.monotonic()
+        app.finish_recording("Saved: {} recorded")
+        after = time.monotonic()
+        for _ in range(100):
+            if any(c[0] == "write" for c in Midi.calls):
+                break
+            time.sleep(0.05)
+    finally:
+        meters.subprocess.Popen = FakePwPlay.real
+    assert Midi.calls[0] == ("record", True) and Midi.calls[1] == ("record", False)
+    write = next(c for c in Midi.calls if c[0] == "write")
+    assert write[1] == path.with_suffix(".mid").name and write[3] == 128.0
+    assert before - 2.0 - lag - 0.01 <= write[2] <= after - 2.0 - lag + 0.01
+
+
 def test_sample_editor():
     """Settings > Sample editor: a recording or a sample; markers, fades, note, Save into the samples."""
     from test_library import write_recording
@@ -882,13 +975,8 @@ def test_bt_keyboards():
 
 
 if __name__ == "__main__":
-    for name, fn in [("test_bt_keyboards", test_bt_keyboards), ("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
-                     ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
-                     ("test_clock", test_clock), ("test_recordings", test_recordings),
-                     ("test_recording_parts", test_recording_parts),
-                     ("test_midi_matrix", test_midi_matrix), ("test_two_fm1s", test_two_fm1s), ("test_mixer", test_mixer), ("test_any_usb_audio", test_any_usb_audio), ("test_pw_watch", test_pw_watch),
-                     ("test_arp_rows_and_presets", test_arp_rows_and_presets),
-                     ("test_web_link", test_web_link)]:
+    tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
+    for name, fn in tests:
         fn()
         print("ok", name)
-    print("all passed")
+    print(f"all {len(tests)} passed")

@@ -660,6 +660,50 @@ def test_meters_steady():
     assert desk.changed_strips(rows) == [(60, 120), (130, 196)]     # (a 10-row gap kept apart, a 4-row one joined)
 
 
+def test_loopback_follows_a_source_back():
+    """an FM-1 off USB for a few seconds comes back as a new PipeWire node of the same name: its loopback (left
+    running, unlinked) is stopped so the next ensure starts it afresh; the same for a speaker back anew"""
+    import bridge
+
+    class Proc:
+        def __init__(self, *a, **k):
+            self.alive = True
+
+        def poll(self):
+            return None if self.alive else 0
+
+        def terminate(self):
+            self.alive = False
+
+        def wait(self, timeout=None):
+            return 0
+    started = []
+    real = bridge.subprocess.Popen, bridge.set_rate
+    bridge.subprocess.Popen = lambda cmd, **k: started.append(cmd) or Proc()
+    bridge.set_rate = lambda rate: None
+
+    def node(i, name):
+        return {"type": "PipeWire:Interface:Node", "id": i, "info": {"props": {"node.name": name}}}
+    fm1, jbl = "alsa_input.usb-Felucca-00.analog-stereo", "bluez_output.20_18_5B_EF_AA_B0.1"
+    try:
+        loop = bridge.Loopback()
+        loop.ensure(fm1, jbl, "fm1-mix-a")
+        assert not loop.follow([node(87, fm1), node(110, jbl)])       # first look: its ends noted
+        assert not loop.follow([node(87, fm1), node(110, jbl)])       # the same: nothing to do
+        assert not loop.follow([node(110, jbl)])                      # the FM-1 gone just now: left to ensure
+        assert loop.follow([node(95, fm1), node(110, jbl)]) and not loop.running()   # back as a new node
+        loop.ensure(fm1, jbl, "fm1-mix-a")
+        assert len(started) == 2 and loop.running()                   # started afresh
+        assert not loop.follow([node(95, fm1), node(110, jbl)])
+        assert loop.follow([node(95, fm1), node(141, jbl)])           # the speaker reconnected: the same
+        copy = bridge.Loopback()                                      # a copy off the speaker's monitor
+        copy.ensure("monitor:" + jbl, "alsa_output.jack", "fm1-phones")
+        assert not copy.follow([node(141, jbl), node(47, "alsa_output.jack")])
+        assert copy.follow([node(150, jbl), node(47, "alsa_output.jack")])
+    finally:
+        bridge.subprocess.Popen, bridge.set_rate = real
+
+
 def test_lost_input_pair_relinked():
     """an interface's chosen pair (the Sidekick's 1-2) whose links didn't get made (a busy restart) is linked
     again on the next look at PipeWire, at most every 5 s; linked, nothing is done"""

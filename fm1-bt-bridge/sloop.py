@@ -193,6 +193,77 @@ class Link:
                 pass
 
 
+class FifoLink(Link):
+    """SLOOP on the Studio (SLOOP Remote Out's studio program) instead of an FM-1: the same editor frames, written
+    into its MIDI FIFO (--midi, which the Companion also feeds FM-1 A's panel through) and read back from its reply
+    FIFO (--sysex-out). Each request goes in one write, so nothing else can land inside it."""
+
+    def __init__(self, to_app, from_app, time_scale=1.0):
+        import os
+        import threading
+        self.frames, self.time_scale, self.os = queue.Queue(), time_scale, os
+        if not Path(from_app).exists():
+            os.mkfifo(from_app, 0o600)
+        self.inp = os.open(from_app, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            self.out = os.open(to_app, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            os.close(self.inp)
+            raise SloopError("notfound", "SLOOP on the Studio isn't running (open PLAY SLOOP)")
+        os.set_blocking(self.out, True)
+        self.closed = False
+        threading.Thread(target=self.reader, daemon=True).start()
+
+    def reader(self):
+        import select
+        frame = None
+        while not self.closed:
+            if not select.select([self.inp], [], [], 0.2)[0]:
+                continue
+            try:
+                data = self.os.read(self.inp, 4096)
+            except OSError:
+                return
+            if not data:                      # (no writer just now: the app opens its end when it replies)
+                time.sleep(0.02)
+                continue
+            for b in data:
+                if b == 0xF0:
+                    frame = []
+                elif b == 0xF7 and frame is not None:
+                    if tuple(frame[:3]) == HDR and len(frame) > 3:
+                        self.frames.put((frame[3], frame[4:]))
+                    frame = None
+                elif frame is not None and b < 0x80:
+                    frame.append(b)
+
+    def request(self, cmd, args=(), timeout=1.0, retries=1):
+        args = list(args)
+        if any(not 0 <= b <= 0x7F for b in args):
+            raise ValueError("data bytes must be 7 bit")
+        for _ in range(retries + 1):
+            while not self.frames.empty():
+                self.frames.get_nowait()
+            self.os.write(self.out, bytes([0xF0, *HDR, cmd, *args, 0xF7]))
+            end = time.monotonic() + timeout * self.time_scale
+            while (left := end - time.monotonic()) > 0:
+                try:
+                    got, reply = self.frames.get(timeout=left)
+                except queue.Empty:
+                    break
+                if got == cmd and got not in PUSHES:
+                    return reply
+        raise SloopError("noreply", f"no reply from SLOOP on the Studio (command {cmd})")
+
+    def close(self):
+        self.closed = True
+        for fd in (self.inp, self.out):
+            try:
+                self.os.close(fd)
+            except OSError:
+                pass
+
+
 # ---------------------------------------------------------------- the device
 
 class Sloop:

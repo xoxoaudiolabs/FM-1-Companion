@@ -216,6 +216,68 @@ def test_cue_sources():
     app.state["cues"] = ["b"]
     app.jack = None
     assert app.cued() == []                                          # no jack: no cue
+    # a Studio app's CUE: there while its sound is (app_here, from the scan), the jack copy on while it's cued
+    app.jack, app.state["cues"] = {"id": 9, "name": "alsa_output.bcm2835", "label": "PHONES"}, []
+    apps_was = deskui.APPS
+    deskui.APPS = {k: (n, Path(__file__)) for k, (n, _) in deskui.APPS.items()}
+    try:
+        ui.render(0.0, force=True)
+        assert any(w[3] == ("cue", "sloop") for w in ui.widgets)          # its CUE there even while it's off
+        app.app_here = {"sloop"}
+        ui.render(0.0, force=True)
+        tap(("cue", "sloop"))
+        assert app.cued() == ["sloop"] and app.outputs() == ("bluez_output.AA", "alsa_output.bcm2835")
+        app.app_here = set()                                             # SLOOP turned off: its cue waits
+        assert app.cued() == [] and app.state["cues"] == ["sloop"]
+    finally:
+        deskui.APPS = apps_was
+
+
+def test_decks_screen():
+    """MORE > DJ DECKS: the decks' screen from their status; its buttons send the decks their commands (a pretend
+    decks program: no sound, no Hercules)"""
+    import bridge
+    import deskui
+    sent = []
+
+    class Decks:
+        library = [["a.mp3", "Curtains", "7 Keys", 140.0, "E", "12B"],
+                   ["b.mp3", "Organ Donor", "Zomboy", 140.0, "F#m", "11A"]]
+        overviews, note = {0: [0.5] * 220, 1: []}, None
+        status = {"decks": [{"title": "Curtains", "artist": "7 Keys", "bpm": 140.0, "key": "E", "camelot": "12B",
+                             "pos": 10.0, "len": 240.0, "playing": True, "pitch": 0.0, "cues": [0.1]}, {}],
+                  "xfade": 0.5, "cursor": 0, "scanning": None}
+
+        def running(self):
+            return True
+
+        def send(self, *cmd):
+            sent.append(cmd)
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+    ui.decks_proc, ui.tab = Decks(), "DECKS"
+    ui.render(0.0, force=True)
+    keys = {w[3]: w for w in ui.widgets}
+    assert ("tab", "HOME") not in keys                     # full screen: no tab bar
+
+    def tap(key):
+        box = keys[key][0]
+        ui.touch("down", box[0] + 2, box[1] + 2, 0.0)
+        ui.touch("up", box[0] + 2, box[1] + 2, 0.1)
+    tap(("deck", "PLAY", 0))
+    tap(("deck-row", 1))
+    tap("decks-load-b")
+    box = keys[("deck-cue", 1)][0]
+    ui.touch("down", box[0] + 2, box[1] + 2, 0.0)
+    ui.touch("up", box[0] + 2, box[1] + 2, 0.2)
+    box = keys[("deck-seek", 0)][0]
+    ui.touch("down", (box[0] + box[2]) // 2, box[1] + 6, 0.0)
+    ui.touch("up", (box[0] + box[2]) // 2, box[1] + 6, 0.1)
+    assert sent[:5] == [("play", 0), ("select", 1), ("load", 1), ("cue", 1, True), ("cue", 1, False)]
+    assert sent[5][:2] == ("seek", 0) and 0.45 < sent[5][2] < 0.55
+    tap("decks-home")
+    assert ui.tab == "HOME"
 
 
 def test_hdmi_mirror():
@@ -832,6 +894,9 @@ def test_studio_apps():
         def terminate(self):
             self.code = 0
 
+        def wait(self, timeout=None):
+            return self.code
+
     app = bridge.App(Region(), dict(bridge.DEFAULTS))
     app.save_settings = lambda: None
     ui = deskui.DeskUI(app, app.display)
@@ -933,6 +998,48 @@ def test_studio_apps():
     assert ui.app_proc is None and app.display.image is not None
     tile = lambda label: next(w for w in ui.widgets if w[3] == ("more", label))   # noqa: E731
     assert tile("PLAY SLOOP") and tile("PLAY X0X")
+
+    # Settings > Sloop for X0X on the Studio: its own rows; a restore stops it first (it saves) and leaves it off
+    import library
+    import x0x
+    app.desk = ui
+    assert [k for k, _ in app.library_targets()] == ["fm1", "sloop", "x0x"]
+    app.settings_menu = "sloop"
+    assert app.settings_rows()[0][0] == "library_target" and "project" in [r[0] for r in app.settings_rows()]
+    app.setting = 0
+    app.change_setting()                                    # For: FM-1 -> SLOOP Studio: the FM-1's jobs, --studio
+    assert app.library_target() == "sloop"
+    assert [r[0] for r in app.settings_rows()] == ["library_target", "backup", "restore", "project", "sample",
+                                                   "sample_level", "sd"]
+    spawned = []
+    spawn_was, library.spawn = library.spawn, spawned.append
+    try:
+        app.start_job(["backup"], "Backup", show=False)
+        app.start_job(["backup", "--auto"], "Auto backup", show=False)          # auto backups: always the FM-1
+        app.start_job(["restore", "x.json"], "Restore", show=False, web=True)   # the web page's: the FM-1
+        app.start_job(["load-sample", "1", "KICK", "k.wav"], "Load sample", show=False)
+    finally:
+        library.spawn = spawn_was
+    assert spawned == [["--studio", "backup"], ["backup", "--auto"], ["restore", "x.json"],
+                       ["--studio", "load-sample", "1", "KICK", "k.wav"]]
+    app.change_setting()                                    # SLOOP Studio -> X0X Studio
+    assert app.library_target() == "x0x"
+    assert [r[0] for r in app.settings_rows()] == ["library_target", "x0x_backup", "x0x_restore", "sd"]
+    state = Path(tempfile.mkdtemp()) / "store.bin"
+    x0x.write_state({0: b"set", 1: b"snd", 2: b"p1", 3: b"p2", 5: b"sng", 6: b"mot"}, {}, state)
+    saved = x0x.STATE
+    library.x0x.STATE = state
+    try:
+        backup = library.x0x_backup(state=state)
+        ui.app_procs["x0x"] = Proc()
+        x0x_proc = ui.app_procs["x0x"]
+        restore_was = library.x0x_restore
+        library.x0x_restore = lambda path: restore_was(path, state)
+        app.x0x_restore(backup)
+        library.x0x_restore = restore_was
+    finally:
+        library.x0x.STATE = saved
+    assert x0x_proc.code == 0 and "x0x" not in ui.app_procs and app.screen == "settings"
     if os.environ.get("SNAP_DIR"):                         # (to look at: SNAP_DIR=dir)
         margins.save(Path(os.environ["SNAP_DIR"]) / "sloop-margins.png")
 

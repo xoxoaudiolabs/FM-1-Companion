@@ -26,7 +26,7 @@ your phone.
 | Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
 | Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
-| Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; an MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
+| Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; DJ decks played from a Hercules DJ controller; an MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
 | Software | v2.9 | Studio v1.5 (running on the real hardware since October 2026) |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
@@ -47,6 +47,9 @@ What's been tried on the real boxes, and what hasn't yet: [Tested on the real ha
   [SLOOP Remote Out](https://github.com/xoxoaudiolabs/sloop-remote-out) (SLOOP with a REMOTE OUT for the FM-1, and
   its `studio/` program) and [X0X for the FM-1 Companion Studio](https://github.com/xoxoaudiolabs/fm1-x0x-companion-studio)
   (below).
+- **DJ decks on the Studio** (on main, after Studio v1.5). Two decks played from a Hercules DJControl Inpulse 200
+  MK2 and the touchscreen, from a music folder whose BPM, key and beatgrids it reads (Serato's too) or works out:
+  sync, hot cues, loops, rolls, EQ, PFL to the controller's own headphones ([below](#since-studio-v15-on-main-not-a-numbered-release-yet-dj-decks)).
 - **More keyboards, a second FM-1.** Through a USB hub (or the Studio's four ports): up to four USB MIDI
   keyboards and a second FM-1, found by themselves. **FM-1 A** and **FM-1 B** keep their names by the hub
   port they're on.
@@ -148,7 +151,46 @@ and X0X on the Studio, whose middle is X0X's own picture captured on the real St
 
 ## What's new
 
-### Since Studio v1.5 (on main, not a numbered release yet): SLOOP and X0X together, in time
+### Since Studio v1.5 (on main, not a numbered release yet): DJ decks
+
+**MORE › DJ DECKS**: two DJ decks on the Studio, played from a **Hercules DJControl Inpulse 200 MK2** (the controller
+they were made and tried with) and from the touchscreen.
+
+- **The music:** `~/fm1-library/Studio DJ Music` (MP3, FLAC, WAV, AIFF, Ogg). **SCAN** reads each new track's
+  title, artist, BPM, key (also as Camelot) and beatgrid from its tags, including what Serato DJ saved in it (its
+  BPM, key, beatgrid and hot cues, in MP3 files), and works out the BPM, key and beat from the sound where the tags
+  lack them, about 10 seconds a track on the Pi 3. Serato's stems files (`.serato-stems`) are Serato's own
+  protected format and aren't used.
+- **Each deck:** play, CUE as on a CDJ (stopped: it sets the cue and plays while held; PLAY tapped while CUE is held
+  keeps it playing), the tempo fader (±8 %, up is slower), the jog wheel (VINYL off, as the decks start: it moves
+  through the track and nudges; VINYL on: it scratches), 4 hot cues (pads in HOTCUE mode; SHIFT + pad deletes one),
+  loops (LOOP IN: 4 beats from the nearest beat, LOOP OUT, SHIFT halves or doubles), loop rolls (pads in ROLL mode:
+  1, 2, 4 or 8 beats while held, then on from where the track would have been), gain, LOW and HIGH EQ, a filter,
+  the volume fader, PFL (the headphone button) and the crossfader.
+- **SYNC** locks a deck to the other: its tempo and its beat, kept together while both play (a double or half tempo
+  where that's nearer: a track tagged 70 BPM locks to one at 140). With both synced, the tempo fader moved last
+  leads. Each track's beatgrid is moved onto its own kicks when it loads (a grid can sit some ms off them), and a
+  nudge with the jog on a synced deck is kept.
+- **The screen:** both decks (title, artist, BPM, key, time left, tempo, SYNC / LOOP), each track's waveform
+  overview with where it's at and its hot cues (a line in the cue's colour with its pad's number: tap the number to
+  go there, hold it to delete the cue; tap the waveform to go there), the crossfader, and the track list (the row
+  the browser knob is on lit; LOAD A, LOAD B). < HOME goes back with the decks playing on; HOLD OFF stops them.
+- **Sound:** the master to the Studio's Bluetooth speaker (with none, the Hercules's master out); the headphones
+  (PFL) to the Hercules's own sound card: **the Hercules has its own sound card** (4 channels: master out and
+  headphones), and its MASTER and HEADPHONES knobs work on it in its own hardware.
+- **It remembers:** each track's hot cues and CUE point as set or deleted on the Studio (in
+  `.studio-dj-memory.json` beside the music: nothing is written into the music files or their Serato tags), and the
+  session: the decks come back loaded and paused where they were, with their tempo, SYNC, PFL and pad mode.
+- **The Hercules belongs to the decks:** it's left out of the MIDI routes (its pads don't play the FM-1s).
+- Not affiliated with Serato or Hercules: the decks read the cue points and beatgrids Serato DJ saves in a track's
+  tags; Serato is a trademark of its owner.
+
+### Since Studio v1.5: CUE for SLOOP and X0X
+
+- **CUE for SLOOP and X0X:** their MIXER columns have a CUE button too (on the 3.5 mm jack, as the FM-1s'; theirs
+  after their fader, the others' before it).
+
+### Since Studio v1.5: SLOOP and X0X together, in time
 
 - **Both at once.** Opening PLAY X0X no longer stops SLOOP, or the other way round: one is on the screen, the other
   keeps playing behind it. MORE says ON for each one running; HOLD OFF stops only the one on the screen.
@@ -158,9 +200,19 @@ and X0X on the Studio, whose middle is X0X's own picture captured on the real St
   GLO › SYSTEM › SYNC to USB (SLOOP keeps both settings now). An app follows the other's clock only while the
   other plays, so one playing on its own isn't pulled off its beat when the other opens.
 - **FM-1 A's own clock** is no longer passed to the apps, so it can't fight theirs.
+- **Backups of the Studio's apps.** Settings › Sloop has a **For** row: **FM-1**, **SLOOP Studio** or **X0X
+  Studio**.
+  - **SLOOP Studio:** the Studio's SLOOP now keeps everything an FM-1's SLOOP keeps (its settings, the working
+    project, the four project slots, the song's sections, user presets, the FM6 patches, the four sample slots),
+    and Back up now, Restore, Load project and Load sample work on it as on an FM-1: the same jobs, the same files
+    in `~/fm1-library`, so a backup of FM-1 A restores onto the Studio's SLOOP and the other way round. SLOOP has
+    to be open (PLAY SLOOP) for them. Auto backups and the web page's requests still go to the FM-1.
+  - **X0X Studio:** Back up now saves X0X's project as a `.x0b` in `~/fm1-library/x0x/`, X0X's own backup format
+    (the one its backup page makes from an FM-1). Restore puts one back: X0X is stopped first (it saves), what it
+    held is backed up first, and PLAY X0X opens it. Its break loops aren't in it (the Studio's X0X has none yet).
 - It needs both apps rebuilt from their repos' current main (their `studio/` READMEs).
-- **Tried:** by hand from FM-1 A, SLOOP leading; by a script, both directions. Details and what isn't tried yet:
-  [Tested on the real hardware](#the-studio).
+- **Tried:** by hand from FM-1 A, SLOOP leading; by a script, both directions; the backups by script on the
+  Studio, not yet by hand. Details and what isn't tried yet: [Tested on the real hardware](#the-studio).
 
 ### Studio v1.5: X0X on the Studio
 
@@ -357,7 +409,9 @@ Girl next to two FM-1s).
 
 A Pi 3 B+ on Raspberry Pi OS Lite (Trixie), the Hosyond 3.5" touchscreen and a PiSugar 3 Plus, with two FM-1s
 on SLOOP 2.8, an M-VAVE SMK-37 running Clipper and a Teenage Engineering K.O. Sidekick (EP-136) on its four USB
-ports, and a JBL Go 3.
+ports, and a JBL Go 3. For the DJ decks: a Hercules DJControl Inpulse 200 MK2 (USB; its own sound card for the
+headphones), headphones on it, the JBL Go 3 as the master, and 37 MP3s (dubstep around 140 BPM, analysed in Serato
+DJ: its tags in them).
 
 **Tested**
 - The touchscreen (the piscreen driver at 24 MHz) and touch calibration; the PiSugar 3 Plus.
@@ -386,6 +440,26 @@ ports, and a JBL Go 3.
 - The same by a script, each app's sound recorded: X0X following SLOOP at 120 and 130 BPM and through STOP and
   PLAY with no drift, SLOOP following X0X the same way; a follower 9–13 ms after its leader on average, about
   8–9 ms of jitter (two X0Xs in one recording); X0X's beat steady while SLOOP opened and closed.
+- DJ decks (main, after v1.5), by hand on the Studio with the Hercules: SCAN of 37 tracks (about 6 minutes, no
+  errors), the DECKS screen, browse and LOAD A / B, play, CUE (and PLAY while it's held), the tempo faders, SYNC
+  (tempo and beat lock, double / half tempo, the last fader moved leading), EQ, filter, gain, hot cues (Serato's and
+  new ones, deleted with SHIFT + pad and on the screen, jumped to from the screen), loops and SHIFT halve / double,
+  rolls, the jog (scratch, nudge, through the track), PFL to the Hercules's headphones, the lights, the master on the
+  Bluetooth speaker, the decks remembering cues and the session after a restart. Its scan's detection checked
+  against Serato's analysis of the 37: the BPM the same as Serato's tag on 32 (36 counting double or half), the key
+  on 26 (31 counting a neighbour on the Camelot wheel). Two synced tracks' kicks, 20 ms apart on Serato's grids,
+  together after the grid fix (by ear). The decks: about 45 % of one of the Pi 3's cores with both playing.
+- CUE on SLOOP's and X0X's MIXER columns, by hand.
+- Backups of the Studio's apps (main, after v1.5), by script on the Studio, in test sessions (not by hand, not the
+  user's own SLOOP):
+  - SLOOP: a real FM-1 A backup restored into the Studio's SLOOP with the Companion's own restore job (19 s, a
+    safety backup first); a backup taken right after it matched, all 16 parts (projects, settings, drum kits,
+    MIDI map, theme, the four sample slots). A WAV loaded into USR2 (1.9 s), seen in the next backup. A project
+    loaded into slot B, still there after SLOOP was stopped and started again.
+  - SLOOP's working project from before (the old `project.bin`) taken over by the new SLOOP with the same screen,
+    then loaded from the flash file alone.
+  - X0X: the user's X0X project backed up to a `.x0b` (X0X's own `tools/x0x_backup.py info` reads it), restored
+    into a copy, which X0X opened with the same screen, pixel for pixel.
 
 **Not tested on the real Studio yet**
 - Connecting to a real Bluetooth MIDI keyboard (BT KEYS), and two Bluetooth MIDI devices at once.
@@ -397,6 +471,15 @@ ports, and a JBL Go 3.
   stop of about half a second.
 - A real clipped take caught by the new clip check (automated tests only).
 - SLOOP's project loading back after a reboot of the Studio (after a Companion restart, it did).
+- DJ decks: FX and SAMPLER pad modes (not built yet), key lock (not built: a faster track sounds higher), the
+  Hercules's master out (nothing was plugged into it), the decks without the Hercules (from the screen alone),
+  Serato's tags in FLAC, AIFF or M4A files (only MP3's are read), a track with no beatgrid in its tags on the decks
+  (its detected grid: on 36 tracks, within 15 ms of Serato's on 22 after the grid fix), a long set, the decks and
+  SLOOP or X0X at once, the beatmatch lights, the decks in the MIXER or the recorder (not built).
+- The backups of the Studio's apps by hand from the screen: For, Back up now, Restore, Load project, Load sample;
+  a sample loaded into the Studio's SLOOP heard playing; SLOOP's own SAVE and LOAD of its project slots on its
+  screen; a Studio SLOOP backup restored onto a real FM-1; a `.x0b` from an FM-1 running X0X restored onto the
+  Studio's X0X, or the other way round.
 - The sampler: pads, SLOOP's sequencer, note repeat and the punch-in FX.
 - The DAW tab and network MIDI, with Kraken or Ableton Live.
 - The HDMI mirror.
@@ -428,6 +511,11 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
     USB stick.
   - **Start-up takes about a minute** on the Zero's single core; Wi-Fi comes up about 40 s later (the optional
     `config/fm1-native-wifi` step in the [box README](fm1-bt-bridge/README.md) saves about a minute more).
+- **The DJ decks:**
+  - No key lock yet: a track played faster sounds higher.
+  - Bluetooth runs about 200 ms behind the Hercules's headphones: match beats in the headphones (PFL).
+  - A beatgrid found from the sound (no grid in the tags) can sit tens of ms off on some tracks: nudge with the jog.
+  - Serato's stems files can't be used (Serato's own protected format); FX and SAMPLER pad modes aren't there yet.
 - **SLOOP and X0X on the Studio:**
   - In v1.5 one runs at a time. On main both run at once, sharing one app's clock (not FM-1 A's); the follower
     sounds about 10 ms after the leader, give or take about 9 ms, as two boxes on MIDI clock do.
@@ -435,7 +523,9 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
   - They need FM-1 A running SLOOP with REMOTE OUT (a build of our own, not isod89's release); the official SLOOP
     sends only its keys, not its buttons or knobs.
   - FM-1 A's own SLOOP plays too. Turn FM-1 A down in the MIXER to hear only the Studio's app.
-  - SLOOP's project slots, user presets and sample slots aren't saved yet: only the working project is.
+  - In v1.5, SLOOP's project slots, user presets and sample slots aren't saved, only its working project; on main
+    since then, they are (in `flash.bin`, as an FM-1 keeps them).
+  - The Studio's X0X has no break loops of your own (its sample slots) yet, so its backups hold none.
 - **With two FM-1s (or a keyboard's synth), plain recordings need the speaker connected** to hear the whole mix;
   with Record parts on, the mix is made from the parts and needs none. Firmware installs wait until only one FM-1
   is plugged in.
@@ -453,6 +543,10 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
 | `fm1-bt-bridge/battery.py` | The PiSugar battery's charge, read over I2C |
 | `fm1-bt-bridge/device.py` | Which build a box is and what its hardware can do |
 | `fm1-bt-bridge/deskui.py` | The Studio's touch screens and tabs; starting SLOOP or X0X on the Studio and their margins |
+| `fm1-bt-bridge/decks.py` | The DJ decks: two decks, the Hercules DJControl Inpulse 200 MK2, their sound, in a program of their own |
+| `fm1-bt-bridge/deskdecks.py` | The Studio's DECKS screen |
+| `fm1-bt-bridge/djlib.py` | The Studio DJ Music folder's scan: tags (Serato's too), BPM, key and beat found from the sound |
+| `fm1-bt-bridge/x0x.py` | X0X on the Studio: its project to and from X0X's own backups (.x0b) |
 | `fm1-bt-bridge/deskpads.py` | The Studio's SAMPLER: pads, kits, SEQ, FX, the sample editor's files |
 | `fm1-bt-bridge/pads.py` | The sampler's engine and SLOOP's sequencer, in a process of its own (numpy) |
 | `fm1-bt-bridge/padfx.py` | Sixteen of SLOOP's punch-in FX (its original set), for the sampler |
@@ -509,6 +603,7 @@ copied into this repository, and each under its own licence):
 | Pillow | drawing every screen | the PIL Software License (MIT-CMU) |
 | NumPy | meters, the sampler, the sample editor | BSD-3-Clause |
 | mido and python-rtmidi (RtMidi) | MIDI | MIT |
+| libsndfile, with mpg123 | the DJ decks reading MP3, FLAC, WAV, AIFF and Ogg | LGPL-2.1-or-later (some parts Apache-2.0); mpg123 LGPL-2.1 |
 | dbus-python | BlueZ over D-Bus | MIT (some parts AFL-2.1 or GPL-2.0-or-later) |
 | PyGObject | BlueZ's events (GLib) | LGPL-2.1-or-later |
 | spidev, libgpiod's Python bindings, smbus2, i2c-tools | the Pocket's screen and keys; the PiSugar battery | MIT; LGPL-2.1-or-later; MIT; GPL-2.0-or-later |

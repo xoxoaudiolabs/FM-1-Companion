@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The FM-1 library: backups, projects, samples and firmware, one job at a time.
 
+  library.py [--studio] COMMAND ...   --studio: SLOOP on the Studio (SLOOP Remote Out's studio program, through
+                                      its FIFOs) instead of an FM-1, for backup, restore, load-project, load-sample
   library.py backup [--auto]          back up the FM-1 (SLOOP 2.3+) into ~/fm1-library/backups
   library.py restore FILE             a whole backup back onto the FM-1 (backs up first)
   library.py load-project FILE SRC TARGET
@@ -35,9 +37,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sloop  # noqa: E402
+import x0x  # noqa: E402
 
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
-FOLDERS = ("backups", "projects", "samples", "firmware", "recordings")
+FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x")   # x0x: the Studio's X0X backups
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
@@ -46,11 +49,14 @@ THEME = RUNTIME / "fm1-theme.json"           # FM-1 A's colours (SLOOP MENU > CO
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20
+STUDIO = False                               # --studio: the jobs work on SLOOP on the Studio, not an FM-1
+STUDIO_MIDI, STUDIO_SYSEX = RUNTIME / "fm1-sloop-midi", RUNTIME / "fm1-sloop-sysex"   # its FIFOs (deskui.start_app)
+STUDIO_JOBS = ("backup", "restore", "load-project", "load-sample")
 FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmwares, both based on Felucca
              "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
 RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
 SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",),
-            "recordings": (".wav",)}
+            "recordings": (".wav",), "x0x": (".x0b",)}
 
 
 def folder(name):
@@ -275,6 +281,8 @@ def read_theme(dev=None):
 
 
 def connect():
+    if STUDIO:                                # (what FM-1 A runs, for the screens, is left as it is)
+        return sloop.Sloop(sloop.FifoLink(str(STUDIO_MIDI), str(STUDIO_SYSEX)))
     dev = sloop.Sloop(sloop.Link(card=target_card()))
     try:
         FIRMWARE.write_text(json.dumps({"firmware": str(dev.version)}))
@@ -314,6 +322,8 @@ def safety_backup(dev, job, why):
 
 def write_backup(data, kind):
     when = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    if STUDIO:                                # SLOOP on the Studio's: told apart by its name
+        kind = "studio" if kind == "manual" else f"studio-{kind}"
     path = folder("backups") / f"{when}_{slug(data.get('firmware'))}_{kind}.json"
     sloop.save_json(path, data)
     if kind == "auto":
@@ -414,6 +424,25 @@ def job_load_project(file, source, target):
         dev.put_project(data, target, job.progress("Loading project"), firmware=project.get("firmware"))
         where = "the working project" if target == "working" else f"project {target}"
         job.done(f"Loaded into {where}", before=before and before.name)
+
+
+def x0x_backup(kind="manual", state=x0x.STATE):
+    """the Studio's X0X project (what it has saved) as a .x0b in ~/fm1-library/x0x: X0X's own backup format, so it
+    restores onto an FM-1 running X0X too"""
+    path = folder("x0x") / f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_X0X_{kind}.x0b"
+    return x0x.backup(path, state)
+
+
+def x0x_restore(file, state=x0x.STATE):
+    """a .x0b into the Studio's X0X (not running: the caller stops it), what it held backed up first (when it
+    held anything). -> the safety backup's path, or None"""
+    x0x.read_backup(Path(file).read_bytes())  # damaged files stop here, before anything is written
+    try:
+        before = x0x_backup("before-restore", state)
+    except x0x.X0XError:                      # nothing saved yet: nothing to keep
+        before = None
+    x0x.restore(file, state)
+    return before
 
 
 def job_save_project(file, source, name):
@@ -609,6 +638,8 @@ def listing():
                               label=part_label(PART.match(n).group(2))) for n in recording_parts(path.name)]
                 if parts:
                     entry["parts"] = parts
+            elif name == "x0x":
+                entry.update(x0x.describe(path.read_bytes()))
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)
@@ -625,6 +656,12 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 2
+    global STUDIO
+    if argv[0] == "--studio":
+        STUDIO, argv = True, argv[1:]
+        if not argv or argv[0] not in STUDIO_JOBS:
+            print(__doc__)
+            return 2
     command, args = argv[0], argv[1:]
     try:
         if command == "backup":

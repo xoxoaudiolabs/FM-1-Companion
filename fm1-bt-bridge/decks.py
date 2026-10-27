@@ -1,0 +1,1014 @@
+#!/usr/bin/env python3
+"""The Studio's DJ decks: two decks playing tracks from ~/fm1-library/Studio DJ Music (djlib.py's scan: BPM, key,
+beatgrid, hot cues), played from a Hercules DJControl Inpulse 200 MK2 (or the DECKS screen).
+
+Each deck: load (decoded whole into memory), play / pause, CUE (a CDJ's: paused, it sets the cue and plays while held;
+playing, it goes back to the cue and stops), the tempo fader (+-8 %), the jog wheel (its top scratches while touched
+in vinyl mode, its edge nudges the tempo), 4 hot cues (the track's Serato ones when it has them; SHIFT + pad clears
+one), loops (4 beats on LOOP IN, LOOP OUT leaves it or goes back in, SHIFT halves or doubles), loop rolls on the pads
+(1, 2, 4 or 8 beats while held, then on as if it had played through), SYNC (the other deck's tempo, and its beat
+when both have a grid), gain, LOW and HIGH EQ, a filter (left low-pass, right high-pass, off in the middle), the
+volume fader, PFL to the headphones, the crossfader.
+
+The sound: the Hercules has its own sound card, 4 channels: the master on its first pair, the headphones on the
+second. Its MASTER and HEADPHONES knobs work in its own hardware. Without it, the master goes to the Studio's speaker.
+
+Runs as a process of its own (DeckProcess, like the sampler's), the engine rendering BLOCK frames with numpy: the
+tempo by reading the track faster or slower (no key lock yet: a faster track sounds higher), the EQ and filter by
+a gain on each frequency of a short spectrum, block by block (overlapped: no clicks)."""
+import math
+import os
+import queue
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+import djlib
+
+RATE, BLOCK = 44100, 512
+FFT = 2 * BLOCK                               # the EQ's spectrum: 1024 points, half overlapped
+PITCH_RANGE = 0.08                            # the tempo fader: +-8 %
+SAMPLES_PER_TICK = 1.8 * RATE / 248           # a jog tick while scratching (a turn: 1.8 s, a 33 rpm record)
+BEND_PER_TICK = 0.012                         # a tick of the jog's edge: the tempo 1.2 % off, easing back
+HERCULES = "DJControl Inpulse 200"
+CUE_COLORS = ("#cc0000", "#cc8800", "#3399ff", "#33cc33")   # a hot cue set here, by pad (Serato's keep their own)
+MEMORY = ".studio-dj-memory.json"             # beside the music: each track's cues as set here, and the session
+OVERVIEW = 220                                # a track's overview: this many columns (the DECKS screen's)
+
+
+def np():
+    import numpy
+    return numpy
+
+
+class Track:
+    def __init__(self, path, entry=None, rel=None):
+        self.path, entry = Path(path), entry or {}
+        self.rel = rel or self.path.name          # its name in the folder (the memory's key)
+        audio, rate = djlib.decode(self.path)
+        if audio.shape[1] == 1:
+            audio = np().repeat(audio, 2, axis=1)
+        self.audio, self.rate = audio[:, :2].copy(), rate
+        self.title = entry.get("title") or self.path.stem
+        self.artist = entry.get("artist") or ""
+        self.bpm = entry.get("bpm")
+        self.key = entry.get("key")
+        self.first_beat = entry.get("first_beat") or 0.0
+        if self.bpm:
+            self.first_beat += self.grid_fix()
+        self.cues = {c["index"]: c["ms"] / 1000.0 * rate for c in entry.get("cues") or [] if c["index"] < 4}
+        self.cue_colors = {c["index"]: c.get("color") for c in entry.get("cues") or [] if c["index"] < 4}
+        n = np()                                 # its overview: the loudest of OVERVIEW stretches, 0..1
+        mono = n.abs(self.audio[:, 0].astype(n.int32) + self.audio[:, 1])
+        edges = n.linspace(0, len(mono), OVERVIEW + 1).astype(int)[:-1]
+        peaks = n.maximum.reduceat(mono, edges) if len(mono) > OVERVIEW else n.zeros(OVERVIEW)
+        top = max(1, int(peaks.max()))
+        self.overview = [round(float(v) / top, 2) for v in peaks]
+
+    def grid_fix(self, seconds=90.0, window=0.08):
+        """seconds to move the beat grid so its lines sit on this track's kicks as decoded here (Serato's grid, or
+        the scan's, can sit some ms off them: 20 ms between two tracks is a flam when they're synced): the kick
+        onsets' offset from the grid lines over the first `seconds`, the strongest within +-`window`"""
+        n = np()
+        try:
+            x, sr = djlib._mono(self.audio[:int(seconds * self.rate)], self.rate)
+            _flux, low = djlib._onsets(x, sr)
+        except (ValueError, MemoryError):
+            return 0.0
+        if len(low) < 100 or low.max() <= 0:
+            return 0.0
+        beat = 60.0 / self.bpm
+        times = n.arange(len(low)) * 128 / sr + 512 / sr
+        rel = ((times - self.first_beat) / beat + 0.5) % 1.0 - 0.5
+        hist, edges = n.histogram(rel * beat, bins=64, range=(-window, window), weights=(low / low.max()) ** 2)
+        if hist.max() <= 0:
+            return 0.0
+        k = int(n.argmax(hist))
+        return float((edges[k] + edges[k + 1]) / 2)
+
+    @property
+    def frames(self):
+        return len(self.audio)
+
+    def beat_frames(self):
+        """a beat, in the track's own frames"""
+        return 60.0 / self.bpm * self.rate if self.bpm else self.rate / 2
+
+
+class Tone:
+    """a deck's EQ (LOW below ~250 Hz, HIGH above ~2.5 kHz: -inf .. +6 dB, flat in the middle) and filter (left:
+    low-pass from 20 kHz down to 150 Hz; right: high-pass from 20 Hz up to 6 kHz), as a gain on each frequency of a
+    1024-point spectrum, half-overlapped with a sqrt-Hann window (constant overlap-add: no seams)"""
+
+    def __init__(self):
+        n = np()
+        self.win = n.sqrt(n.hanning(FFT + 1)[:FFT]).astype(n.float32)
+        self.freqs = n.fft.rfftfreq(FFT, 1 / RATE)
+        self.tail = n.zeros((BLOCK, 2), n.float32)
+        self.prev = n.zeros((BLOCK, 2), n.float32)
+        self.low, self.high, self.filter = 0.5, 0.5, 0.5
+        self.curve, self.made = None, None
+
+    @staticmethod
+    def knob_gain(v):
+        """an EQ knob 0..1: 0 kills, 0.5 flat, 1 +6 dB"""
+        return (v / 0.5) ** 2 if v < 0.5 else 1.0 + (v - 0.5) * 2 * (10 ** (6 / 20) - 1)
+
+    def gains(self):
+        n, f = np(), self.freqs
+        key = (round(self.low, 3), round(self.high, 3), round(self.filter, 3))
+        if key == self.made:
+            return self.curve
+        lo, hi = self.knob_gain(self.low), self.knob_gain(self.high)
+        w_lo = 1 / (1 + (f / 250.0) ** 4)        # how much each frequency is LOW's, or HIGH's
+        w_hi = 1 / (1 + (2500.0 / n.maximum(f, 1)) ** 4)
+        g = 1 + w_lo * (lo - 1) + w_hi * (hi - 1)
+        x = self.filter - 0.5
+        if x < -0.02:                            # low-pass: 20 kHz at the middle down to 150 Hz at the left
+            fc = 20000 * (150 / 20000) ** (-x / 0.5)
+            g = g / n.sqrt(1 + (f / fc) ** 4)
+        elif x > 0.02:                           # high-pass: 20 Hz up to 6 kHz at the right
+            fc = 20 * (6000 / 20) ** (x / 0.5)
+            g = g / n.sqrt(1 + (fc / n.maximum(f, 1)) ** 4)
+        self.curve, self.made = g.astype(n.float32), key
+        return self.curve
+
+    def flat(self):
+        return abs(self.low - 0.5) < 0.01 and abs(self.high - 0.5) < 0.01 and abs(self.filter - 0.5) < 0.02
+
+    def process(self, block):
+        """block: [BLOCK, 2] float32 -> the same, through the curve (BLOCK frames late, always: the latency stays
+        the same whether the curve is flat or not)"""
+        n = np()
+        frame = n.concatenate([self.prev, block]) * self.win[:, None]
+        self.prev = block
+        spec = n.fft.rfft(frame, axis=0) * self.gains()[:, None]
+        out = n.fft.irfft(spec, n=FFT, axis=0).astype(n.float32) * self.win[:, None]
+        result = self.tail + out[:BLOCK]
+        self.tail = out[BLOCK:]
+        return result
+
+
+class Deck:
+    def __init__(self, name):
+        self.name = name
+        self.track, self.loading, self.error = None, None, None
+        self.pos = 0.0                           # in the track's frames
+        self.playing = False
+        self.pitch = 0.0                         # -1 .. 1 of PITCH_RANGE
+        self.bend = 0.0                          # the jog edge's nudge, easing back to 0
+        self.vinyl, self.touched, self.scratch_ticks = False, False, 0   # (VINYL off at start: the jog's top
+                                                                         # moves through the track; on: scratch)
+        self.cue, self.cue_held, self.hot_held, self.playing_before_hot = 0.0, False, None, False
+        self.loop = None                         # (start, end) frames while looping
+        self.loop_beats, self.last_loop = 4.0, None
+        self.roll = None                         # (slip position, beats) while a roll pad is held
+        self.gain, self.volume, self.pfl = 0.5, 0.0, False
+        self.tone = Tone()
+        self.shift = False
+        self.pad_mode = "hotcue"
+        self.synced = False                      # SYNC on: this deck follows the other's tempo (and took its beat)
+        self.fader = 0.0                         # where the tempo fader is (-1 .. 1): the pitch when not synced
+        self.lock_fix = 0.0                      # synced and both playing: a hair faster or slower, beats locked
+        self.lock_offset = 0.0                   # where its beat sits from the other's, in beats (a nudge kept)
+
+    # ---- tempo
+    def speed(self):
+        """frames of the track per output frame"""
+        if not self.track:
+            return 0.0
+        return (1.0 + self.pitch * PITCH_RANGE + self.bend + self.lock_fix) * self.track.rate / RATE
+
+    def bpm_now(self):
+        return self.track.bpm * (1.0 + self.pitch * PITCH_RANGE) if self.track and self.track.bpm else None
+
+    def beat_pos(self, pos=None):
+        """the position in beats from the track's first beat"""
+        t = self.track
+        return ((self.pos if pos is None else pos) - t.first_beat * t.rate) / t.beat_frames()
+
+    def snap(self, pos):
+        """the nearest beat to pos (a grid: the track's first beat and BPM)"""
+        t = self.track
+        if not t or not t.bpm:
+            return pos
+        b = round(self.beat_pos(pos))
+        return t.first_beat * t.rate + b * t.beat_frames()
+
+    # ---- transport
+    def load(self, track):
+        self.track, self.pos, self.playing, self.loop, self.roll = track, 0.0, False, None, None
+        self.lock_offset = 0.0
+        self.cue = track.cues.get(0, track.first_beat * track.rate) if track.cues else 0.0
+        self.pos = self.cue
+
+    def play_pause(self, other=None):
+        if self.track and (self.cue_held or self.hot_held is not None):
+            self.cue_held, self.hot_held = False, None   # PLAY while CUE (or a hot cue) is held: it plays on
+            self.playing = True                          # when that's let go, as on a CDJ
+            return
+        if self.track:
+            self.playing = not self.playing
+            if self.playing and self.synced and other is not None and other.playing and other.track                     and other.track.bpm and self.track.bpm:       # synced: it starts on the other's beat
+                self.pos += self.phase_error(other) * self.track.beat_frames()
+
+    def cue_press(self, down):
+        if not self.track:
+            return
+        if down:
+            if self.playing:                     # playing: back to the cue, stopped
+                self.playing, self.pos = False, self.cue
+            else:                                # stopped: the cue here (on a beat when close), playing while held
+                self.cue = self.snap(self.pos) if abs(self.snap(self.pos) - self.pos) < self.track.rate * 0.05 \
+                    else self.pos
+                self.pos, self.playing, self.cue_held = self.cue, True, True
+        elif self.cue_held:                      # let go: back to the cue
+            self.cue_held, self.playing, self.pos = False, False, self.cue
+
+    def hotcue(self, i, down, clear=False):
+        t = self.track
+        if not t or not down:
+            if not down and self.hot_held == i and not self.playing_before_hot:
+                self.playing, self.pos, self.hot_held = False, t.cues.get(i, self.pos), None
+            return
+        if clear:
+            t.cues.pop(i, None)
+            t.cue_colors.pop(i, None)
+            return
+        if i in t.cues:                          # there: from it (stopped: plays while held, as CUE does)
+            self.playing_before_hot = self.playing
+            self.pos, self.playing, self.hot_held = t.cues[i], True, i
+        else:                                    # not yet: set here
+            t.cues[i] = self.pos
+
+    def loop_in(self):
+        """a 4-beat loop from the nearest beat (LOOP IN), or off if one's playing"""
+        if not self.track:
+            return
+        if self.loop:
+            self.last_loop, self.loop = self.loop, None
+            return
+        start = self.snap(self.pos)
+        self.loop = (start, start + self.loop_beats * self.track.beat_frames())
+        self.last_loop = self.loop
+
+    def loop_out(self):
+        """LOOP OUT: out of the loop, or back into the last one"""
+        if self.loop:
+            self.loop = None
+        elif self.last_loop:
+            self.loop = self.last_loop
+            self.pos = self.loop[0]
+
+    def loop_size(self, factor):
+        if not self.track:
+            return
+        self.loop_beats = min(32.0, max(1 / 8, self.loop_beats * factor))
+        if self.loop:
+            self.loop = (self.loop[0], self.loop[0] + self.loop_beats * self.track.beat_frames())
+            self.last_loop = self.loop
+
+    def roll_pad(self, beats, down):
+        """a loop roll: `beats` from the nearest beat while held; let go, on from where it would have been"""
+        if not self.track:
+            return
+        if down:
+            start = self.snap(self.pos) if self.snap(self.pos) <= self.pos else self.pos
+            self.roll = (self.pos, beats)
+            self.loop = (start, start + beats * self.track.beat_frames())
+        elif self.roll:
+            self.pos, self.roll, self.loop = self.roll[0], None, None
+
+    def toggle_sync(self, other):
+        """SYNC: on, this deck takes the other's tempo and beat and keeps following its tempo; off, back to its own
+        tempo fader. (Both on: whichever was synced first leads.)"""
+        if self.synced:
+            self.synced, self.pitch, self.lock_fix = False, self.fader, 0.0
+            return
+        self.synced, self.lock_offset = True, 0.0
+        self.sync_to(other)
+
+    def target_bpm(self, other):
+        """the other deck's tempo as this one should take it: it, its double or its half, whichever is nearest
+        this track's own (a 70 and a 140 BPM track are the same beat; tags often say 70 for 140 BPM dubstep)"""
+        theirs = other.bpm_now()
+        return min((theirs * k for k in (0.5, 1.0, 2.0)), key=lambda b: abs(math.log(b / self.track.bpm)))
+
+    def phase_error(self, other):
+        """how far this deck's beat is from the other's, in this deck's beats (-0.5 .. 0.5; + : this one behind)"""
+        ratio = self.target_bpm(other) / other.bpm_now()
+        return ((other.beat_pos() * ratio) % 1.0 - self.beat_pos() % 1.0 + 0.5) % 1.0 - 0.5
+
+    def follow(self, other):
+        """(each block, while synced) the other deck's tempo, and its beat: while both play, a little faster or
+        slower (at most 1 %) until the beats meet, so they don't drift apart (no grid: the tempo alone)"""
+        self.lock_fix = 0.0
+        if self.synced and self.track and other.track and self.track.bpm and other.track.bpm:
+            want = self.target_bpm(other) / self.track.bpm - 1.0
+            self.pitch = max(-1.0, min(1.0, want / PITCH_RANGE))
+            if self.playing and other.playing and (self.touched or self.bend):
+                self.lock_offset = self.phase_error(other)      # the hand moves it: kept where it's left
+            elif self.playing and other.playing:
+                err = (self.phase_error(other) - self.lock_offset + 0.5) % 1.0 - 0.5
+                self.lock_fix = max(-0.01, min(0.01, err * 0.08))
+
+    def sync_to(self, other):
+        """the other deck's tempo, and its beat when both have a beat grid"""
+        if not (self.track and other.track and self.track.bpm and other.track.bpm):
+            return
+        target = self.target_bpm(other)
+        want = target / self.track.bpm - 1.0
+        self.pitch = max(-1.0, min(1.0, want / PITCH_RANGE))
+        if other.playing or other.pos:           # its beat: the other's phase in this deck's beats (a double or
+            ratio = target / other.bpm_now()      # half tempo: two of the other's beats a beat, or half of one)
+            phase = (other.beat_pos() * ratio) % 1.0
+            mine = self.beat_pos()
+            self.pos += ((phase - mine % 1.0 + 0.5) % 1.0 - 0.5) * self.track.beat_frames()
+
+    # ---- jog
+    def jog_top(self, ticks):
+        if self.vinyl and self.touched:
+            self.scratch_ticks += ticks
+        else:
+            self.jog_edge(ticks)
+
+    def jog_edge(self, ticks):
+        if self.playing:
+            self.bend = max(-0.5, min(0.5, self.bend + ticks * BEND_PER_TICK))
+        elif self.track:                         # stopped: the jog moves through the track (not past its ends)
+            self.pos = max(0.0, min(self.track.frames - 1.0,
+                                    self.pos + ticks * SAMPLES_PER_TICK * self.track.rate / RATE))
+
+    # ---- sound
+    def render(self, n):
+        """-> (pre-fader [n, 2] float32: what PFL hears, the same for the master before the volume fader)"""
+        nm = np()
+        t = self.track
+        silent = nm.zeros((n, 2), nm.float32)
+        if t is None:
+            return self.tone.process(silent)
+        if self.vinyl and self.touched:          # scratching: the record follows the hand (no hand: it stands)
+            step = self.scratch_ticks * SAMPLES_PER_TICK * t.rate / RATE / n
+            self.scratch_ticks = 0
+            positions = self.pos + step * nm.arange(n)
+        elif self.playing:
+            positions = self.pos + self.speed() * nm.arange(n)
+        else:
+            return self.tone.process(silent)
+        if self.roll:                            # the slip position keeps going, as if it had played through
+            self.roll = (self.roll[0] + self.speed() * n, self.roll[1])
+        if self.loop:
+            ls, le = self.loop
+            length = le - ls
+            over = positions >= le
+            if over.any():
+                positions = nm.where(over, ls + (positions - ls) % length, positions)
+        self.bend *= 0.9                         # the nudge eases back
+        if abs(self.bend) < 1e-4:
+            self.bend = 0.0
+        last = positions[-1] + (positions[-1] - positions[-2] if n > 1 else 0)
+        self.pos = float(last)
+        if self.pos >= t.frames - 1:             # the end: stopped there
+            self.pos, self.playing = float(t.frames - 1), False
+        if self.pos < 0:
+            self.pos = 0.0
+        i = nm.clip(positions, 0, t.frames - 2)
+        i0 = i.astype(nm.int64)
+        frac = (i - i0).astype(nm.float32)[:, None]
+        a = t.audio[i0].astype(nm.float32)
+        b = t.audio[i0 + 1].astype(nm.float32)
+        out = (a + (b - a) * frac) / 32768.0
+        gain = (self.gain / 0.5) ** 1.5           # the gain knob: about -inf .. +9 dB, unity in the middle
+        return self.tone.process(out * gain)
+
+
+HEADROOM = 0.7                                # -3 dB: two loud tracks together still fit
+
+
+def limit(x, knee=0.9):
+    """the signal untouched below `knee`, its peaks above it bent smoothly towards 1 (never past it): a limiter on
+    the very top only (a soft clip on everything crunches loud dance tracks)"""
+    nm = np()
+    a = nm.abs(x)
+    over = a > knee
+    if not over.any():
+        return x
+    bent = knee + (1 - knee) * nm.tanh((a - knee) / (1 - knee))
+    return nm.where(over, nm.sign(x) * bent, x).astype(nm.float32)
+
+
+class Engine:
+    def __init__(self):
+        self.decks = [Deck("A"), Deck("B")]
+        self.xfade = 0.5
+        self.leader = 0                          # both synced: the deck the other follows (whose fader moved last)
+        self.lock = threading.Lock()
+        self.peak, self.limited = 0.0, 0          # the master's recent peak, blocks the limiter touched
+
+    def render(self, n=BLOCK):
+        """-> (master [n, 2], headphones [n, 2]) float32"""
+        nm = np()
+        with self.lock:
+            da, db = self.decks
+            if da.synced and db.synced:          # both: the leader's tempo, the other one following it
+                lead = self.decks[self.leader]
+                self.decks[1 - self.leader].follow(lead)
+                lead.lock_fix = 0.0
+            else:
+                da.follow(db)
+                db.follow(da)
+            a, b = (d.render(n) for d in self.decks)
+            ga = math.cos(self.xfade * math.pi / 2)     # constant power
+            gb = math.sin(self.xfade * math.pi / 2)
+            da, db = self.decks
+            master = a * (da.volume * ga) + b * (db.volume * gb)
+            phones = nm.zeros((n, 2), nm.float32)
+            for d, x in ((da, a), (db, b)):
+                if d.pfl:
+                    phones += x
+        master, phones = master * HEADROOM, phones * HEADROOM
+        self.peak = max(self.peak * 0.995, float(nm.abs(master).max()) if len(master) else 0.0)
+        self.limited += int((nm.abs(master) > 0.9).any())
+        return limit(master), limit(phones)
+
+
+# ---------------------------------------------------------------- the Hercules
+
+class Hercules:
+    """the Inpulse 200 MK2's MIDI (Hercules' layout, as Mixxx maps it): channel 1 the browser and crossfader,
+    2 and 3 decks A and B, 4 the browser with SHIFT, 5 and 6 the decks with SHIFT, 7 and 8 their pads; faders and
+    knobs 14-bit (CC n, then CC n+32), the jog's top CC 10 and edge CC 9 (1 / 127: a tick each way), its touch
+    note 8. Its lights: the same note sent back, 127 on, 0 off"""
+
+    def __init__(self, engine, on_browse=lambda step: None, on_load=lambda deck: None, on_push=lambda: None):
+        self.engine, self.on_browse, self.on_load, self.on_push = engine, on_browse, on_load, on_push
+        self.msb = {}
+        self.count = 0                           # messages taken (the log's: is it hearing the controller?)
+        self.inp = self.out = None
+        self.lit = {}
+
+    def open(self, mido):
+        name = next((n for n in mido.get_input_names() if HERCULES in n), None)
+        out = next((n for n in mido.get_output_names() if HERCULES in n), None)
+        if not name:
+            return False
+        self.inp = mido.open_input(name, callback=self.message)
+        if out:
+            self.out = mido.open_output(out)
+            self.out.send(mido.Message.from_bytes([0xB0, 0x7F, 0x7F]))   # tell me where every fader and knob is
+        return True
+
+    def value14(self, ch, cc, value):
+        """a 14-bit control's 0..1 (its coarse half when the fine one hasn't come)"""
+        if cc < 32:
+            self.msb[(ch, cc)] = value
+            return value / 127.0
+        coarse = self.msb.get((ch, cc - 32), 0)
+        return ((coarse << 7) | value) / 16383.0
+
+    def message(self, msg):
+        b = msg.bytes()
+        self.count += 1
+        if len(b) < 3:
+            return
+        kind, ch, num, val = b[0] & 0xF0, b[0] & 0x0F, b[1], b[2]
+        e = self.engine
+        with e.lock:
+            if kind == 0xB0:
+                self.control(ch, num, val)
+            elif kind in (0x90, 0x80):
+                self.button(ch, num, kind == 0x90 and val > 0)
+        self.lights()
+
+    def control(self, ch, cc, val):
+        e = self.engine
+        ticks = val if val < 64 else val - 128
+        if ch == 0:
+            if cc in (0, 32):
+                e.xfade = self.value14(ch, cc, val)
+            elif cc == 1:
+                self.on_browse(ticks)
+            return
+        if ch == 3 and cc == 1:                  # SHIFT + browser: ten at a time
+            self.on_browse(ticks * 10)
+            return
+        if ch in (1, 2, 4, 5):
+            d = e.decks[0 if ch in (1, 4) else 1]
+            if cc == 10:
+                d.jog_top(ticks * (4 if ch in (4, 5) else 1))     # SHIFT + jog: faster through the track
+            elif cc == 9:
+                d.jog_edge(ticks)
+            elif ch in (1, 2):
+                v = self.value14(ch, cc, val)
+                base = cc if cc < 32 else cc - 32
+                if base == 0:
+                    d.volume = v
+                elif base == 1:
+                    d.tone.filter = v
+                elif base == 2:
+                    d.tone.low = v
+                elif base == 4:
+                    d.tone.high = v
+                elif base == 5:
+                    d.gain = v
+                elif base == 8:
+                    d.fader = (0.5 - v) * 2          # up is slower, as on a CDJ and in Serato (checked on the MK2)
+                    other = e.decks[1 - e.decks.index(d)]
+                    if d.synced and other.synced:    # both synced: this deck leads now, the other follows it
+                        e.leader, d.pitch = e.decks.index(d), d.fader
+                    elif d.synced and other.track and d.track and other.track.bpm:
+                        d.pitch = d.fader            # synced to an unsynced deck: that one taken along
+                        want = other.target_bpm(d) / other.track.bpm - 1.0
+                        other.pitch = other.fader = max(-1.0, min(1.0, want / PITCH_RANGE))
+                    else:
+                        d.pitch = d.fader
+
+    def button(self, ch, note, down):
+        e = self.engine
+        if ch == 0:
+            if note == 0 and down:
+                self.on_push()
+            return
+        if ch in (1, 2):
+            d, other = e.decks[ch - 1], e.decks[2 - ch]
+            if note == 4:
+                d.shift = down
+            elif note == 3 and down:
+                d.vinyl = not d.vinyl
+            elif note == 5 and down:
+                d.toggle_sync(other)
+            elif note == 6:
+                d.cue_press(down)
+            elif note == 7 and down:
+                d.play_pause(other)
+            elif note == 8:
+                d.touched = down
+            elif note == 9 and down:
+                d.loop_in()
+            elif note == 10 and down:
+                d.loop_out()
+            elif note == 12 and down:
+                d.pfl = not d.pfl
+            elif note == 13 and down:
+                self.on_load(ch - 1)
+            elif 15 <= note <= 18 and down:
+                d.pad_mode = ("hotcue", "roll", "fx", "sampler")[note - 15]
+        elif ch in (4, 5):                        # with SHIFT
+            d = e.decks[ch - 4]
+            if note == 6 and down and d.track:     # back to the start
+                d.pos, d.cue = 0.0, 0.0
+            elif note == 7 and down and d.track:   # stutter: from the cue, playing
+                d.pos, d.playing = d.cue, True
+            elif note == 9 and down:
+                d.loop_size(0.5)
+            elif note == 10 and down:
+                d.loop_size(2.0)
+            elif note == 8:
+                d.touched = down
+        elif ch in (6, 7):                        # the pads
+            d = e.decks[ch - 6]
+            bank, pad = note // 16, note % 8
+            shifted = note % 16 >= 8
+            if pad > 3:
+                return
+            if bank == 0:
+                d.hotcue(pad, down, clear=shifted)
+            elif bank == 1:
+                d.roll_pad((1, 2, 4, 8)[pad], down)
+
+    def lights(self):
+        """the buttons and pads lit as the decks are"""
+        if not self.out:
+            return
+        import mido
+        want = {}
+        for i, d in enumerate(self.engine.decks):
+            st, pads = 0x91 + i, 0x96 + i
+            want[(st, 7)] = d.playing
+            want[(st, 6)] = bool(d.track) and abs(d.pos - d.cue) < 1 and not d.playing
+            want[(st, 12)] = d.pfl
+            want[(st, 3)] = d.vinyl
+            want[(st, 9)] = bool(d.loop)
+            want[(st, 5)] = d.synced
+            for k in range(4):
+                want[(pads, k)] = bool(d.track and k in d.track.cues)
+        for (st, note), on in want.items():
+            if self.lit.get((st, note)) != on:
+                self.out.send(mido.Message.from_bytes([st, note, 127 if on else 0]))
+                self.lit[(st, note)] = on
+
+
+# ---------------------------------------------------------------- sound out
+
+def sinks():
+    """(the Hercules's sound card, a Bluetooth speaker): their PipeWire node names, or None"""
+    import json
+    try:
+        objects = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=10).stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None, None
+    herc = bt = None
+    for o in objects:
+        p = (o.get("info") or {}).get("props") or {}
+        name = str(p.get("node.name", ""))
+        if p.get("media.class") == "Audio/Sink" and "Inpulse_200" in name:
+            herc = name
+        elif p.get("media.class") == "Audio/Sink" and name.startswith("bluez_output."):
+            bt = bt or name
+    return herc, bt
+
+
+class Output:
+    """the master to the Studio's Bluetooth speaker (else the Hercules's master out, its channels 1-2, else the
+    default output), the headphones to the Hercules's headphone out (its channels 3-4). Two streams, each written a
+    block at a time (the writes pace the engine: real time)"""
+
+    def __init__(self):
+        self.herc, self.bt = sinks()
+        self.streams = []
+        if self.bt:
+            self.master = self.stream("fm1-decks", "DECKS", 2, self.bt, None)
+        elif self.herc:
+            self.master = self.stream("fm1-decks", "DECKS", 2, self.herc, "FL,FR")
+        else:
+            self.master = self.stream("fm1-decks", "DECKS", 2, None, None)
+        self.phones = self.stream("fm1-decks-cue", "DECKS CUE", 2, self.herc, "RL,RR") if self.herc else None
+
+    def stream(self, node, label, ch, target, channel_map):
+        cmd = ["pw-cat", "--playback", "--raw", "--rate", str(RATE), "--channels", str(ch), "--format", "s16",
+               "--latency", "1024", "-P", f"{{ node.name = {node} node.description = \"{label}\" }}"]
+        if target:
+            cmd += ["--target", target]
+        if channel_map:
+            cmd += ["--channel-map", channel_map]
+        proc = subprocess.Popen(cmd + ["-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            import fcntl
+            fcntl.fcntl(proc.stdin.fileno(), 1031, 8192)            # F_SETPIPE_SZ: a short pipe, short delay
+        except OSError:
+            pass
+        self.streams.append(proc)
+        return proc
+
+    def write(self, master, phones):
+        n = np()
+        for proc, x in ((self.master, master), (self.phones, phones)):
+            if proc is not None:
+                proc.stdin.write((n.clip(x, -1, 1) * 32767).astype(n.int16).tobytes())
+
+    def close(self):
+        for proc in self.streams:
+            try:
+                proc.stdin.close()
+                proc.wait(3)
+            except (OSError, subprocess.TimeoutExpired):
+                proc.kill()
+
+
+# ---------------------------------------------------------------- running it
+
+class Decks:
+    """the engine, the Hercules, the browser and the sound, together"""
+
+    def __init__(self, folder=djlib.MUSIC):
+        self.engine = Engine()
+        self.folder = folder
+        self.library = []                        # [(rel, entry)] sorted by title
+        self.cursor = 0
+        self.loads = queue.Queue()
+        self.hercules = Hercules(self.engine, self.browse, self.load_selected, lambda: None)
+        self.stop = threading.Event()
+        self.memory = self.read_memory()         # {"tracks": {rel: {"cues", "colors", "cue"}}, "session": {...}}
+        self.saved = None
+        self.on_loaded = lambda deck, track: None
+        self.scanning = None                     # "12/37" while the folder is being scanned
+        self.refresh()
+
+    def refresh(self):
+        cache = djlib.load_cache(self.folder)
+        self.library = sorted(cache.items(), key=lambda kv: (kv[1].get("title") or kv[0]).lower())
+
+    # ---- what's kept: each track's cues as set here, and the session (the decks' tracks, where, how)
+
+    def read_memory(self):
+        import json
+        try:
+            mem = json.loads((self.folder / MEMORY).read_text())
+            return {"tracks": dict(mem.get("tracks") or {}), "session": dict(mem.get("session") or {})}
+        except (OSError, ValueError, AttributeError):
+            return {"tracks": {}, "session": {}}
+
+    def snapshot(self):
+        """(under the engine's lock) the memory as it is now"""
+        tracks = dict(self.memory["tracks"])
+        decks = []
+        for d in self.engine.decks:
+            t = d.track
+            if t is None:
+                decks.append(None)
+                continue
+            tracks[t.rel] = {"cues": {str(k): round(v / t.rate, 3) for k, v in t.cues.items()},
+                             "colors": {str(k): c for k, c in t.cue_colors.items() if c},
+                             "cue": round(d.cue / t.rate, 3)}
+            decks.append({"rel": t.rel, "pos": round(d.pos / t.rate, 2), "fader": round(d.fader, 4),
+                          "synced": d.synced, "pfl": d.pfl, "pad_mode": d.pad_mode})
+        return {"tracks": tracks, "session": {"decks": decks, "cursor": self.cursor}}
+
+    def save_memory(self, force=False):
+        import json
+        with self.engine.lock:
+            mem = self.snapshot()
+        text = json.dumps(mem, indent=1, sort_keys=True)
+        if text == self.saved and not force:
+            return
+        self.memory = mem
+        try:
+            tmp = self.folder / (MEMORY + ".tmp")
+            tmp.write_text(text)
+            tmp.replace(self.folder / MEMORY)
+            self.saved = text
+        except OSError:
+            pass
+
+    def keeper(self):
+        """the memory written a few seconds after anything in it changed"""
+        while not self.stop.wait(3.0):
+            self.save_memory()
+
+    def remembered(self, track):
+        """a track's cues as last set here, over its tags' (Serato's)"""
+        mem = self.memory["tracks"].get(track.rel)
+        if not mem:
+            return None
+        track.cues = {int(k): float(v) * track.rate for k, v in (mem.get("cues") or {}).items() if int(k) < 4}
+        track.cue_colors = {int(k): c for k, c in (mem.get("colors") or {}).items() if int(k) < 4}
+        return mem.get("cue")
+
+    def restore(self):
+        """the last session: each deck's track loaded again, paused where it was, as it was set"""
+        session = self.memory.get("session") or {}
+        by_rel = dict(self.library)
+        self.cursor = max(0, min(len(self.library) - 1, int(session.get("cursor") or 0))) if self.library else 0
+        for i, state in enumerate((session.get("decks") or [])[:2]):
+            if state and state.get("rel") in by_rel:
+                self.loads.put((i, (state["rel"], by_rel[state["rel"]]), state))
+
+    def browse(self, step):
+        if self.library:
+            self.cursor = max(0, min(len(self.library) - 1, self.cursor + step))
+
+    def load_selected(self, deck):
+        if self.library:
+            self.loads.put((deck, self.library[self.cursor]))
+
+    def note(self, text):
+        print(text, flush=True)
+
+    def loader(self):
+        while not self.stop.is_set():
+            try:
+                item = self.loads.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            deck, (rel, entry), state = item if len(item) == 3 else (*item, None)
+            d = self.engine.decks[deck]
+            d.loading, d.error = rel, None
+            try:
+                track = Track(self.folder / rel, entry, rel)
+                cue = self.remembered(track)
+                with self.engine.lock:
+                    d.load(track)
+                    if cue is not None:          # its cue as set here last time
+                        d.cue = d.pos = min(float(cue) * track.rate, track.frames - 1)
+                    if state:                    # the last session: where it was, as it was set (paused)
+                        d.pos = min(float(state.get("pos") or 0) * track.rate, track.frames - 1)
+                        d.fader = d.pitch = float(state.get("fader") or 0.0)
+                        d.synced = bool(state.get("synced"))
+                        d.pfl = bool(state.get("pfl"))
+                        d.pad_mode = state.get("pad_mode") or "hotcue"
+                self.on_loaded(deck, track)
+            except Exception as e:               # a file that won't decode: said, not crashed on
+                d.error = str(e)[:60]
+            d.loading = None
+            self.hercules.lights()
+
+    def run(self):
+        import mido
+        try:
+            found = self.hercules.open(mido)
+        except Exception:                        # (no MIDI at all: the screen still plays them)
+            found = False
+        if not found:
+            self.note("no Hercules found: the decks play from the screen only")
+        threading.Thread(target=self.loader, daemon=True).start()
+        threading.Thread(target=self.keeper, daemon=True).start()
+        self.restore()
+        out = Output()
+        try:
+            while not self.stop.is_set():
+                master, phones = self.engine.render(BLOCK)
+                out.write(master, phones)        # the write waits for room: real time
+        finally:
+            out.close()
+
+    def status(self):
+        """what the screen shows"""
+        rows = []
+        for d in self.engine.decks:
+            t = d.track
+            rows.append({"name": d.name, "title": t.title if t else None, "artist": t.artist if t else "",
+                         "bpm": round(d.bpm_now(), 1) if d.bpm_now() else None, "key": t.key if t else None,
+                         "pos": d.pos / t.rate if t else 0.0, "len": t.frames / t.rate if t else 0.0,
+                         "playing": d.playing, "pitch": round(d.pitch * PITCH_RANGE * 100, 2), "loop": bool(d.loop),
+                         "synced": d.synced, "camelot": djlib.camelot(t.key) if t and t.key else None,
+                         "cues": sorted([k, round(v / t.frames, 4), t.cue_colors.get(k) or CUE_COLORS[k]]
+                                        for k, v in t.cues.items()) if t else [],
+                         "loop_at": [round(v / t.frames, 4) for v in d.loop] if t and d.loop else None,
+                         "pfl": d.pfl, "volume": d.volume, "loading": d.loading, "error": d.error})
+        sel = self.library[self.cursor] if self.library else None
+        return {"decks": rows, "xfade": self.engine.xfade, "cursor": self.cursor, "count": len(self.library),
+                "scanning": self.scanning,
+                "selected": sel and {"title": sel[1].get("title"), "bpm": sel[1].get("bpm"),
+                                     "key": sel[1].get("key"), "camelot": sel[1].get("camelot")}}
+
+
+    # ---- the Companion's side talks to this one through stdin / stdout, a JSON message a line (DeckProcess)
+
+    def scan(self, say):
+        def progress(i, n, name):
+            self.scanning = f"{i + 1}/{n}"
+        try:
+            djlib.scan(self.folder, progress=progress)
+        except OSError as e:
+            say({"error": f"scan: {e}"[:60]})
+        self.scanning = None
+        self.refresh()
+        say(self.library_message())
+
+    def library_message(self):
+        return {"library": [[rel, e.get("title") or rel, e.get("artist") or "", e.get("bpm"), e.get("key"),
+                             e.get("camelot")] for rel, e in self.library]}
+
+    def command(self, cmd, say):
+        """one message from the screen: [name, args...]"""
+        name, args = cmd[0], cmd[1:]
+        e = self.engine
+        with e.lock:
+            d = e.decks[args[0]] if args and isinstance(args[0], int) and name not in ("select", "browse") \
+                else None
+            if name == "play" and d:
+                d.play_pause(e.decks[1 - args[0]])
+            elif name == "cue" and d:
+                d.cue_press(bool(args[1]))
+            elif name == "sync" and d:
+                d.toggle_sync(e.decks[1 - args[0]])
+            elif name == "pfl" and d:
+                d.pfl = not d.pfl
+            elif name == "gotocue" and d and d.track and int(args[1]) in d.track.cues:   # a cue's tag tapped
+                d.pos = d.track.cues[int(args[1])]
+            elif name == "clearcue" and d and d.track:        # a cue's tag held: gone
+                d.hotcue(int(args[1]), True, clear=True)
+            elif name == "seek" and d and d.track:          # a tap on the overview: there
+                d.pos = max(0.0, min(1.0, float(args[1]))) * (d.track.frames - 1)
+            elif name == "select" and self.library:
+                self.cursor = max(0, min(len(self.library) - 1, int(args[0])))
+            elif name == "browse":
+                self.browse(int(args[0]))
+        if name == "load":
+            self.load_selected(int(args[0]))
+        elif name == "scan" and not self.scanning:
+            self.scanning = "starting"
+            threading.Thread(target=self.scan, args=(say,), daemon=True).start()
+        self.hercules.lights()
+
+
+def serve():
+    """run for the Companion: commands in on stdin, the status (5 a second), the library and each loaded
+    track's overview out on stdout"""
+    import json
+    import sys
+    decks = Decks()
+    lock = threading.Lock()
+
+    def say(obj):
+        with lock:
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+    decks.note = lambda text: say({"note": text})
+    decks.on_loaded = lambda deck, track: say({"overview": [deck, track.overview]})
+    say(decks.library_message())
+
+    def status():
+        while not decks.stop.is_set():
+            say({"status": decks.status()})
+            time.sleep(0.2)
+    threading.Thread(target=status, daemon=True).start()
+    threading.Thread(target=decks.run, daemon=True).start()
+    for line in sys.stdin:                       # (stdin closed: the Companion is gone)
+        try:
+            cmd = json.loads(line)
+        except ValueError:
+            continue
+        if cmd == ["quit"]:
+            break
+        try:
+            decks.command(cmd, say)
+        except Exception as e:                   # (one bad message never stops the music)
+            say({"error": str(e)[:80]})
+    decks.save_memory()                          # (the last word: the session as it ends)
+    decks.stop.set()
+    time.sleep(0.3)
+
+
+class DeckProcess:
+    """the Companion's side: decks.py --serve started as a program of its own (dies with the Companion), its
+    messages read on a thread: the latest status, the library, each deck's overview"""
+
+    def __init__(self, on_change=lambda: None):
+        self.proc, self.on_change = None, on_change
+        self.status, self.library, self.overviews, self.note = None, [], {0: [], 1: []}, None
+
+    def running(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self):
+        import ctypes
+        import signal
+        import sys
+        if self.running():
+            return
+        self.status, self.overviews, self.note = None, {0: [], 1: []}, None   # (nothing left from a last run)
+        libc = ctypes.CDLL(None)
+        self.proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--serve"],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                     text=True, bufsize=1, preexec_fn=lambda: libc.prctl(1, signal.SIGTERM))
+        threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
+
+    def read(self, proc):
+        import json
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if "status" in msg:
+                self.status = msg["status"]
+            elif "library" in msg:
+                self.library = msg["library"]
+            elif "overview" in msg:
+                self.overviews[msg["overview"][0]] = msg["overview"][1]
+            elif "note" in msg or "error" in msg:
+                self.note = msg.get("note") or msg.get("error")
+            self.on_change()
+
+    def send(self, *cmd):
+        import json
+        if self.running():
+            try:
+                self.proc.stdin.write(json.dumps(list(cmd)) + "\n")
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def stop(self):
+        if self.running():
+            self.send("quit")
+            try:
+                self.proc.wait(3)
+            except subprocess.TimeoutExpired:
+                self.proc.terminate()
+        self.proc, self.status = None, None
+
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:2] == ["scan"]:
+        djlib.main(["scan"])
+    elif sys.argv[1:2] == ["--serve"]:
+        serve()
+    else:
+        decks = Decks()
+        print(f"{len(decks.library)} tracks; the Hercules: browse, LOAD A / B, play")
+
+        def show():
+            last = None
+            while True:
+                s = decks.status()
+                line = " | ".join(f"{r['name']}: {(r['title'] or '-')[:24]} {r['bpm'] or ''} "
+                                  f"{'PLAY' if r['playing'] else 'stop'} {r['pos']:6.1f}s" for r in s["decks"])
+                sel = s["selected"]
+                line += f" || {s['cursor'] + 1}/{s['count']} {(sel or {}).get('title', '')[:30]}"
+                e = decks.engine
+                line += " || " + " ".join(f"{d.name}: gain {d.gain:.2f} vol {d.volume:.2f} lo {d.tone.low:.2f} "
+                                          f"hi {d.tone.high:.2f} filt {d.tone.filter:.2f}" for d in e.decks)
+                line += f" xf {e.xfade:.2f} peak {e.peak:.2f} limited {e.limited}"
+                line += " || " + " ".join(f"{d.name}: fader {d.fader:+.2f} pitch {d.pitch:+.2f} sync {int(d.synced)}"
+                                          for d in e.decks)
+                line += f" msgs {decks.hercules.count}"
+                if line != last:
+                    print(line, flush=True)
+                    last = line
+                time.sleep(0.5)
+        threading.Thread(target=show, daemon=True).start()
+        decks.run()

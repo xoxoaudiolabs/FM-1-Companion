@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw
 import blemidi
 import library
 import sloopstyle as st
+from deskdecks import DeskDecks
 from deskpads import DeskPads
 from deskpages import HOLD, DeskPages
 
@@ -39,7 +40,8 @@ DAW_KEYS = [("<<", "rewind"), (">>", "forward"), ("STOP", "stop"), ("PLAY", "pla
             ("LOOP", "loop")]
 MORE = [("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("menu", "play")),
         ("AUDIO", ("menu", "audio")), ("MIDI SETTINGS", ("menu", "midi")), ("WI-FI", ("wifi", None)),
-        ("THEME", ("theme", None)), ("TOUCH SETUP", ("calibrate", None)), ("SHUT DOWN", ("off", None))]
+        ("THEME", ("theme", None)), ("TOUCH SETUP", ("calibrate", None)), ("DJ DECKS", ("decks", None)),
+        ("SHUT DOWN", ("off", None))]
 THEMES = ["FOLLOW FM-1 A"] + st.NAMES
 APPS = {                                        # FM-1 firmwares running on the Studio itself, played from FM-1 A's
     "sloop": ("SLOOP", Path.home() / ".local/share/sloop-remote-out/sloop-remote-out"),       # REMOTE OUT (SLOOP
@@ -57,12 +59,13 @@ APP_SHOW = getattr(signal, "SIGUSR2", 12)       # (Linux's numbers where there a
 HIDDEN_METERS = ("Tuner",)                      # meters the Studio leaves out (the Pocket keeps all eleven)
 
 
-class DeskUI(DeskPages, DeskPads):
+class DeskUI(DeskPages, DeskPads, DeskDecks):
     def __init__(self, app, display):
         self.app, self.display = app, display
         self.tab, self.classic = "HOME", False      # (classic: never, now; desk.Touch still asks)
         self.page_init()
         self.pads_init()
+        self.decks_init()
         self.widgets, self.held, self.shown = [], None, None
         self.theme, self.theme_seen, self.theme_check = st.Theme(), None, 0.0
         self.more_top = 0
@@ -141,6 +144,7 @@ class DeskUI(DeskPages, DeskPads):
         base = (self.tab, self.held and self.held[0], self.theme.name, id(self.theme), rec, a.live(), a.volume,
                 json.dumps(a.state.get("mix")), a.state.get("rec_parts"), str(a.battery), a.clock_text(),
                 a.jack and a.jack["name"], a.state.get("phones"), tuple(a.cued()), a.state.get("cue_mix"),
+                tuple(sorted(getattr(a, "app_here", ()))),
                 a.message if now < a.message_until else None, tuple(self.sources()),
                 a.sink and a.sink["label"], a.state.get("desk_theme"), self.more_top)
         if self.tab == "MIDI":
@@ -152,6 +156,8 @@ class DeskUI(DeskPages, DeskPads):
         if self.tab == "DAW":
             base += (json.dumps(getattr(a.midi, "mcu", None)), tuple(getattr(a.midi, "net", None) or ()),
                      json.dumps(sorted(self.daw_local.items())))
+        if self.tab == "DECKS":
+            base += self.decks_view()
         return base
 
     def settle(self):
@@ -198,7 +204,7 @@ class DeskUI(DeskPages, DeskPads):
             self.draw_page(img, ImageDraw.Draw(img), now)
         else:
             getattr(self, "draw_" + self.tab.lower())(img, ImageDraw.Draw(img), now)
-            if not self.pads_screen():                       # a pad's page, kits, sampling: full screen
+            if not self.pads_screen() and self.tab != "DECKS":   # a pad's page, kits, sampling, the decks: full
                 self.draw_tabs(img)
         a = self.app
         if a.busy:
@@ -609,9 +615,12 @@ class DeskUI(DeskPages, DeskPads):
             self.widget((x0, top_k - 10, x0 + width - 1, bottom + 10), "slide",
                         lambda f, key=key, most=most: self.slide(key, f, most), ("slide", key))
             box = (x0 + 6, H - TAB_H - 36, x0 + width - 7, H - TAB_H - 6)
-            if a.jack and key in nodes:      # a DJ mixer's cue: this source on the jack, before its fader
+            if a.jack and (key in nodes or key in APPS):   # a DJ mixer's cue: this source on the jack, before
+                                             # its fader (a Studio app's: after it, its level set on its sound; lit
+                                             # while it's off too, heard once it plays)
                 self.button(img, d, box, "CUE", lambda key=key: a.toggle_cue(key), color=t.track[k],
-                            on=key in a.cued(), key=("cue", key))
+                            on=key in a.cued() or (key in APPS and key in (a.state.get("cues") or [])),
+                            key=("cue", key))
             elif key == "phones":            # the jack's blend of the cued sources and the main mix
                 m = a.state.get("cue_mix", 50)
                 self.button(img, d, box, blend.get(m, f"{m}"), a.next_cue_mix, key="cue-mix")
@@ -827,7 +836,8 @@ class DeskUI(DeskPages, DeskPads):
             value = (self.theme_label() if what[0] == "theme" else
                      ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else
                      ("ON" if what[1] in self.app_procs else "OFF")
-                     if what[0] == "studio_app" else "")
+                     if what[0] == "studio_app" else
+                     ("ON" if self.decks_proc and self.decks_proc.running() else "OFF") if what[0] == "decks" else "")
             dy = -8 if value else 0
             self.centre(img, (box[0], box[1] + dy, box[2], box[3] + dy), label,
                         t.bg if hot else (255, 112, 92) if off else t.c[4])
@@ -862,6 +872,9 @@ class DeskUI(DeskPages, DeskPads):
             return
         if kind == "studio_app":
             self.start_app(arg)
+            return
+        if kind == "decks":
+            self.open_decks()
             return
         if kind == "off":                          # the Studio has no power key: shut down, held to confirm
             a.ask("Shut down?", ["The Studio switches off.", "Recordings are finished first."], a.shutdown,
@@ -903,6 +916,8 @@ class DeskUI(DeskPages, DeskPads):
         for other in APPS:
             if other != key:
                 clocks += ["--clock-out", str(run / f"fm1-{other}-midi")]
+        if key == "sloop":                      # its editor protocol's replies (library.py --studio reads them)
+            clocks += ["--sysex-out", str(run / "fm1-sloop-sysex")]
         try:
             if not fifo.exists():
                 os.mkfifo(fifo, 0o600)
@@ -968,6 +983,20 @@ class DeskUI(DeskPages, DeskPads):
         self.display.last = None                  # the app drew over it: the next frame is written whole
         self.shown = None
         self.open_tab("HOME")
+
+    def stop_app(self, key):
+        """an app stopped and waited for (it saves as it stops: SIGTERM), as HOLD OFF does; nothing if it's off"""
+        import subprocess
+        proc = self.app_procs.get(key)
+        if proc is None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(5)
+        self.end_app(key)
 
     def end_app(self, key):
         """an app gone (HOLD OFF, or it stopped): if it had the screen, the Companion's again"""

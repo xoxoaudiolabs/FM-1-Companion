@@ -135,6 +135,9 @@ class MidiStream:
 FM1_IDS = ("0x1209:0x01", "pid.codes")    # the FM-1's USB ID, its ALSA name when its own name couldn't be read
 
 
+DJ_CONTROLLERS = ("djcontrol",)                # Hercules DJControl: the Studio's DJ decks read it themselves
+
+
 class UsbMidi:
     """One FM-1's USB MIDI ports through mido, reopened when the FM-1 comes and goes. Found by its name (or USB
     ID) only: anything else on a USB hub is a controller (UsbControllers), never taken for the FM-1. With two
@@ -766,6 +769,8 @@ class UsbControllers:
             low = name.lower()
             if (any(s in low for s in UsbMidi.SKIP) or any(m in low for m in self.fm1.match)
                     or ADDRESS.search(name) or sloop.port_card(name) in fm1s):   # (an FM-1's, by its card)
+                continue
+            if any(d in low for d in DJ_CONTROLLERS):  # a DJ controller: the decks' (decks.py), not a keyboard
                 continue
             out.setdefault(name.split(":")[0], name)
         return out

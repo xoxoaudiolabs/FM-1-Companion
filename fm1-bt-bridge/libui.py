@@ -74,7 +74,10 @@ class LibraryScreens:
     def job_busy(self):
         return job_running(self.library_state())
 
-    def start_job(self, args, title, show=True):
+    def start_job(self, args, title, show=True, web=False):
+        if not web and args and args[0] in library.STUDIO_JOBS and "--auto" not in args \
+                and self.library_target() == "sloop":
+            args = ["--studio", *args]        # Settings > Sloop set to SLOOP on the Studio (auto backups: the FM-1)
         error = library.spawn(args)           # its own unit: survives a restart of the bridge
         if error:
             self.say(f"Can't start: {error}"[:40])
@@ -145,13 +148,61 @@ class LibraryScreens:
             return
         self.pick = None
         self.ask(title, (request.get("lines") or [])[:2] + ["from the web page"],
-                 lambda: self.start_job(args, title), back="status")
+                 lambda: self.start_job(args, title, web=True), back="status")
         self.last_activity = time.monotonic()
         self.wake()
 
     def flash_running(self):
         state = self.job_busy()
         return bool(state and state.get("job") == "flash")
+
+    # ---- what Settings > Sloop works on: an FM-1, or an app on the Studio
+    def library_targets(self):
+        """[(key, label)]: "fm1", and on the Studio "sloop" and "x0x" once they're installed there"""
+        targets = [("fm1", "FM-1")]
+        desk = getattr(self, "desk", None)
+        if desk is not None:
+            import deskui
+            for key, label in (("sloop", "SLOOP Studio"), ("x0x", "X0X Studio")):
+                if key in deskui.APPS and deskui.APPS[key][1].exists():
+                    targets.append((key, label))
+        return targets
+
+    def library_target(self):
+        target = self.state.get("library_target", "fm1")
+        return target if target in dict(self.library_targets()) else "fm1"
+
+    def x0x_backup(self):
+        try:
+            path = library.x0x_backup()
+        except (library.x0x.X0XError, OSError) as e:
+            self.say(str(e)[:40])
+            return
+        self.say(f"X0X backed up: {short_date(path.name)}", 2)
+
+    def x0x_pick_restore(self):
+        items = [(short_date(b["name"]), b["name"][:-4].split("_")[-1][:10], b["name"])
+                 for b in library.listing()["x0x"] if not b.get("damaged")]
+        self.open_pick("Restore X0X", items, self.x0x_ask_restore, "No X0X backups yet")
+
+    def x0x_ask_restore(self, name):
+        path = library.folder("x0x") / name
+        running = getattr(self, "desk", None) is not None and "x0x" in self.desk.app_procs
+        self.ask("Restore X0X?", [short_date(name), "X0X stops first (it saves)" if running else "replaces its project",
+                                  "(backed up first)"],
+                 lambda: self.x0x_restore(path))
+
+    def x0x_restore(self, path):
+        """X0X stopped if it runs (it saves on the way), the backup put in, X0X off until PLAY X0X opens it"""
+        if getattr(self, "desk", None) is not None:
+            self.desk.stop_app("x0x")
+        try:
+            library.x0x_restore(path)
+        except (library.x0x.X0XError, OSError) as e:
+            self.say(str(e)[:40])
+            return
+        self.screen, self.pick = "settings", None
+        self.say("X0X restored: open it with PLAY X0X", 3)
 
     # ---- the menu
     def library_choose(self, key):

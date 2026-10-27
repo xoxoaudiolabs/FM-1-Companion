@@ -43,6 +43,46 @@ def write_wav(path, seconds=0.3, hz=220):
     return path
 
 
+def test_x0x_studio_backups():
+    """X0X on the Studio: its store.bin to X0X's own .x0b and back, checked as X0X checks one"""
+    import x0x
+    state = TMP / "x0x" / "store.bin"
+    objs = {0: b"S" * 32, 1: bytes(range(256)) * 5, 2: b"" * 900, 3: b"pat2", 4: b"PANEL", 5: b"song",
+            6: b"moti"}
+    x0x.write_state(objs, {}, state)
+    now, before = x0x.read_state(state)
+    assert now == objs and all(v is None for v in before.values())
+    path = library.x0x_backup(state=state)
+    assert path.parent.name == "x0x" and path.suffix == ".x0b"
+    image = path.read_bytes()
+    assert image[:4] == b"X0XB" and x0x.read_backup(image) == {o: objs[o] for o in x0x.OBJECTS}
+    assert library.listing()["x0x"][0]["parts"] == [x0x.NAMES[o] for o in x0x.OBJECTS]
+    # what X0X's tools/x0x_backup.py writes: the same layout (head, 6 records, tail), so its files load here too
+    rec = b"".join(struct.pack("<HHI", o, len(objs[o]), x0x.crc32(objs[o])) + objs[o] for o in x0x.OBJECTS)
+    head = b"X0XB" + struct.pack("<HHI", 1, 6, 0)
+    body = head + struct.pack("<I", x0x.crc32(head)) + rec
+    assert image == body + struct.pack("<I", x0x.crc32(body))
+    # restored: each object replaced, the one before kept, the panel's calibration left; a safety backup first
+    other = {**objs, 1: b"new sounds", 6: b""}
+    newer = TMP / "newer.x0b"
+    newer.write_bytes(x0x.make_backup(other))
+    before_path = library.x0x_restore(newer, state)
+    now, before = x0x.read_state(state)
+    assert now[1] == b"new sounds" and now[6] is None and now[4] == b"PANEL" and before[1] == objs[1]
+    assert before_path and "before-restore" in before_path.name
+    assert x0x.read_backup(before_path.read_bytes())[1] == objs[1]
+    # damaged: refused before anything is written
+    bad = bytearray(newer.read_bytes())
+    bad[40] ^= 1
+    newer.write_bytes(bytes(bad))
+    try:
+        library.x0x_restore(newer, state)
+        raise AssertionError("a damaged backup was taken")
+    except x0x.X0XError:
+        pass
+    assert x0x.read_state(state)[0][1] == b"new sounds"
+
+
 def test_firmware_label():
     """The screens say what the FM-1 runs, not its USB name (Felucca whatever the firmware)."""
     saved, library.FIRMWARE = library.FIRMWARE, TMP / "fm1-firmware.json"

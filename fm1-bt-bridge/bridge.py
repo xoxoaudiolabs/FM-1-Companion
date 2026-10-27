@@ -57,6 +57,7 @@ DEFAULTS = {
     "click": "mid",         # its level: "low", "mid", "high"
     "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
     "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
+    "library_target": "fm1",  # Settings > Sloop works on: "fm1" (an FM-1), or on the Studio "sloop" or "x0x"
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
     "rec_parts": False,     # while mixing, recordings also keep each source on its own ("..._fm1-a.wav" etc.)
     "inputs": {},           # a multichannel USB source's first channel taken (0: 1-2, 2: 3-4 ...), by mixer key
@@ -795,6 +796,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
         self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
         self.app_set = {}                     # mixer key -> (node id, level) last set on a Studio app's sound
+        self.app_here = set()                 # the Studio apps whose sound is there now (their mixer keys)
         self.box = {"build": "pocket", "board": "", "screen": None, "can": set()}   # main() fills it in
         self.desk = None                      # the desk box's touch screens (deskui.DeskUI), from main()
         self.pads = None                      # the Studio's sampler (pads.PadProcess), from main()
@@ -909,8 +911,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         channels = self.mix_channels()
         main, copy = self.outputs()
         self.jack_loop.ensure(copy and "monitor:" + main, copy, "fm1-phones")
+        app_ids = {key: next((o.get("id") for o in objects
+                              if ((o.get("info") or {}).get("props") or {}).get("node.name") == node), None)
+                   for key, node in APP_NODES.items()}
+        self.app_here = {key for key, app_id in app_ids.items() if app_id is not None}
         cued = [(key, node["name"], self.input_pair(key, node)) for key, node in channels if key in self.cued()]
-        self.cue_mixer.ensure(self.jack and self.jack["name"], cued)
+        cued += [(key, APP_NODES[key], None) for key in sorted(self.app_here) if key in self.cued()]   # an app:
+        self.cue_mixer.ensure(self.jack and self.jack["name"], cued)   # its stream, after its level (set there)
         cue_level, main_level = self.cue_levels()
         self.cue_mixer.set_levels(objects, {key: cue_level for key, _, _ in cued})
         copy_id = next((o.get("id") for o in objects
@@ -918,9 +925,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if copy_id is not None and self.copy_set != (copy_id, main_level):
             run(["wpctl", "set-volume", str(copy_id), f"{main_level / 100:.2f}"], timeout=5)
             self.copy_set = (copy_id, main_level)
-        for key, node in APP_NODES.items():   # a Studio app playing (it goes to the speaker by itself): its level
-            app_id = next((o.get("id") for o in objects
-                           if ((o.get("info") or {}).get("props") or {}).get("node.name") == node), None)
+        for key, app_id in app_ids.items():   # a Studio app playing (it goes to the speaker by itself): its level
             if app_id is not None and self.app_set.get(key) != (app_id, self.mix_level(key)):
                 run(["wpctl", "set-volume", str(app_id), f"{self.mix_level(key) / 100:.2f}"], timeout=5)
                 self.app_set[key] = (app_id, self.mix_level(key))
@@ -955,7 +960,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
 
     def cued(self):
         """the mixer keys cued to the jack that are plugged in (none without a jack)"""
-        here = {key for key, _ in self.mix_channels()}
+        here = {key for key, _ in self.mix_channels()} | self.app_here      # (the Studio apps too, while they play)
         return [key for key in self.state.get("cues") or [] if key in here] if self.jack else []
 
     def cue_levels(self):
@@ -1263,8 +1268,19 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         tempo = f"{self.state['bpm']} BPM"
         onoff = lambda on: "on" if on else "off"      # noqa: E731
         if self.settings_menu == "sloop":     # SLOOP 2.3+'s editor protocol
+            targets = self.library_targets()
+            target = ([("library_target", "For", dict(targets)[self.library_target()])] if len(targets) > 1 else [])
+            if self.library_target() == "x0x":    # X0X on the Studio: its project, in X0X's own backups
+                return target + [("x0x_backup", "Back up now", ""), ("x0x_restore", "Restore", "›"),
+                                 ("sd", "Import SD card", "")]
             which = ([("library_fm1", "FM-1", self.state["library_fm1"])]       # only with two FM-1s plugged in
                      if self.midi and getattr(self.midi, "usb_b", None) else [])
+            which = target + which
+            if self.library_target() == "sloop":  # SLOOP on the Studio: the FM-1's jobs, through its FIFOs
+                return target + [("backup", "Back up now", ""), ("restore", "Restore", "›"),
+                                 ("project", "Load project", "›"), ("sample", "Load sample", "›"),
+                                 ("sample_level", "Sample level", self.state["sample_level"]),
+                                 ("sd", "Import SD card", "")]
             return which + [("backup", "Back up now", ""), ("restore", "Restore", "›"),
                             ("project", "Load project", "›"), ("sample", "Load sample", "›"),
                             ("sample_level", "Sample level", self.state["sample_level"]),
@@ -1343,6 +1359,16 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.state["rec_parts"] = not self.state["rec_parts"]
             self.save_settings()
             self.say("Recordings keep each source too" if self.state["rec_parts"] else "Recordings: the mix only", 2)
+        elif key == "library_target":
+            keys = [k for k, _ in self.library_targets()]
+            now = self.library_target()
+            self.state["library_target"] = keys[(keys.index(now) + 1) % len(keys)]
+            self.save_settings()
+            self.say(f"Sloop page: {dict(self.library_targets())[self.library_target()]}", 2)
+        elif key == "x0x_backup":
+            self.x0x_backup()
+        elif key == "x0x_restore":
+            self.x0x_pick_restore()
         elif key == "library_fm1":
             self.state["library_fm1"] = "B" if self.state["library_fm1"] == "A" else "A"
             self.save_settings()

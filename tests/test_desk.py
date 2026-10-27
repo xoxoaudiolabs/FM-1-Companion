@@ -244,6 +244,13 @@ def test_decks_screen():
         library = [["a.mp3", "Curtains", "7 Keys", 140.0, "E", "12B"],
                    ["b.mp3", "Organ Donor", "Zomboy", 140.0, "F#m", "11A"]]
         overviews, note = {0: [0.5] * 220, 1: []}, None
+        library_n = note_n = 0
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
         status = {"decks": [{"title": "Curtains", "artist": "7 Keys", "bpm": 140.0, "key": "E", "camelot": "12B",
                              "pos": 10.0, "len": 240.0, "playing": True, "pitch": 0.0, "cues": [0.1]}, {}],
                   "xfade": 0.5, "cursor": 0, "scanning": None}
@@ -271,11 +278,34 @@ def test_decks_screen():
     box = keys[("deck-cue", 1)][0]
     ui.touch("down", box[0] + 2, box[1] + 2, 0.0)
     ui.touch("up", box[0] + 2, box[1] + 2, 0.2)
-    box = keys[("deck-seek", 0)][0]
-    ui.touch("down", (box[0] + box[2]) // 2, box[1] + 6, 0.0)
+    box = keys[("deck-seek", 0)][0]                        # dragged along: the deck goes where the finger is
+    ui.touch("down", box[0] + 20, box[1] + 6, 0.0)
+    ui.touch("move", (box[0] + box[2]) // 2, box[1] + 6, 0.05)
     ui.touch("up", (box[0] + box[2]) // 2, box[1] + 6, 0.1)
     assert sent[:5] == [("play", 0), ("select", 1), ("load", 1), ("cue", 1, True), ("cue", 1, False)]
-    assert sent[5][:2] == ("seek", 0) and 0.45 < sent[5][2] < 0.55
+    assert sent[5][:2] == ("seek", 0) and 0.45 < sent[5][2] < 0.55 and len(sent) == 6
+    assert ui.decks_full is None
+    ui.touch("down", box[0] + 40, box[1] + 6, 0.0)          # tapped (a resistive screen's wobble): full screen
+    ui.touch("move", box[0] + 42, box[1] + 7, 0.05)
+    ui.touch("up", box[0] + 42, box[1] + 7, 0.1)
+    assert ui.decks_full == 0 and len(sent) == 6
+    ui.render(1.0, force=True)
+    keys = {w[3]: w for w in ui.widgets}
+    assert list(keys) == ["decks-full"]                     # nothing else on it: any tap goes back
+    tap("decks-full")
+    assert ui.decks_full is None
+    ui.decks_full = 0                                       # left full screen: the decks open on their screen
+    ui.open_decks()
+    assert ui.decks_full is None and ui.tab == "DECKS"
+    said, say_was = [], ui.app.say
+    ui.app.say = lambda text, seconds=3: said.append(text)
+    for n in (1, 1, 2):                                     # a note popped up once, the same note again too
+        ui.decks_proc.note, ui.decks_proc.note_n = "USB drive Zine: 37 tracks", n
+        ui.render(1.5 + n, force=True)
+    ui.app.say = say_was
+    assert said == ["USB drive Zine: 37 tracks"] * 2
+    ui.render(2.0, force=True)
+    keys = {w[3]: w for w in ui.widgets}
     tap("decks-home")
     assert ui.tab == "HOME"
 

@@ -1,0 +1,10 @@
+// FM-1 Companion (the Studio): let the bridge user mount USB drives (udisks2), for the
+// DJ decks' music. A headless Pi has no active desktop session, and udisks2's default policy only lets one mount
+// a drive without a password. Installed to /etc/polkit-1/rules.d/ (FM1_USER is filled in).
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.udisks2.filesystem-mount" ||
+         action.id == "org.freedesktop.udisks2.filesystem-mount-other-seat") &&
+        subject.user == "FM1_USER") {
+        return polkit.Result.YES;
+    }
+});

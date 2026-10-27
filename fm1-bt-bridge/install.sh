@@ -26,6 +26,9 @@ sudo apt-get install -y --no-install-recommends \
     pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
     python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools
+if [ "$BUILD" = desk ]; then              # USB drives for the DJ decks: mounted, FAT / exFAT / NTFS
+    sudo apt-get install -y --no-install-recommends udisks2 exfatprogs ntfs-3g
+fi
 
 echo "== Enabling SPI for the screen, Bluetooth, and permissions"
 sudo raspi-config nonint do_spi 0
@@ -101,6 +104,10 @@ sudo sysctl -q -w net.ipv4.ip_unprivileged_port_start=80
 
 echo "== Letting PipeWire run its audio threads in real time (no desktop session on a headless Pi)"
 sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/polkit-1/rules.d/50-fm1-bridge-rtkit.rules >/dev/null
+if [ "$BUILD" = desk ]; then
+    echo "== Letting the DJ decks mount a USB drive of music when it's plugged in"
+    sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-usb.rules" | sudo tee /etc/polkit-1/rules.d/50-fm1-bridge-usb.rules >/dev/null
+fi
 
 echo "== Installing the bridge"
 install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/fm1-bridge/bridge.py

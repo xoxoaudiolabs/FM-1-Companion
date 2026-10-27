@@ -248,6 +248,123 @@ def test_detect_bpm_and_key():
     assert djlib.detect_key((kick * 0.2 + chord).astype(np.float32), sr) in ("Am", "C")
 
 
+def test_usb_drives_found():
+    """lsblk's tree: a USB stick's partition and a whole-disk filesystem found, the SD card and a USB drive with no
+    filesystem we mount left out"""
+    tree = {"blockdevices": [
+        {"path": "/dev/mmcblk0", "fstype": None, "tran": "mmc", "children": [
+            {"path": "/dev/mmcblk0p2", "fstype": "ext4", "uuid": "r00t", "mountpoint": "/"}]},
+        {"path": "/dev/sda", "fstype": None, "tran": "usb", "children": [
+            {"path": "/dev/sda1", "fstype": "exfat", "label": "DJ STICK", "uuid": "1234-ABCD",
+             "mountpoint": "/media/fm1/DJ STICK"},
+            {"path": "/dev/sda2", "fstype": "swap", "uuid": "5w4p", "mountpoint": None}]},
+        {"path": "/dev/sdb", "fstype": "vfat", "label": None, "uuid": "AAAA-0001", "tran": "usb", "mountpoint": None}]}
+    found = djlib.usb_volumes(tree)
+    assert [(v["path"], v["label"], v["mountpoint"]) for v in found] == [
+        ("/dev/sda1", "DJ STICK", "/media/fm1/DJ STICK"), ("/dev/sdb", "", None)]
+    flat = {"blockdevices": [                             # (util-linux 2.41 on the Studio: a list, no tree)
+        {"path": "/dev/sda", "pkname": None, "fstype": None, "uuid": None, "mountpoint": None, "tran": "usb"},
+        {"path": "/dev/sda1", "pkname": "/dev/sda", "fstype": "ntfs", "label": "Zine", "uuid": "5C22CDF222CDD166",
+         "mountpoint": None, "tran": None},
+        {"path": "/dev/mmcblk0p1", "pkname": "/dev/mmcblk0", "fstype": "vfat", "uuid": "0398-3084",
+         "mountpoint": "/boot/firmware", "tran": None}]}
+    assert [(v["path"], v["label"]) for v in djlib.usb_volumes(flat)] == [("/dev/sda1", "Zine")]
+
+
+def test_usb_drive_listed_before_its_scan():
+    """a drive's tracks all listed, scanned or not (a title from the file name till the scan), its hidden folders
+    and macOS's ._ files left out"""
+    drive = Path(tempfile.mkdtemp())
+    (drive / "House").mkdir()
+    for name in ("House/one.mp3", "two.flac", "._two.flac", ".Trashes/old.mp3", "cover.jpg"):
+        (drive / name).parent.mkdir(parents=True, exist_ok=True)
+        (drive / name).write_bytes(b"x")
+    (drive / djlib.CACHE).write_text('{"two.flac": {"title": "Two", "artist": "Someone", "bpm": 140.0}}')
+    found = djlib.listing(drive)
+    assert sorted(found) == [str(Path("House/one.mp3")), "two.flac"]
+    assert found["two.flac"]["bpm"] == 140.0 and found[str(Path("House/one.mp3"))] == {"title": "one", "artist": ""}
+
+
+def test_usb_drive_plugged_in_and_out():
+    """a drive plugged in: browsed, its tracks keyed by its UUID (their cues kept for that drive), loadable; pulled
+    out: back to the Studio's music; the source button goes between them"""
+    home, drive = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+    (home / djlib.CACHE).write_text('{"a.mp3": {"title": "A"}}')
+    (home / "a.mp3").write_bytes(b"x")
+    (drive / "b.mp3").write_bytes(b"x")
+    plugged = []
+    was = djlib.usb_music
+    djlib.usb_music = lambda tried=None: list(plugged)
+    try:
+        D = decks.Decks.__new__(decks.Decks)
+        D.folder, D.sources, D.source, D.tried, D.cursor = home, [{"name": "STUDIO", "folder": home, "uuid": None}], \
+            0, {}, 0
+        D.listings, D.waiting, D.engine = {}, [], decks.Engine()
+        said, notes = [], []
+        D.say, D.note = said.append, notes.append
+        D.refresh()
+        assert [k for k, _e in D.library] == ["a.mp3"]
+        plugged.append({"name": "DJ STICK", "folder": drive, "uuid": "1234-ABCD"})
+        D.watch_drives(once=True)
+        assert D.source == 1 and [k for k, _e in D.library] == ["usb:1234-ABCD/b.mp3"]
+        assert said[-1]["library"][0][:2] == ["usb:1234-ABCD/b.mp3", "b"] and "DJ STICK" in notes[-1]
+        assert D.path_of("usb:1234-ABCD/b.mp3") == drive / "b.mp3" and D.path_of("a.mp3") == home / "a.mp3"
+        assert D.entry_of("usb:1234-ABCD/b.mp3") == ("usb:1234-ABCD/b.mp3", {"title": "b", "artist": ""})
+        (home / ".usb").mkdir()                            # its scan kept on the Studio (the drive: read-only)
+        (home / ".usb" / "1234-ABCD.json").write_text('{"b.mp3": {"title": "Bee", "bpm": 174.0}}')
+        D.refresh()
+        assert D.library[0][1].get("bpm") is None             # (the drive walked once: not again till a scan)
+        D.listings.pop("1234-ABCD")                          # (what a scan's end does)
+        D.refresh()
+        assert D.library[0][1]["bpm"] == 174.0 and D.entry_of("usb:1234-ABCD/b.mp3")[1]["title"] == "Bee"
+        D.scanning = None
+        D.hercules = type("H", (), {"lights": lambda self: None})()
+        D.command(["source"], said.append)                 # the button: the Studio's again, then the drive
+        assert D.source == 0 and [k for k, _e in D.library] == ["a.mp3"]
+        D.command(["source"], said.append)
+        assert D.source == 1
+        plugged.clear()
+        D.watch_drives(once=True)
+        assert D.source == 0 and len(D.sources) == 1 and "gone" in notes[-1]
+        assert D.path_of("usb:1234-ABCD/b.mp3") is None and D.entry_of("usb:1234-ABCD/b.mp3") is None
+        D.sources, D.source = D.sources[:1], 1                 # (the list shrunk, the index not fixed yet:
+        assert D.status()["source"] == "STUDIO"               #  another thread's reading is still good)
+        D.source = 0
+        D.memory = {"session": {"decks": [{"rel": "usb:1234-ABCD/b.mp3", "pos": 3.0}, None]}}
+        D.loads = decks.queue.Queue()
+        D.restore()                                          # the last session's drive track: waits for it
+        assert D.loads.empty() and [i for i, _s in D.waiting] == [0]
+        plugged.append({"name": "DJ STICK", "folder": drive, "uuid": "1234-ABCD"})
+        D.watch_drives(once=True)                            # plugged in: loaded on deck A, where it was
+        deck, found, state = D.loads.get_nowait()
+        assert deck == 0 and found[0] == "usb:1234-ABCD/b.mp3" and state["pos"] == 3.0 and not D.waiting
+    finally:
+        djlib.usb_music = was
+
+
+def test_usb_drive_mounted_again_after_a_quick_replug():
+    """a drive mounted, pulled out and put back between two looks: mounted again; one whose mount failed isn't
+    tried again till it's been seen gone"""
+    looks, mounts = [], []
+    was = djlib.usb_volumes, djlib.mount
+    vol = lambda at: [{"path": "/dev/sda1", "label": "Zine", "uuid": "5C22", "mountpoint": at}]   # noqa: E731
+    djlib.usb_volumes = lambda tree=None: looks.pop(0)
+    djlib.mount = lambda path: mounts.append(path) or ok[0]
+    try:
+        tried, ok = {}, [True]
+        looks[:] = [vol(None), vol("/media/fm1/Zine")]
+        assert [d["name"] for d in djlib.usb_music(tried)] == ["Zine"] and tried == {}
+        looks[:] = [vol(None), vol("/media/fm1/Zine")]       # (pulled out and back in: its mount gone)
+        assert [d["name"] for d in djlib.usb_music(tried)] == ["Zine"] and len(mounts) == 2
+        ok[0] = False
+        looks[:] = [vol(None), vol(None)]
+        assert djlib.usb_music(tried) == [] and tried == {"/dev/sda1": False}
+        looks[:] = [vol(None)]                                # (failed: not tried again while it stays in)
+        assert djlib.usb_music(tried) == [] and len(mounts) == 3
+    finally:
+        djlib.usb_volumes, djlib.mount = was
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

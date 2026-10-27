@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The Studio's DJ decks: two decks playing tracks from ~/fm1-library/Studio DJ Music (djlib.py's scan: BPM, key,
-beatgrid, hot cues), played from a Hercules DJControl Inpulse 200 MK2 (or the DECKS screen).
+"""The Studio's DJ decks: two decks playing tracks from ~/fm1-library/Studio DJ Music or a USB drive (djlib.py's
+scan: BPM, key, beatgrid, hot cues), played from a Hercules DJControl Inpulse 200 MK2 (or the DECKS screen).
 
 Each deck: load (decoded whole into memory), play / pause, CUE (a CDJ's: paused, it sets the cue and plays while held;
 playing, it goes back to the cue and stops), the tempo fader (+-8 %), the jog wheel (its top scratches while touched
@@ -673,8 +673,14 @@ class Decks:
 
     def __init__(self, folder=djlib.MUSIC):
         self.engine = Engine()
-        self.folder = folder
-        self.library = []                        # [(rel, entry)] sorted by title
+        self.folder = folder                     # the Studio's music: its memory kept here, whatever's browsed
+        self.sources = [{"name": "STUDIO", "folder": folder, "uuid": None}]   # and each USB drive plugged in
+        self.source = 0                          # the one browsed
+        self.tried = {}                          # USB filesystems a mount failed on (djlib.usb_music)
+        self.listings = {}                       # {UUID: a USB drive's tracks}: walked once, till it's scanned
+        self.waiting = []                        # [(deck, state)]: the last session's drive tracks, till it's in
+        self.say = lambda obj: None              # (serve: a message to the Companion)
+        self.library = []                        # [(key, entry)] sorted by title: key, the memory's (key_of)
         self.cursor = 0
         self.loads = queue.Queue()
         self.hercules = Hercules(self.engine, self.browse, self.load_selected, lambda: None)
@@ -686,8 +692,107 @@ class Decks:
         self.refresh()
 
     def refresh(self):
-        cache = djlib.load_cache(self.folder)
-        self.library = sorted(cache.items(), key=lambda kv: (kv[1].get("title") or kv[0]).lower())
+        """the browsed source's tracks: the Studio's as scanned; a USB drive's all of them, scanned or not"""
+        src = self.browsed()
+        if not src["uuid"]:
+            found = djlib.load_cache(src["folder"])
+        else:
+            if src["uuid"] not in self.listings:
+                self.listings[src["uuid"]] = djlib.listing(src["folder"], self.cache_of(src))
+            found = self.listings[src["uuid"]]
+        self.library = sorted(((self.key_of(src, rel), e) for rel, e in found.items()),
+                              key=lambda kv: (kv[1].get("title") or kv[0]).lower())
+
+    # ---- where the music is: the Studio's folder, USB drives
+
+    @staticmethod
+    def key_of(src, rel):
+        """a track's key (its memory's, the library's): its name in the Studio's folder; on a USB drive, the
+        drive's filesystem UUID with it ("usb:1234-ABCD/House/track.mp3": the same drive, the same cues)"""
+        return f"usb:{src['uuid']}/{rel}" if src["uuid"] else rel
+
+    def path_of(self, key):
+        """a track's file from its key, or None (its drive not plugged in)"""
+        if not key.startswith("usb:"):
+            return self.folder / key
+        uuid, rel = key[4:].split("/", 1)
+        for src in self.sources:
+            if src["uuid"] == uuid:
+                return src["folder"] / rel
+        return None
+
+    def entry_of(self, key):
+        """(key, entry) for a track in any source plugged in, or None"""
+        path = self.path_of(key)
+        if path is None or not path.is_file():
+            return None
+        if not key.startswith("usb:"):
+            entry = djlib.load_cache(self.folder).get(key)
+            return (key, entry) if entry else None
+        src = next(s for s in self.sources if s["uuid"] == key[4:].split("/", 1)[0])
+        rel = str(path.relative_to(src["folder"]))
+        return key, djlib.load_cache(src["folder"], self.cache_of(src)).get(rel) or {"title": path.stem, "artist": ""}
+
+    def cache_of(self, src):
+        """a source's scan cache: the Studio's beside its music, a USB drive's in it too (.usb/<UUID>.json: the drive
+        is mounted read-only)"""
+        return self.folder / ".usb" / f"{src['uuid']}.json" if src["uuid"] else self.folder / djlib.CACHE
+
+    def browsed(self):
+        """the source browsed (the Studio's when the list has just shrunk under it: read from other threads)"""
+        sources, k = self.sources, self.source
+        return sources[k] if k < len(sources) else sources[0]
+
+    def pick_source(self, k):
+        """source k browsed (k past the end: back to the first)"""
+        self.source = k % len(self.sources)
+        self.cursor = 0
+        self.refresh()
+        self.say(self.library_message())
+
+    def watch_drives(self, once=False):
+        """USB drives as they come and go, every 3 s: one plugged in, mounted and browsed; the one browsed
+        pulled out, back to the Studio's (a track loaded from it plays on: it's in memory)"""
+        while True:
+            try:
+                drives = djlib.usb_music(self.tried)
+            except Exception:                    # (lsblk / udisks misbehaving: tried again next time)
+                drives = [s for s in self.sources if s["uuid"]]
+            for path, ok in list(self.tried.items()):
+                if ok is False:
+                    self.note("a USB drive couldn't be mounted (run install.sh again)")
+                    self.tried[path] = None      # (said once)
+            browsed = self.browsed()
+            old = {s["uuid"] for s in self.sources if s["uuid"]}
+            new = [d for d in drives if d["uuid"] not in old]
+            if new or len(drives) != len(old):
+                keep = {d["uuid"] for d in drives} - {d["uuid"] for d in new}    # (plugged in again: walked again)
+                self.listings = {u: v for u, v in self.listings.items() if u in keep}
+                sources = self.sources[:1] + drives
+                self.source = sources.index(browsed) if browsed in sources else 0   # (the index first, then the
+                self.sources = sources                                              # list: never past its end)
+                if new:
+                    self.pick_source(self.sources.index(new[-1]))
+                    self.note(f"USB drive {new[-1]['name']}: {len(self.library)} tracks")
+                elif browsed not in self.sources:
+                    self.pick_source(0)
+                    self.note(f"USB drive {browsed['name']} gone: the Studio's music")
+                self.load_waiting()
+            if once or self.stop.wait(3.0):
+                return
+
+    def load_waiting(self):
+        """the last session's tracks on a USB drive, loaded once it's plugged in (on a deck still empty)"""
+        for item in list(self.waiting):
+            i, state = item
+            d = self.engine.decks[i]
+            if d.track or d.loading:
+                self.waiting.remove(item)        # (something else loaded there since: left alone)
+                continue
+            found = self.entry_of(state["rel"])
+            if found:
+                self.waiting.remove(item)
+                self.loads.put((i, found, state))
 
     # ---- what's kept: each track's cues as set here, and the session (the decks' tracks, where, how)
 
@@ -748,11 +853,15 @@ class Decks:
     def restore(self):
         """the last session: each deck's track loaded again, paused where it was, as it was set"""
         session = self.memory.get("session") or {}
-        by_rel = dict(self.library)
         self.cursor = max(0, min(len(self.library) - 1, int(session.get("cursor") or 0))) if self.library else 0
         for i, state in enumerate((session.get("decks") or [])[:2]):
-            if state and state.get("rel") in by_rel:
-                self.loads.put((i, (state["rel"], by_rel[state["rel"]]), state))
+            if not (state and state.get("rel")):
+                continue
+            found = self.entry_of(state["rel"])
+            if found:
+                self.loads.put((i, found, state))
+            elif state["rel"].startswith("usb:"):     # its drive not mounted yet: loaded when it is
+                self.waiting.append((i, state))
 
     def browse(self, step):
         if self.library:
@@ -775,7 +884,10 @@ class Decks:
             d = self.engine.decks[deck]
             d.loading, d.error = rel, None
             try:
-                track = Track(self.folder / rel, entry, rel)
+                path = self.path_of(rel)
+                if path is None:
+                    raise OSError("its USB drive isn't plugged in")
+                track = Track(path, entry, rel)
                 cue = self.remembered(track)
                 with self.engine.lock:
                     d.load(track)
@@ -804,6 +916,7 @@ class Decks:
         threading.Thread(target=self.loader, daemon=True).start()
         threading.Thread(target=self.keeper, daemon=True).start()
         self.restore()
+        threading.Thread(target=self.watch_drives, daemon=True).start()   # (the sound never waits on a mount)
         out = Output()
         try:
             while not self.stop.is_set():
@@ -828,7 +941,8 @@ class Decks:
                          "pfl": d.pfl, "volume": d.volume, "loading": d.loading, "error": d.error})
         sel = self.library[self.cursor] if self.library else None
         return {"decks": rows, "xfade": self.engine.xfade, "cursor": self.cursor, "count": len(self.library),
-                "scanning": self.scanning,
+                "scanning": self.scanning, "source": self.browsed()["name"],
+                "usb": bool(self.browsed()["uuid"]), "sources": len(self.sources),
                 "selected": sel and {"title": sel[1].get("title"), "bpm": sel[1].get("bpm"),
                                      "key": sel[1].get("key"), "camelot": sel[1].get("camelot")}}
 
@@ -839,7 +953,9 @@ class Decks:
         def progress(i, n, name):
             self.scanning = f"{i + 1}/{n}"
         try:
-            djlib.scan(self.folder, progress=progress)
+            src = self.browsed()
+            djlib.scan(src["folder"], progress=progress, cache_file=self.cache_of(src))
+            self.listings.pop(src["uuid"], None)    # (its BPM and key: in the list again)
         except OSError as e:
             say({"error": f"scan: {e}"[:60]})
         self.scanning = None
@@ -877,6 +993,8 @@ class Decks:
                 self.browse(int(args[0]))
         if name == "load":
             self.load_selected(int(args[0]))
+        elif name == "source" and not self.scanning:     # the next source: the Studio's, each USB drive
+            self.pick_source(self.source + 1)
         elif name == "scan" and not self.scanning:
             self.scanning = "starting"
             threading.Thread(target=self.scan, args=(say,), daemon=True).start()
@@ -895,13 +1013,17 @@ def serve():
         with lock:
             sys.stdout.write(json.dumps(obj) + "\n")
             sys.stdout.flush()
+    decks.say = say
     decks.note = lambda text: say({"note": text})
     decks.on_loaded = lambda deck, track: say({"overview": [deck, track.overview]})
     say(decks.library_message())
 
     def status():
         while not decks.stop.is_set():
-            say({"status": decks.status()})
+            try:
+                say({"status": decks.status()})
+            except Exception as e:               # (one bad reading never stops the screen's updates)
+                say({"error": f"status: {e}"[:80]})
             time.sleep(0.2)
     threading.Thread(target=status, daemon=True).start()
     threading.Thread(target=decks.run, daemon=True).start()
@@ -928,6 +1050,7 @@ class DeckProcess:
     def __init__(self, on_change=lambda: None):
         self.proc, self.on_change = None, on_change
         self.status, self.library, self.overviews, self.note = None, [], {0: [], 1: []}, None
+        self.library_n = self.note_n = 0          # counted as they come: the screen sees a new one, even the same
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -956,10 +1079,12 @@ class DeckProcess:
                 self.status = msg["status"]
             elif "library" in msg:
                 self.library = msg["library"]
+                self.library_n += 1
             elif "overview" in msg:
                 self.overviews[msg["overview"][0]] = msg["overview"][1]
             elif "note" in msg or "error" in msg:
                 self.note = msg.get("note") or msg.get("error")
+                self.note_n += 1
             self.on_change()
 
     def send(self, *cmd):

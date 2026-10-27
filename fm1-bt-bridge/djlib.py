@@ -5,6 +5,12 @@ kept in a cache beside the music (.studio-dj.json) so a track is looked at once.
 
   djlib.py scan [--redetect]       every track in the folder (new and changed ones; --redetect: detect them all)
   djlib.py list                    the folder as JSON
+  djlib.py usb                     the USB drives' filesystems, mounted if they aren't
+
+A USB drive is music too: its filesystems mounted read-only by udisks when plugged in (/media/<user>/<label>; a
+polkit rule lets the bridge's user do it, install.sh): pulled out without an eject, nothing on it is hurt (an NTFS
+drive pulled out of a read-write mount is left "dirty", and isn't mounted read-write again till Windows checks it).
+The whole drive is its folder; its cache is kept in the Studio's music folder (.usb/<its UUID>.json).
 
 Decoding: libsndfile (MP3, FLAC, Ogg, WAV, AIFF: the Studio has it, for PipeWire), through ctypes; ffmpeg where
 there's no libsndfile (a computer, for the tests).
@@ -23,6 +29,7 @@ import ctypes.util
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -31,7 +38,9 @@ from pathlib import Path
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
 MUSIC = LIBRARY / "Studio DJ Music"
 CACHE = ".studio-dj.json"
-AUDIO = (".mp3", ".flac", ".wav", ".aif", ".aiff", ".ogg", ".m4a")
+AUDIO = (".mp3", ".flac", ".wav", ".aif", ".aiff", ".ogg") + \
+    ((".m4a",) if shutil.which(os.environ.get("FFMPEG") or "ffmpeg") else ())   # (AAC: ffmpeg's, not libsndfile's)
+MOUNTABLE = ("vfat", "exfat", "ntfs", "ntfs3", "ext4", "ext3", "ext2", "hfsplus")
 NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 FLATS = {"Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#", "Bb": "A#", "Cb": "B", "Fb": "E", "E#": "F", "B#": "C"}
 MAJOR = [1.0, 0.0, 0.6, 0.0, 0.8, 0.6, 0.0, 0.9, 0.0, 0.6, 0.0, 0.4]   # the tonic, fifth, third, then the scale
@@ -409,20 +418,37 @@ def analyse(path):
 
 def tracks(folder=MUSIC):
     folder.mkdir(parents=True, exist_ok=True)
-    return sorted(p for p in folder.rglob("*") if p.suffix.lower() in AUDIO and not p.name.startswith("._"))
+    out = []
+    for top, dirs, files in os.walk(folder):    # (hidden folders skipped: a drive's .Trashes, .Spotlight-V100)
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "System Volume Information")
+        out += [Path(top) / f for f in files if Path(f).suffix.lower() in AUDIO and not f.startswith(".")]
+    return sorted(out)
 
 
-def load_cache(folder=MUSIC):
+def listing(folder, cache_file=None):
+    """{rel: entry} of every track in folder: the cache's entry where the scan has looked at it, its file name for
+    a title (no BPM, no key) where it hasn't yet"""
+    cache = load_cache(folder, cache_file)
+    out = {}
+    for path in tracks(folder):
+        rel = str(path.relative_to(folder))
+        out[rel] = cache.get(rel) or {"title": path.stem, "artist": ""}
+    return out
+
+
+def load_cache(folder=MUSIC, cache_file=None):
     try:
-        return json.loads((folder / CACHE).read_text())
+        return json.loads((cache_file or folder / CACHE).read_text())
     except (OSError, ValueError):
         return {}
 
 
-def scan(folder=MUSIC, redetect=False, progress=lambda done, total, name: None):
+def scan(folder=MUSIC, redetect=False, progress=lambda done, total, name: None, cache_file=None):
     """every track's entry, the cache updated: from its tags, detected where they lack BPM or key (detected values
     kept apart: "bpm_detected", "key_detected", so the tags' win and both can be compared)"""
-    cache = load_cache(folder)
+    cache_file = cache_file or folder / CACHE
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache = load_cache(folder, cache_file)
     out, files = {}, tracks(folder)
     for i, path in enumerate(files):
         rel = str(path.relative_to(folder))
@@ -449,11 +475,66 @@ def scan(folder=MUSIC, redetect=False, progress=lambda done, total, name: None):
             entry["key"] = entry["key"] or found.get("key")
         entry["camelot"] = camelot(entry["key"])
         out[rel] = entry
-        tmp = folder / (CACHE + ".tmp")       # written as it goes: a long scan cut short keeps what it did
-        tmp.write_text(json.dumps(out, indent=1))
-        tmp.replace(folder / CACHE)
-    (folder / CACHE).write_text(json.dumps(out, indent=1))
+        tmp = cache_file.with_name(cache_file.name + ".tmp")   # written as it goes: a long scan cut short
+        tmp.write_text(json.dumps(out, indent=1))                # keeps what it did
+        tmp.replace(cache_file)
+    cache_file.write_text(json.dumps(out, indent=1))
     return out
+
+
+# ---------------------------------------------------------------- USB drives
+
+def usb_volumes(tree=None):
+    """[{"path", "label", "uuid", "mountpoint"}]: the filesystems on USB drives (lsblk: a disk's TRAN is "usb", a
+    partition's parent disk is its PKNAME; a list or a tree, as lsblk's version gives it; a drive with no partitions
+    is its own filesystem)"""
+    if tree is None:
+        try:
+            tree = json.loads(subprocess.run(["lsblk", "-J", "-p", "-o", "PATH,PKNAME,FSTYPE,LABEL,UUID,MOUNTPOINT,TRAN"],
+                                             capture_output=True, text=True, timeout=5).stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return []
+    devices, todo = [], list(tree.get("blockdevices") or [])
+    while todo:                                # (a tree flattened: each child knows its disk)
+        dev = todo.pop(0)
+        kids = dev.get("children") or []
+        for kid in kids:
+            kid.setdefault("pkname", dev.get("path"))
+        devices.append(dev)
+        todo[:0] = kids
+    usb = {dev.get("path") for dev in devices if dev.get("tran") == "usb"}
+    return [{"path": dev["path"], "label": dev.get("label") or "", "uuid": dev["uuid"],
+             "mountpoint": dev.get("mountpoint")}
+            for dev in devices
+            if (dev.get("path") in usb or dev.get("pkname") in usb) and dev.get("fstype") in MOUNTABLE
+            and dev.get("uuid")]
+
+
+def mount(path):
+    """a USB filesystem mounted read-only by udisks (as the bridge's user, no password: the polkit rule) -> True if
+    it was"""
+    try:
+        return subprocess.run(["udisksctl", "mount", "--no-user-interaction", "-o", "ro", "-b", path],
+                              capture_output=True, text=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def usb_music(tried=None):
+    """[{"name", "folder", "uuid"}]: each USB drive's filesystem, mounted if it isn't (tried: the paths a mount
+    failed on, {path: False}, so one isn't tried again until it's plugged in again; one that mounted isn't kept,
+    so pulled out and back in between two looks it's mounted again)"""
+    tried = {} if tried is None else tried
+    volumes = usb_volumes()
+    for gone in set(tried) - {v["path"] for v in volumes}:
+        del tried[gone]
+    if any(not v["mountpoint"] and v["path"] not in tried for v in volumes):
+        for v in volumes:
+            if not v["mountpoint"] and v["path"] not in tried and not mount(v["path"]):
+                tried[v["path"]] = False
+        volumes = usb_volumes()
+    return [{"name": v["label"] or v["uuid"], "folder": Path(v["mountpoint"]), "uuid": v["uuid"]}
+            for v in volumes if v["mountpoint"]]
 
 
 def main(argv=None):
@@ -463,6 +544,14 @@ def main(argv=None):
         return 0
     if argv[:1] == ["list"]:
         print(json.dumps(load_cache(), indent=1))
+        return 0
+    if argv[:1] == ["usb"]:
+        tried = {}
+        for drive in usb_music(tried):
+            print(f"{drive['name']}  {drive['folder']}  {len(tracks(drive['folder']))} tracks")
+        for path, ok in tried.items():
+            if not ok:
+                print(f"{path}: couldn't mount it (the polkit rule: install.sh)")
         return 0
     print(__doc__)
     return 2

@@ -1,7 +1,8 @@
 # FM-1 Companion
 
-**A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder, a sample
-editor, eleven meters (ten on the Studio) and a MIDI matrix, with no computer needed once it's set up. By
+**A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder that keeps
+the MIDI too, a sample editor, eleven meters (ten on the Studio) and a MIDI matrix, with no computer needed once
+it's set up. By
 [XOXO Audio Labs](https://xoxoaudiolabs.com).
 
 **[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
@@ -26,8 +27,8 @@ your phone.
 | Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
 | Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
-| Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; DJ decks played from a Hercules DJ controller; an MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
-| Software | v2.9 | Studio v1.6 (running on the real hardware since October 2026) |
+| Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; DJ decks played from a Hercules DJ controller; an MPC-style sampler with SLOOP's sequencer, punch-in FX and an 808 kit, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
+| Software | v2.9 | Studio v1.6, and newer work on main (running on the real hardware since October 2026) |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do.
@@ -57,7 +58,8 @@ What's been tried on the real boxes, and what hasn't yet: [Tested on the real ha
   keyboard's own synth, a mic, an audio interface), added up before Bluetooth.
 - **A recorder and a sample editor.** Record to WAV, play takes back, and turn a take into a sample: trim,
   fade, normalize, reverse and tune it to its note, ready to load into the FM-1. **Record parts** also keeps
-  each source as its own file next to the mix.
+  each source as its own file next to the mix, and each take gets a `.mid` of what was played, a track a source
+  (on main since Studio v1.6; tried on the Studio).
 - **Playing tools.** MIDI clock (follow, or lead with tap tempo and Start/Stop), metronome, arpeggiator and
   chord memory.
 - **A MIDI matrix.** Route Bluetooth, USB keyboards, the FM-1s and the box to each other: transpose,
@@ -68,13 +70,15 @@ What's been tried on the real boxes, and what hasn't yet: [Tested on the real ha
   projects and samples, and install firmware: [SLOOP](https://github.com/isod89/sloop-fm1), or isod89's
   experimental [Clipper](https://github.com/isod89/clipper-fm1). Backups are SLOOP's own files, so they open in
   SLOOP's web editor too.
-- **A web app on your phone** at `http://fm1bridge.local` (Wi-Fi, or Ethernet on the Studio): live status, the
-  mixer, the MIDI matrix, a sample editor with a waveform you drag, your recordings and the library.
+- **A web app on your phone** at `http://<the box's hostname>.local`, such as `http://fm1bridge.local` (Wi-Fi,
+  or Ethernet on the Studio): live status, the mixer, the MIDI matrix, a sample editor with a waveform you drag,
+  your recordings and the library.
   Installable on your home screen. [Try it with sample data](https://xoxoaudiolabs.com/app/).
-- **A sampler (the Studio).** 16 pads in kits, an MPC's or laid out as SLOOP's drum track. Sample any source
-  onto a pad, trim it in the touch sample editor, play it from the screen or any MIDI keyboard. SLOOP's drum
-  sequencer for the pads (up to 64 steps, swing, ratchets, nudge, live recording), note repeat, and sixteen
-  of SLOOP's punch-in FX (the original set: loops, stutter, reverse, tape stop, filters, crush, gate, echo, wobble).
+- **A sampler (the Studio).** 16 pads in kits, an MPC's or laid out as SLOOP's drum track. Sample any source onto a
+  pad, trim it in the touch sample editor, play it from the screen or any MIDI keyboard; a ready-made 808 kit (real
+  TR-808 recordings, CC0) comes with it. SLOOP's drum sequencer for the pads (up to 64 steps, swing, ratchets,
+  nudge, live recording), note repeat, and sixteen of SLOOP's punch-in FX (the original set: loops, stutter,
+  reverse, tape stop, filters, crush, gate, echo, wobble).
 - **A recorder and headphones (the Studio).** The RECORDER tab with the reel-to-reel deck; the Pi's 3.5 mm jack
   as a second output with no Bluetooth delay, a cue button on every source (DJ-style, before its fader) and a
   cue/main blend.
@@ -104,14 +108,14 @@ bash fm1-bt-bridge/install.sh
 sudo reboot
 ```
 
+Use the hostname you gave the box when you flashed its card (`fm1bridge` above; a Studio might be `fm1studio`).
 It's ready about a minute after power-on.
 
 ## Screens
 
 The same jobs on both boxes. Every image here is drawn by the Companion's own code on a computer
-(`tools/render_screens.py`), apart from SLOOP on the Studio below, which is a capture of the real Studio's screen,
-and X0X on the Studio, whose middle is X0X's own picture captured on the real Studio, and the DECKS screen, a
-capture of the real Studio's screen.
+(`tools/render_screens.py`), except three captured on the real Studio: SLOOP, the DECKS screen, and the middle of
+X0X's screen (X0X's own picture).
 
 | | The Pocket | The Studio |
 |---|---|---|
@@ -301,7 +305,8 @@ Pi 3's four cores, SLOOP's heaviest test case (a physical-model cello, 8 notes, 
 - **Its own level:** + / − in the right margin while it plays, and a SLOOP channel in the MIXER, 0–200%.
 - **It keeps its project:** the working project (tracks, sounds, steps, the song's settings, in SLOOP's own format)
   is saved a few seconds after a change and when it stops, and loaded when it starts.
-- **Not saved yet:** SLOOP's four project slots, user presets and sample slots last only while it runs.
+- **In v1.4, not saved:** SLOOP's four project slots, user presets and sample slots lasted only while it ran.
+  From v1.6 they're kept.
 
 **Setting it up:**
 1. Install SLOOP with REMOTE OUT on FM-1 A: build it from [SLOOP Remote Out](https://github.com/xoxoaudiolabs/sloop-remote-out)
@@ -377,6 +382,8 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
 <details><summary>Release history</summary>
 
 **Studio**
+- **v1.6:** DJ decks played from a Hercules DJControl Inpulse 200 MK2; SLOOP and X0X at once with one clock;
+  backups of the Studio's SLOOP and X0X; CUE for SLOOP and X0X (above).
 - **v1.5:** X0X on the Studio, played from FM-1 A; the recorder's clip check left deep sub-bass alone (above).
 - **v1.4:** SLOOP on the Studio, played from FM-1 A (above).
 - **v1.3:** the sampler (16 pads, SLOOP's sequencer, punch-in FX), the RECORDER tab, the headphone jack with cue,
@@ -468,7 +475,7 @@ DJ: its tags in them).
 - REMOTE OUT's every-knob update on FM-1 A: KNOB 4 on SLOOP's TRACKS page and MASTER (CC 123) seen arriving.
 - Stress tests of X0X, driven by a script sending REMOTE OUT's messages (not by hand) and recorded by the
   Studio: X0X alone for 41 s (all five parts, mutes, a TB-3PO mutation, the break backwards, a tempo change) and
-  X0X with SLOOP at once for 33 s, run as test programs of their own (the Companion runs one app at a time).
+  X0X with SLOOP at once for 33 s, run as test programs of their own (the Companion then ran one app at a time).
   No gaps in the sound, 0 PipeWire errors, the clip check clean; X0X about 20% of one core, SLOOP about 9%.
 - The new clip check on real takes: the stress tests' takes, with an 808 sub-bass, not flagged.
 - SLOOP and X0X at once with one clock (v1.6), by hand from FM-1 A through the PLAY tiles: SLOOP
@@ -501,14 +508,14 @@ DJ: its tags in them).
   connected itself, the box reconnected it 3 s later (BlueZ's log shows both), and the pads played on it. Once:
   the silent connection it guards against was seen once (that morning) and wasn't brought about again on purpose,
   so whether a given connection by the speaker would have stayed silent isn't known.
-- A short USB drop (on main, after v1.6), by hand: FM-1 A unplugged and plugged back in within 3 s (14:08:57 to
-  14:09:00); its sound path was made again in the same second and it was heard on the JBL Go 3. (Before the fix, a
-  5 s drop left it silent for 90 s.) FM-1 B, a USB keyboard, and a speaker reconnecting this way, not tried.
+- A short USB drop (on main, after v1.6), by hand: FM-1 A unplugged and plugged back in within 3 s; its sound
+  path was made again in the same second and it was heard on the JBL Go 3. (Before the fix, a 5 s drop left it
+  silent for 90 s.) FM-1 B, a USB keyboard, and a speaker reconnecting this way, not tried.
 - The MIXER tab's SLOOP slider, by hand (SLOOP's level on the JBL Go 3).
 - The sampler with the 808 KIT (on main, after v1.6): made on the Studio and every sound loads in the sampler's
-  engine, by script; its sixteen pads played by hand from the touchscreen and heard on the JBL Go 3, from FM-1 A's keys (its own
-  sound turned down in the MIXER: the sampler played each key's pad), and by a SLOOP drum pattern playing on FM-1 A
-  (GLO > MIDI 2 > OUT = SEQ).
+  engine, by script; its sixteen pads played by hand from the touchscreen and heard on the JBL Go 3, from FM-1
+  A's keys (its own sound turned down in the MIXER: the sampler played each key's pad), and by a SLOOP drum
+  pattern playing on FM-1 A (GLO › MIDI 2 › OUT = SEQ).
 - MIDI recording (on main, after v1.6), by hand on the Studio with FM-1 A through the mixer to the JBL Go 3, six
   takes: each made its `.mid` beside the WAV, one track (FM-1), every note let go. How the notes lined up with the
   sound, measured from the takes (each note against where its sound starts): first 64-82 ms early (SLOOP's kick,
@@ -575,13 +582,11 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
 - **SLOOP and X0X on the Studio:**
   - From v1.6 both run at once, sharing one app's clock (not FM-1 A's; in v1.5 one at a time); the follower
     sounds about 10 ms after the leader, give or take about 9 ms, as two boxes on MIDI clock do.
-  - X0X's own break loops (its user sample slots) aren't there: the built-in breaks are.
+  - X0X's own break loops (its user sample slots) aren't there, so its backups hold none: the built-in breaks
+    are.
   - They need FM-1 A running SLOOP with REMOTE OUT (a build of our own, not isod89's release); the official SLOOP
     sends only its keys, not its buttons or knobs.
   - FM-1 A's own SLOOP plays too. Turn FM-1 A down in the MIXER to hear only the Studio's app.
-  - From v1.6, SLOOP's project slots, user presets and sample slots are kept (in `flash.bin`, as an FM-1 keeps
-    them); in v1.5 only its working project was.
-  - The Studio's X0X has no break loops of your own (its sample slots) yet, so its backups hold none.
 - **With two FM-1s (or a keyboard's synth), plain recordings need the speaker connected** to hear the whole mix;
   with Record parts on, the mix is made from the parts and needs none. Firmware installs wait until only one FM-1
   is plugged in.

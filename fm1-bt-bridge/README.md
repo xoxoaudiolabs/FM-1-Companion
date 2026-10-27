@@ -1,6 +1,11 @@
-# FM-1 Bluetooth bridge
+# Setting up the FM-1 Companion
 
-A Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT that gives the M-VAVE FM-1 Bluetooth:
+This guide is written for **the Pocket**: a Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT. **The Studio**
+(a Pi 3 B+ with a 3.5" touchscreen) installs the same way, and `install.sh` works out which build it's on; its
+touch screens, the sampler, SLOOP and X0X on the Studio and the DJ decks are in the
+[main README](../README.md).
+
+The Pocket gives the M-VAVE FM-1 Bluetooth:
 
 - **Audio out:** the FM-1's USB audio goes to Bluetooth headphones or a speaker.
 - **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device called **"FM-1 Companion"**. MIDI
@@ -188,6 +193,10 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   audio to **master** with the knob around half, or keep full and lower its track levels in SLOOP.
 - **The Tape meter** turns its reels while sound plays; while recording, the tape winds from the left reel
   to the right one, a full reel every 30 minutes.
+- **MIDI too:** each take gets a `.mid` of the same name beside it, of what was played into the box while it
+  recorded, a track a source (FM-1 A, FM-1 B, each USB keyboard, Bluetooth MIDI, Network MIDI), lined up with
+  the WAV. Clock, SysEx and an FM-1's channel 16 (its REMOTE OUT) are left out. Tried on the Studio; not yet on
+  the Pocket.
 - **Record parts** (Settings → Audio, with two FM-1s or a keyboard's synth plugged in): each take also
   keeps every source as a file of its own, at full level: `…_fm1-a.wav`, `…_fm1-b.wav`, `…_fm1-usb0.wav`
   next to the mix `…_fm1.wav`. They're recorded as one many-channel take (one recorder costs the Pi far less
@@ -386,7 +395,8 @@ itself, whatever it runs). Recordings has its own row on Settings.
   made before a restore, a load or an install, are never deleted.
 
 **From your phone or computer:** over Wi-Fi (Settings → Wi-Fi) or an Ethernet cable, open **http://fm1bridge.local**
-(or the Pi's IP address). The page lists the library and does everything the box does, plus:
+(the hostname you gave the box, or the Pi's IP address). The page lists the library and does everything the box
+does, plus:
 - **upload** WAVs, firmware (`.fwsc`), backups and project files; **download** backups, and any
   project of a backup as its own project file to share;
 - load **several WAVs into one slot**: each becomes a key zone, with its root note taken from the file
@@ -509,6 +519,8 @@ bluetoothctl remove AA:BB:CC:DD:EE:FF
 Then pair again with KEY1.
 
 ## Files
+
+The main files; the [main README](../README.md) lists every one, the Studio's included.
 
 | File | Installed to | Purpose |
 |---|---|---|

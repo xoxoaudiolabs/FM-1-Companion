@@ -27,7 +27,7 @@ your phone.
 | Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
 | Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; DJ decks played from a Hercules DJ controller; an MPC-style sampler with SLOOP's sequencer and punch-in FX, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
-| Software | v2.9 | Studio v1.5 (running on the real hardware since October 2026) |
+| Software | v2.9 | Studio v1.6 (running on the real hardware since October 2026) |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do.
@@ -41,15 +41,15 @@ What's been tried on the real boxes, and what hasn't yet: [Tested on the real ha
   Bluetooth MIDI devices itself, can play the FM-1. New in v2.9, and not tried with real devices yet: it also
   connects to keyboards that wait to be connected to (a microKEY Air, a WIDI), and takes several Bluetooth MIDI
   devices at once.
-- **SLOOP and X0X on the Studio** (Studio v1.4 and v1.5). [SLOOP](https://github.com/isod89/sloop-fm1)'s and
+- **SLOOP and X0X on the Studio** (Studio v1.4 to v1.6). [SLOOP](https://github.com/isod89/sloop-fm1)'s and
   [X0X](https://github.com/charlesvestal/fm1-x0x)'s own engines, sequencers and screens, compiled for the Studio's
   Pi, played from a real FM-1 whose SLOOP sends its keys, buttons and knobs over MIDI. Each is in its own repo:
   [SLOOP Remote Out](https://github.com/xoxoaudiolabs/sloop-remote-out) (SLOOP with a REMOTE OUT for the FM-1, and
   its `studio/` program) and [X0X for the FM-1 Companion Studio](https://github.com/xoxoaudiolabs/fm1-x0x-companion-studio)
   (below).
-- **DJ decks on the Studio** (on main, after Studio v1.5). Two decks played from a Hercules DJControl Inpulse 200
+- **DJ decks on the Studio** (Studio v1.6). Two decks played from a Hercules DJControl Inpulse 200
   MK2 and the touchscreen, from a music folder whose BPM, key and beatgrids it reads (Serato's too) or works out:
-  sync, hot cues, loops, rolls, EQ, PFL to the controller's own headphones ([below](#since-studio-v15-on-main-not-a-numbered-release-yet-dj-decks)).
+  sync, hot cues, loops, rolls, EQ, PFL to the controller's own headphones ([below](#studio-v16-dj-decks)).
 - **More keyboards, a second FM-1.** Through a USB hub (or the Studio's four ports): up to four USB MIDI
   keyboards and a second FM-1, found by themselves. **FM-1 A** and **FM-1 B** keep their names by the hub
   port they're on.
@@ -110,7 +110,8 @@ It's ready about a minute after power-on.
 
 The same jobs on both boxes. Every image here is drawn by the Companion's own code on a computer
 (`tools/render_screens.py`), apart from SLOOP on the Studio below, which is a capture of the real Studio's screen,
-and X0X on the Studio, whose middle is X0X's own picture captured on the real Studio.
+and X0X on the Studio, whose middle is X0X's own picture captured on the real Studio, and the DECKS screen, a
+capture of the real Studio's screen.
 
 | | The Pocket | The Studio |
 |---|---|---|
@@ -151,7 +152,11 @@ and X0X on the Studio, whose middle is X0X's own picture captured on the real St
 
 ## What's new
 
-### Since Studio v1.5 (on main, not a numbered release yet): DJ decks
+### Studio v1.6: DJ decks
+
+| The DECKS screen on the real Studio (a capture of its screen), two tracks synced | MORE › DJ DECKS |
+|---|---|
+| ![The DECKS screen: deck A and deck B, each with its title, artist, BPM, key, time left, SYNC, its waveform with hot cues and the playhead, CUE / PLAY / SYNC / PFL; the crossfader; the track list with LOAD A and LOAD B](docs/images/studio-decks.png) | ![MORE with a DJ DECKS tile next to PLAY SLOOP and PLAY X0X](docs/images/desk-ui-more-theme.png) |
 
 **MORE › DJ DECKS**: two DJ decks on the Studio, played from a **Hercules DJControl Inpulse 200 MK2** (the controller
 they were made and tried with) and from the touchscreen.
@@ -185,12 +190,14 @@ they were made and tried with) and from the touchscreen.
 - Not affiliated with Serato or Hercules: the decks read the cue points and beatgrids Serato DJ saves in a track's
   tags; Serato is a trademark of its owner.
 
-### Since Studio v1.5: CUE for SLOOP and X0X
+### Studio v1.6: CUE for SLOOP and X0X
+
+![The MIXER with CUE buttons under SLOOP and X0X too](docs/images/desk-ui-mix-theme.png)
 
 - **CUE for SLOOP and X0X:** their MIXER columns have a CUE button too (on the 3.5 mm jack, as the FM-1s'; theirs
   after their fader, the others' before it).
 
-### Since Studio v1.5: SLOOP and X0X together, in time
+### Studio v1.6: SLOOP and X0X together, in time
 
 - **Both at once.** Opening PLAY X0X no longer stops SLOOP, or the other way round: one is on the screen, the other
   keeps playing behind it. MORE says ON for each one running; HOLD OFF stops only the one on the screen.
@@ -228,8 +235,8 @@ for the Pi the way X0X's browser version is built. Its repo:
 - **Played from the same FM-1 A** as SLOOP on the Studio: SLOOP Remote Out with REMOTE on **OUT 16**. X0X's panel
   is the FM-1's, so every control does what it does on an FM-1 running X0X.
 - **MORE › PLAY X0X**, **< HOME**, **HOLD OFF**, its + / − and its MIXER channel work as SLOOP's do. In v1.5 one
-  app runs at a time: starting X0X stops SLOOP (it saves first), and the other way round. On main since then, both
-  run at once with a shared clock (above).
+  app runs at a time: starting X0X stops SLOOP (it saves first), and the other way round. From v1.6, both run at
+  once with a shared clock (above).
 - **It keeps what X0X saves** (settings, sounds, patterns, song) in a file of its own, loaded when it starts.
 - **REMOTE OUT sends every knob now** (SLOOP Remote Out, updated): every turn of the seven knobs, on any page, and
   MASTER as CC 123, so the Studio's apps get the whole panel, not only what FM-1 A's own SLOOP page uses.
@@ -341,6 +348,7 @@ port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl 
 <details><summary>Release history</summary>
 
 **Studio**
+- **v1.5:** X0X on the Studio, played from FM-1 A; the recorder's clip check left deep sub-bass alone (above).
 - **v1.4:** SLOOP on the Studio, played from FM-1 A (above).
 - **v1.3:** the sampler (16 pads, SLOOP's sequencer, punch-in FX), the RECORDER tab, the headphone jack with cue,
   every USB MIDI device routed on its own (above).
@@ -434,13 +442,13 @@ DJ: its tags in them).
   X0X with SLOOP at once for 33 s, run as test programs of their own (the Companion runs one app at a time).
   No gaps in the sound, 0 PipeWire errors, the clip check clean; X0X about 20% of one core, SLOOP about 9%.
 - The new clip check on real takes: the stress tests' takes, with an 808 sub-bass, not flagged.
-- SLOOP and X0X at once with one clock (main, after v1.5), by hand from FM-1 A through the PLAY tiles: SLOOP
+- SLOOP and X0X at once with one clock (v1.6), by hand from FM-1 A through the PLAY tiles: SLOOP
   leading, both playing together in time by ear. A stutter in X0X when SLOOP opened was found this way and fixed;
   by hand afterwards, it was gone.
 - The same by a script, each app's sound recorded: X0X following SLOOP at 120 and 130 BPM and through STOP and
   PLAY with no drift, SLOOP following X0X the same way; a follower 9–13 ms after its leader on average, about
   8–9 ms of jitter (two X0Xs in one recording); X0X's beat steady while SLOOP opened and closed.
-- DJ decks (main, after v1.5), by hand on the Studio with the Hercules: SCAN of 37 tracks (about 6 minutes, no
+- DJ decks (v1.6), by hand on the Studio with the Hercules: SCAN of 37 tracks (about 6 minutes, no
   errors), the DECKS screen, browse and LOAD A / B, play, CUE (and PLAY while it's held), the tempo faders, SYNC
   (tempo and beat lock, double / half tempo, the last fader moved leading), EQ, filter, gain, hot cues (Serato's and
   new ones, deleted with SHIFT + pad and on the screen, jumped to from the screen), loops and SHIFT halve / double,
@@ -450,7 +458,7 @@ DJ: its tags in them).
   on 26 (31 counting a neighbour on the Camelot wheel). Two synced tracks' kicks, 20 ms apart on Serato's grids,
   together after the grid fix (by ear). The decks: about 45 % of one of the Pi 3's cores with both playing.
 - CUE on SLOOP's and X0X's MIXER columns, by hand.
-- Backups of the Studio's apps (main, after v1.5), by script on the Studio, in test sessions (not by hand, not the
+- Backups of the Studio's apps (v1.6), by script on the Studio, in test sessions (not by hand, not the
   user's own SLOOP):
   - SLOOP: a real FM-1 A backup restored into the Studio's SLOOP with the Companion's own restore job (19 s, a
     safety backup first); a backup taken right after it matched, all 16 parts (projects, settings, drum kits,
@@ -517,14 +525,14 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
   - A beatgrid found from the sound (no grid in the tags) can sit tens of ms off on some tracks: nudge with the jog.
   - Serato's stems files can't be used (Serato's own protected format); FX and SAMPLER pad modes aren't there yet.
 - **SLOOP and X0X on the Studio:**
-  - In v1.5 one runs at a time. On main both run at once, sharing one app's clock (not FM-1 A's); the follower
+  - From v1.6 both run at once, sharing one app's clock (not FM-1 A's; in v1.5 one at a time); the follower
     sounds about 10 ms after the leader, give or take about 9 ms, as two boxes on MIDI clock do.
   - X0X's own break loops (its user sample slots) aren't there: the built-in breaks are.
   - They need FM-1 A running SLOOP with REMOTE OUT (a build of our own, not isod89's release); the official SLOOP
     sends only its keys, not its buttons or knobs.
   - FM-1 A's own SLOOP plays too. Turn FM-1 A down in the MIXER to hear only the Studio's app.
-  - In v1.5, SLOOP's project slots, user presets and sample slots aren't saved, only its working project; on main
-    since then, they are (in `flash.bin`, as an FM-1 keeps them).
+  - From v1.6, SLOOP's project slots, user presets and sample slots are kept (in `flash.bin`, as an FM-1 keeps
+    them); in v1.5 only its working project was.
   - The Studio's X0X has no break loops of your own (its sample slots) yet, so its backups hold none.
 - **With two FM-1s (or a keyboard's synth), plain recordings need the speaker connected** to hear the whole mix;
   with Record parts on, the mix is made from the parts and needs none. Firmware installs wait until only one FM-1

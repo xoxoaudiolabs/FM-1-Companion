@@ -118,6 +118,7 @@ install -D -m 644 "$DIR/deskmeters.py"                          ~/.local/share/f
 install -D -m 644 "$DIR/deskpages.py"                           ~/.local/share/fm1-bridge/deskpages.py
 install -D -m 644 "$DIR/pads.py"                                ~/.local/share/fm1-bridge/pads.py
 install -D -m 644 "$DIR/deskpads.py"                            ~/.local/share/fm1-bridge/deskpads.py
+install -D -m 644 "$DIR/deskdecks.py"                           ~/.local/share/fm1-bridge/deskdecks.py
 install -D -m 644 "$DIR/padfx.py"                               ~/.local/share/fm1-bridge/padfx.py
 install -D -m 644 "$DIR/deskboot.py"                            ~/.local/share/fm1-bridge/deskboot.py
 install -D -m 644 "$DIR/netmidi.py"                             ~/.local/share/fm1-bridge/netmidi.py

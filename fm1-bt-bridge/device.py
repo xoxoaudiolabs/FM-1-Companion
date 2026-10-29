@@ -10,7 +10,7 @@ one with Bluetooth (the W boards) can do its job: detect()'s "bluetooth" says wh
 import os
 from pathlib import Path
 
-POCKET_VERSION = "2.11"         # the Pocket's release (the Studio's: deskboot.VERSION), shown by fm1-report
+POCKET_VERSION = "2.12"         # the Pocket's release (the Studio's: deskboot.VERSION), shown by fm1-report
 MODEL = Path("/proc/device-tree/model")
 FRAMEBUFFERS = Path("/sys/class/graphics")
 BLUETOOTH = Path("/sys/class/bluetooth")

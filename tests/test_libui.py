@@ -167,8 +167,9 @@ def test_flows():
     snap(app, "settings-play")
     keys(app, "left", "down", "press")                     # Audio › (its Bluetooth rows: in Bluetooth)
     assert [r[0] for r in app.settings_rows()] == ["rate"]
-    keys(app, "left", "down", "press")                     # MIDI › (the same)
-    assert [r[0] for r in app.settings_rows()] == ["usbkeys", "routes", "presets"]
+    keys(app, "left", "down", "press")                     # MIDI › (the same), and the Studio link
+    assert [r[0] for r in app.settings_rows()] == ["link", "link_audio", "usbkeys", "routes", "presets"]
+    assert app.settings_rows()[0][2] == "off"
     keys(app, "left", "up", "up", "up", "press")           # Bluetooth ›: the speaker, Bluetooth MIDI
     assert app.settings_menu == "bt" and [r[0] for r in app.settings_rows()] == [
         "speaker", "audio", "midi", "pairing", "btkeys"]
@@ -177,12 +178,12 @@ def test_flows():
     snap(app, "settings")
     keys(app, "up", "up", "up", "press")                   # Sloop › (up past Bluetooth, FM-1)
     assert app.settings_menu == "sloop" and [r[0] for r in app.settings_rows()] == [
-        "backup", "restore", "project", "sample", "sample_level", "auto", "sd"]
+        "backup", "restore", "project", "song_backup", "song_load", "sample", "sample_level", "auto", "sd"]
     snap(app, "settings-sloop")
     keys(app, "left")                                      # back to the top list, on Sloop
     assert app.settings_menu is None and app.setting == top.index("g_sloop") and app.screen == "settings"
     keys(app, "down", "press")                             # FM-1 ›
-    assert app.settings_menu == "fm1" and [r[0] for r in app.settings_rows()] == ["fw_info", "firmware"]
+    assert app.settings_menu == "fm1" and [r[0] for r in app.settings_rows()] == ["fw_info", "firmware", "dx7"]
     snap(app, "settings-fm1")
     keys(app, "left", "up", "press")                       # Sloop › again
     assert app.settings_menu == "sloop" and app.setting == 0
@@ -736,6 +737,51 @@ def test_mixer():
     assert app.settings_menu is None and app.settings_rows()[app.setting][0] == "g_mixer"
 
 
+def test_songs():
+    """Sloop > Back up song starts the job; Load song lists the songs, asks, and loads on a held press"""
+    import library
+    import sloop
+    import fake_fm1
+    app = make_app()
+    at_row(app, "sloop", "song_backup")
+    keys(app, "press")
+    assert app.started[-1] == ["song-backup"]
+    sections = {"A": fake_fm1.project(6, 1), "B": b"", "C": b"", "D": fake_fm1.project(6, 4)}
+    path = library.folder("songs") / "2026-10-29_090000_night-drive.json"
+    sloop.save_json(path, sloop.song_file(sections, bytes([2, 0, 0, 0, 0, 4, 3, 4] + [0, 4] * 14), "Night drive",
+                                          "FELUCCA SLOOP 2.8"))
+    app.screen = "settings"
+    at_row(app, "sloop", "song_load")
+    keys(app, "press")
+    assert app.screen == "pick" and app.pick["title"] == "Load song"
+    assert app.pick["items"][0][:2] == ("Night drive", "2 st")
+    keys(app, "press")
+    assert app.screen == "confirm" and app.confirm["lines"][0] == "Night drive"
+    keys(app, "press!")
+    assert app.started[-1] == ["song-load", str(path)]
+
+
+def test_dx7_patches():
+    """FM-1 > DX7 patches: the .syx files; a bank: the whole bank or a voice by name; asked, then sent"""
+    import dx7
+    import library
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_dx7 import random_voice
+    voices = [dx7.pack(random_voice(i, f"VOICE {i:02}")) for i in range(32)]
+    path = library.folder("patches") / "rom1a.syx"
+    path.write_bytes(dx7.bank_message(voices))
+    app = make_app()
+    at_row(app, "fm1", "dx7")
+    keys(app, "press")
+    assert app.screen == "pick" and app.pick["title"] == "DX7 patches" and app.pick["items"][0][:2] == ("rom1a", "bank")
+    keys(app, "press")
+    assert app.pick["items"][0][0] == "Whole bank" and app.pick["items"][3][0] == "3 VOICE 02"
+    keys(app, "down", "down", "down", "press")
+    assert app.screen == "confirm" and app.confirm["lines"][0] == "VOICE 02"
+    keys(app, "press!")
+    assert app.started[-1] == ["dx7-send", str(path), "3"]
+
+
 def port(i, node_id, name, n):
     return {"type": "PipeWire:Interface:Port", "id": i,
             "info": {"props": {"node.id": node_id, "port.name": name, "port.direction": "out", "port.id": n}}}
@@ -928,6 +974,40 @@ def test_web_link():
     assert ("transport", "start") in app.midi.commands and "bad setting" in app.message
     app.web_publish()
     assert library.read_status()["settings"]["metronome"] is True       # the page sees it
+    # the Pocket's Studio link: its state for the page, and the page switching it and its audio
+    links = []
+    app.midi.set_link = lambda on, host=None: links.append(on)
+    assert app.web_status()["link"] == {"on": False, "audio": True, "studio": None, "address": None,
+                                        "cable": False, "sending": False, "error": None}
+    library.queue_command({"cmd": "set", "key": "studio_link", "value": True})
+    library.queue_command({"cmd": "set", "key": "link_audio", "value": False})
+    app.web_commands()
+    assert links == [True] and app.state["studio_link"] and app.state["link_audio"] is False
+    app.midi.net, app.midi.link_address = ["XOXO Studio"], "169.254.115.88"
+    link = app.web_status()["link"]
+    assert link["on"] and link["studio"] == "XOXO Studio" and link["cable"] and not link["audio"]
+    # the theme, auto backup, output and the speaker from the page
+    status = app.web_status()
+    assert status["theme"] is None and status["settings"]["auto_backup"] == "boot"   # (no colour screen here)
+    app.display.colour = True
+    assert app.web_status()["theme"]["value"] == "follow" and "follow" in app.web_status()["theme"]["choices"]
+    speaker = []
+    app.reconnect, app.disconnect = (lambda: speaker.append("connect")), (lambda: speaker.append("disconnect"))
+    theme = app.web_status()["theme"]["choices"][1]
+    app.state["last_mac"] = None
+    for command in ({"cmd": "set", "key": "auto_backup", "value": 10}, {"cmd": "set", "key": "output", "value": "phones"},
+                    {"cmd": "set", "key": "theme", "value": theme}, {"cmd": "speaker", "value": "connect"}):
+        library.queue_command(command)
+    app.web_commands()
+    assert app.state["auto_backup"] == 10 and app.state["output"] == "phones" and app.state["desk_theme"] == theme
+    assert speaker == [] and "no speaker" in app.message                 # none paired: nothing to connect
+    app.state["last_mac"] = "AA:BB:CC:DD:EE:FF"
+    for command in ({"cmd": "speaker", "value": "disconnect"}, {"cmd": "set", "key": "auto_backup", "value": 7},
+                    {"cmd": "set", "key": "auto_backup", "value": True}, {"cmd": "set", "key": "theme", "value": "nope"}):
+        library.queue_command(command)
+    app.web_commands()
+    assert speaker == ["disconnect"] and app.state["auto_backup"] == 10 and app.state["desk_theme"] == theme
+    del app.display.colour
 
 
 def test_bt_keyboards():

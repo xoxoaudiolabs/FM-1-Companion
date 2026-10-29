@@ -1,0 +1,77 @@
+#!/bin/bash
+# fm1-update: the web app's one-click update (update.py runs it with sudo, no password: install.sh's sudoers).
+# Installs the newest FM-1 Companion release for this box from the project's GitHub (xoxoaudiolabs/FM-1-Companion:
+# tags v* for the Pocket, studio-v* for the Studio) with that release's own install.sh, keeping the code in use to
+# go back to. Nothing of the user's is touched (settings, the library, the apps' saves live elsewhere).
+#   fm1-update           install the newest release
+#   fm1-update --back    put back the code from before the last update
+# It takes no other input: what runs as root comes only from the project's GitHub. (FM1_UPDATE_TARBALL, a local
+# release .tar.gz, is for trying it by hand: sudo passes it only to a user who can run anything as root anyway.)
+set -euo pipefail
+
+REPO=xoxoaudiolabs/FM-1-Companion
+U="${SUDO_USER:-}"
+[ -n "$U" ] && [ "$U" != root ] || { echo "Run with sudo by the Companion's user." >&2; exit 2; }
+HOME_U="$(getent passwd "$U" | cut -d: -f6)"
+APP="$HOME_U/.local/share/fm1-bridge"
+WORK=/var/lib/fm1-update
+mkdir -p "$WORK"
+chmod 700 "$WORK"
+
+case "${1:-}" in
+    --back)
+        [ -d "$WORK/previous" ] || { echo "Nothing to go back to." >&2; exit 3; }
+        rm -rf "$APP.back"
+        cp -a "$WORK/previous" "$APP.back"
+        rm -rf "$APP"
+        mv "$APP.back" "$APP"
+        echo "Put back the code from before the update."
+        exit 0 ;;
+    "") ;;
+    *) echo "Usage: fm1-update [--back]" >&2; exit 2 ;;
+esac
+
+MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+case "$MODEL" in *Zero*) PATTERN='^v([0-9]+(\.[0-9]+)+)$' ;; *) PATTERN='^studio-v([0-9]+(\.[0-9]+)+)$' ;; esac
+
+rm -rf "$WORK/new"
+mkdir -p "$WORK/new"
+if [ -n "${FM1_UPDATE_TARBALL:-}" ]; then
+    TAG="(local file)"
+    tar -xzf "$FM1_UPDATE_TARBALL" -C "$WORK/new" --strip-components=1
+else
+    # the newest tag for this box, then its source as GitHub packs it
+    TAG="$(python3 - "$REPO" "$PATTERN" <<'PY'
+import json, re, sys, urllib.request
+repo, pattern = sys.argv[1], re.compile(sys.argv[2])
+req = urllib.request.Request(f"https://api.github.com/repos/{repo}/tags?per_page=100",
+                             headers={"Accept": "application/vnd.github+json", "User-Agent": "fm1-update"})
+with urllib.request.urlopen(req, timeout=20) as r:
+    tags = [t["name"] for t in json.load(r)]
+found = [(tuple(int(n) for n in m.group(1).split(".")), t) for t in tags for m in [pattern.match(t)] if m]
+print(max(found)[1] if found else "")
+PY
+)"
+    [ -n "$TAG" ] || { echo "No release for this box on GitHub." >&2; exit 4; }
+    echo "Downloading $TAG"
+    python3 - "https://codeload.github.com/$REPO/tar.gz/refs/tags/$TAG" "$WORK/release.tar.gz" <<'PY'
+import shutil, sys, urllib.request
+req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "fm1-update"})
+with urllib.request.urlopen(req, timeout=120) as r, open(sys.argv[2], "wb") as out:
+    shutil.copyfileobj(r, out)
+PY
+    tar -xzf "$WORK/release.tar.gz" -C "$WORK/new" --strip-components=1
+    rm -f "$WORK/release.tar.gz"
+fi
+
+SRC="$WORK/new/fm1-bt-bridge"
+[ -f "$SRC/install.sh" ] || { echo "$TAG has no installer." >&2; exit 4; }
+grep -q FM1_UPDATE_USER "$SRC/install.sh" || {
+    echo "$TAG can't be installed from the web app: install it over SSH (README)." >&2; exit 4; }
+
+rm -rf "$WORK/previous"
+[ -d "$APP" ] && cp -a "$APP" "$WORK/previous"
+echo "Installing $TAG"
+FM1_UPDATE_USER="$U" bash "$SRC/install.sh" < /dev/null
+rm -rf "$WORK/new"
+echo "Installed $TAG"

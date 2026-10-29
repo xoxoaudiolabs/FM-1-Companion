@@ -187,6 +187,16 @@ def test_writes_wait_for_the_box():
     assert jcall("/api/ask", {"cmd": "load-sample", "files": ["../x.wav"], "slot": 2})[0] == 400
     assert jcall("/api/ask", {"cmd": "flash", "file": "nope.fwsc"})[0] == 400
     assert jcall("/api/ask", {"cmd": "rm -rf"})[0] == 400
+    song = library.folder("songs") / "2026-10-29_090000_night-drive.json"
+    song.write_text("{}")
+    jcall("/api/ask", {"cmd": "load-song", "file": song.name})                 # a SLOOP song: asked on the box
+    assert library.take_request()["args"] == ["song-load", str(song)]
+    assert jcall("/api/ask", {"cmd": "load-song", "file": "../x.json"})[0] == 400
+    assert "Back up song" in urllib.request.urlopen(BASE + "/", timeout=10).read().decode()
+    (library.folder("patches") / "bank.syx").write_bytes(bytes([0xF0, 0xF7]))
+    jcall("/api/ask", {"cmd": "dx7-send", "file": "bank.syx", "voice": 5})       # a DX7 voice: asked on the box
+    assert library.take_request()["args"][-1] == "5"
+    assert jcall("/api/ask", {"cmd": "dx7-send", "file": "bank.syx", "voice": 40})[0] == 400
 
 
 def test_run_and_delete():

@@ -10,6 +10,12 @@
                                       project file), TARGET working/A-D (backs up first)
   library.py save-project FILE SRC NAME
                                       a backup's project as its own file in ~/fm1-library/projects
+  library.py song-backup [NAME]       the FM-1's song (SLOOP 2.5+: sections A-D and the song order) into
+                                      ~/fm1-library/songs
+  library.py song-load FILE           a song back onto the FM-1: its sections and song order, the rest of its
+                                      settings kept (backs up first)
+  library.py dx7-send FILE [VOICE]    a DX7 bank (.syx) to an FM-1 firmware that takes them, or one voice of it
+                                      (1-32) as a single voice; not to SLOOP or Clipper, which don't
   library.py load-sample SLOT NAME WAV...
                                       WAV files into USR SLOT (1-4), one zone each
   library.py flash FILE.fwsc          install a firmware package (backs up first when it can)
@@ -40,7 +46,8 @@ import sloop  # noqa: E402
 import x0x  # noqa: E402
 
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
-FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x")   # x0x: the Studio's X0X backups
+FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x",   # x0x: the Studio's X0X backups
+           "songs", "patches")                                                   # SLOOP songs; DX7 .syx
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
@@ -56,7 +63,7 @@ FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmw
              "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
 RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
 SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",),
-            "recordings": (".wav",), "x0x": (".x0b",)}
+            "recordings": (".wav",), "x0x": (".x0b",), "songs": (".json",), "patches": (".syx",)}
 
 
 def folder(name):
@@ -440,6 +447,67 @@ def job_load_project(file, source, target):
         job.done(f"Loaded into {where}", before=before and before.name)
 
 
+def job_song_backup(name=None):
+    """the song on the FM-1 (its four sections and song order) as a song file"""
+    with Job("song-backup") as job:
+        job.step("Connecting")
+        dev = connect()
+        sections, order = dev.read_song(job.progress("Reading the song"))
+        when = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        name = name or f"Song {datetime.now().strftime('%m-%d %H:%M')}"
+        path = folder("songs") / f"{when}_{slug(name)}.json"
+        sloop.save_json(path, sloop.song_file(sections, order, name, dev.version))
+        sd_export()
+        steps, _ = sloop.song_steps(order)
+        used = "".join(n for n in sloop.SECTIONS if sections[n])
+        job.done(f"Saved {name}: {len(steps)} steps, sections {used or 'none'}", file=path.name)
+
+
+def job_song_load(file):
+    with Job("song-load") as job:
+        song = sloop.load_json(file)
+        sections, order = sloop.song_from(song)  # damaged files stop here, before anything is written
+        job.step("Connecting")
+        dev = connect()
+        sloop.same_family(dev.version, song.get("firmware"))        # before anything, even the backup
+        dev.check_stopped()
+        before = safety_backup(dev, job, "before-song")
+        dev.put_song(sections, order, job.progress("Loading the song"), firmware=song.get("firmware"))
+        job.done(f"Loaded {song.get('name') or Path(file).stem}", before=before and before.name)
+
+
+def job_dx7_send(file, voice=None):
+    """a DX7 bank, or one of its voices (1-32), to the FM-1's MIDI: only the two standard DX7 messages (dx7.py).
+    SLOOP and Clipper answer SLOOP's INFO and don't take DX7 SysEx: not sent to them"""
+    import dx7
+    with Job("dx7-send") as job:
+        try:
+            message = dx7.to_send(file, None if voice is None else voice - 1)
+            what = dx7.describe(file)
+        except (OSError, dx7.DX7Error) as e:
+            raise sloop.SloopError("bad", f"{Path(file).name}: {e}")
+        job.step("Connecting")
+        link = sloop.Link(card=target_card())
+        try:
+            try:
+                version = sloop.Sloop(link).version
+            except sloop.SloopError as e:
+                if e.code != "noreply":
+                    raise
+                version = None                 # (no SLOOP protocol: another firmware)
+            if sloop.family(version):
+                raise sloop.SloopError("family", f"{version} doesn't take DX7 patches (SLOOP has its own FM6 bank)")
+            job.step("Sending")
+            link.out.send(link.mido.Message("sysex", data=list(message[1:-1])))
+            time.sleep(0.5)                    # (a bank is 4 KB: let it go out before the port closes)
+        finally:
+            link.close()
+        if voice is None and what["kind"] == "bank":
+            job.done(f"Sent {Path(file).stem}: 32 voices (on the FM-1, pick the bank it goes to)")
+        else:
+            job.done(f"Sent {what['voices'][0 if voice is None else voice - 1] or 'the voice'}")
+
+
 def x0x_backup(kind="manual", state=x0x.STATE):
     """the Studio's X0X project (what it has saved) as a .x0b in ~/fm1-library/x0x: X0X's own backup format, so it
     restores onto an FM-1 running X0X too"""
@@ -654,6 +722,21 @@ def listing():
                     entry["parts"] = parts
             elif name == "x0x":
                 entry.update(x0x.describe(path.read_bytes()))
+            elif name == "songs":
+                try:
+                    song = sloop.load_json(path)
+                    sections, order = sloop.song_from(song)
+                    steps, loop = sloop.song_steps(order)
+                    entry.update(title=song.get("name"), firmware=song.get("firmware"), steps=len(steps), loop=loop,
+                                 sections="".join(n for n in sloop.SECTIONS if sections[n]))
+                except sloop.SloopError:
+                    entry["damaged"] = True
+            elif name == "patches":
+                import dx7
+                try:
+                    entry.update(dx7.describe(path))
+                except (OSError, dx7.DX7Error):
+                    entry["damaged"] = True
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)
@@ -686,10 +769,23 @@ def main(argv=None):
             job_load_project(args[0], args[1], args[2])
         elif command == "save-project" and len(args) == 3:
             job_save_project(*args)
+        elif command == "song-backup" and len(args) <= 1:
+            job_song_backup(args[0] if args else None)
+        elif command == "song-load" and len(args) == 1:
+            job_song_load(args[0])
+        elif command == "dx7-send" and len(args) in (1, 2):
+            job_dx7_send(args[0], int(args[1]) if len(args) == 2 else None)
         elif command == "load-sample" and len(args) >= 3:
             job_load_sample(int(args[0]), args[1], args[2:])
         elif command == "flash" and len(args) == 1:
             job_flash(args[0])
+        elif command == "update":            # the web app's update, confirmed on the box: update.py
+            import update
+            with Job("update") as job:
+                error = update.start()
+                if error:
+                    raise ValueError(error)
+                job.done("Updating: the Companion restarts when it's installed")
         elif command == "fetch-sloop":
             job_fetch("sloop")
         elif command == "fetch" and len(args) == 1:

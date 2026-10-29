@@ -4,11 +4,24 @@
 # board.
 # Run as your normal user (not with sudo):  bash install.sh
 # The Pocket's screen is asked for; to answer it ahead:  FM1_SCREEN=oled|lcd144|lcd13|ask bash install.sh
+# (The web app's update runs it too, as root for the user: fm1-update, with FM1_UPDATE_USER. Nothing is asked
+# then, and the packages are only installed if one is missing.)
 set -euo pipefail
 
+UPDATE=""
 if [ "$(id -u)" -eq 0 ]; then
-    echo "Run this as your normal user, not root: bash install.sh" >&2
-    exit 1
+    if [ -z "${FM1_UPDATE_USER:-}" ]; then
+        echo "Run this as your normal user, not root: bash install.sh" >&2
+        exit 1
+    fi
+    UPDATE=1                                # fm1-update: root already, for the user it names
+    USER="$FM1_UPDATE_USER"
+    HOME="$(getent passwd "$USER" | cut -d: -f6)"
+    export USER HOME
+    sudo() { case "$1" in -v|-n) return 0 ;; esac; "$@"; }
+    as_user() { runuser -u "$USER" -- env HOME="$HOME" XDG_RUNTIME_DIR="/run/user/$(id -u "$USER")" "$@"; }
+else
+    as_user() { "$@"; }
 fi
 DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
@@ -51,18 +64,26 @@ if [ "$BUILD" = pocket ]; then            # the HAT can't be asked which it is (
     case "$SCREEN_CHOICE" in oled|lcd144|lcd13|ask|"") ;; *) stop "FM1_SCREEN must be oled, lcd144, lcd13 or ask" ;; esac
 fi
 
-echo "== Your password is needed once, for sudo"
-sudo -v
-while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &   # keep sudo for the whole install
+if [ -z "$UPDATE" ]; then
+    echo "== Your password is needed once, for sudo"
+    sudo -v
+    while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &   # keep sudo for the whole install
+fi
 
-echo "== Installing packages (this takes a while: several minutes, longest on a Pi Zero)"
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
-    pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
+PACKAGES="pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
-    python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools
-if [ "$BUILD" = desk ]; then              # USB drives for the DJ decks: mounted, FAT / exFAT / NTFS
-    sudo apt-get install -y --no-install-recommends udisks2 exfatprogs ntfs-3g
+    python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools"
+[ "$BUILD" = desk ] && PACKAGES="$PACKAGES udisks2 exfatprogs ntfs-3g"   # USB drives for the DJ decks
+all_installed() {
+    for p in $PACKAGES; do
+        dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || return 1
+    done
+}
+if [ -z "$UPDATE" ] || ! all_installed; then  # (an update: only when it brings a package)
+    # shellcheck disable=SC2086
+    echo "== Installing packages (this takes a while: several minutes, longest on a Pi Zero)"
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends $PACKAGES
 fi
 
 echo "== Enabling SPI for the screen, Bluetooth, and permissions"
@@ -125,12 +146,17 @@ if [ "$BUILD" = desk ]; then              # network MIDI for a DAW (Kraken): lis
     sudo install -D -m 644 "$DIR/config/fm1-midi-mcu.service" /etc/avahi/services/fm1-midi-mcu.service
 fi
 
+echo "== The Pocket-Studio link: a link-local address on Ethernet, so one cable between the boxes is enough"
+sudo install -D -m 644 "$DIR/config/50-fm1-ethernet-link.conf" /etc/NetworkManager/conf.d/50-fm1-ethernet-link.conf
+sudo nmcli general reload conf 2>/dev/null || true
+
 echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
 sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync
 sudo install -m 755 "$DIR/config/fm1-screen" /usr/local/bin/fm1-screen    # which screen HAT, over SSH
 sudo install -m 755 "$DIR/config/fm1-report" /usr/local/bin/fm1-report    # a report to paste into an email or issue
+sudo install -m 755 "$DIR/config/fm1-update" /usr/local/sbin/fm1-update   # the web app's update (update.py)
 SUDOERS=/etc/sudoers.d/fm1-bridge
-printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off, /usr/local/sbin/fm1-sd-sync\n' \
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off, /usr/local/sbin/fm1-sd-sync, /usr/local/sbin/fm1-update\n' \
     "$USER" | sudo tee "$SUDOERS" >/dev/null
 sudo chmod 440 "$SUDOERS"
 sudo visudo -cf "$SUDOERS"
@@ -160,6 +186,7 @@ install -D -m 644 "$DIR/pocketui.py"                            ~/.local/share/f
 install -D -m 644 "$DIR/pocketmeters.py"                        ~/.local/share/fm1-bridge/pocketmeters.py
 install -D -m 644 "$DIR/oledi2c.py"                             ~/.local/share/fm1-bridge/oledi2c.py
 install -D -m 644 "$DIR/screenpick.py"                          ~/.local/share/fm1-bridge/screenpick.py
+install -D -m 644 "$DIR/dx7.py"                                 ~/.local/share/fm1-bridge/dx7.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
 install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
@@ -168,9 +195,11 @@ install -D -m 644 "$DIR/deskpages.py"                           ~/.local/share/f
 install -D -m 644 "$DIR/pads.py"                                ~/.local/share/fm1-bridge/pads.py
 install -D -m 644 "$DIR/deskpads.py"                            ~/.local/share/fm1-bridge/deskpads.py
 install -D -m 644 "$DIR/deskdecks.py"                           ~/.local/share/fm1-bridge/deskdecks.py
+install -D -m 644 "$DIR/deskfm1.py"                             ~/.local/share/fm1-bridge/deskfm1.py
 install -D -m 644 "$DIR/padfx.py"                               ~/.local/share/fm1-bridge/padfx.py
 install -D -m 644 "$DIR/deskboot.py"                            ~/.local/share/fm1-bridge/deskboot.py
 install -D -m 644 "$DIR/netmidi.py"                             ~/.local/share/fm1-bridge/netmidi.py
+install -D -m 644 "$DIR/netaudio.py"                            ~/.local/share/fm1-bridge/netaudio.py
 install -D -m 644 "$DIR/sloopstyle.py"                          ~/.local/share/fm1-bridge/sloopstyle.py
 install -D -m 644 "$DIR/weblink.py"                             ~/.local/share/fm1-bridge/weblink.py
 install -D -m 644 "$DIR/samplefast.py"                          ~/.local/share/fm1-bridge/samplefast.py
@@ -180,7 +209,9 @@ install -D -m 755 "$DIR/library.py"                             ~/.local/share/f
 install -D -m 644 "$DIR/x0x.py"                                 ~/.local/share/fm1-bridge/x0x.py
 install -D -m 644 "$DIR/decks.py"                               ~/.local/share/fm1-bridge/decks.py
 install -D -m 644 "$DIR/djlib.py"                               ~/.local/share/fm1-bridge/djlib.py
+install -D -m 644 "$DIR/fm1map.py"                              ~/.local/share/fm1-bridge/fm1map.py
 install -D -m 755 "$DIR/web.py"                                 ~/.local/share/fm1-bridge/web.py
+install -D -m 755 "$DIR/update.py"                              ~/.local/share/fm1-bridge/update.py
 mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \
     ~/fm1-library/samples ~/fm1-library/firmware
 install -m 644 "$DIR"/vendor/sloop/*                            ~/.local/share/fm1-bridge/vendor/sloop/
@@ -202,6 +233,12 @@ install -D -m 644 "$DIR/config/fm1-web.service"                 ~/.config/system
 
 if [ "$BUILD" = desk ] && [ ! -f ~/.local/share/fm1-bridge/splash.raw ]; then   # the first boot's picture
     (cd ~/.local/share/fm1-bridge && python3 -c "import deskboot, sloopstyle; deskboot.save(sloopstyle.Theme())")         || echo "   (the boot screen's picture comes with the first start instead)"
+fi
+
+if [ -n "$UPDATE" ]; then                  # (written as root above: the user's again)
+    chown -R "$USER:" ~/.local/share/fm1-bridge ~/.config/pipewire ~/.config/wireplumber ~/.config/systemd
+    chown "$USER:" ~/fm1-library ~/fm1-library/backups ~/fm1-library/projects ~/fm1-library/samples \
+        ~/fm1-library/firmware
 fi
 
 echo "== Booting faster (on Trixie a Zero W otherwise takes ~3 minutes before the Companion starts)"
@@ -230,8 +267,8 @@ fi
 
 echo "== Starting at boot without a login"
 sudo loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service fm1-web.service
+as_user systemctl --user daemon-reload
+as_user systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service fm1-web.service
 sync                                    # on the card before anyone pulls the power
 
 echo

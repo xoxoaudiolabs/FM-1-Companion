@@ -82,6 +82,138 @@ def test_mackie():
     assert netmidi.Mackie.press(0x5E, False) == bytes([0x90, 0x5E, 0])
 
 
+def name_bytes(name):
+    return b"".join(bytes([len(part)]) + part.encode() for part in name.split(".")) + b"\0"
+
+
+def record(name, rtype, data):
+    return name_bytes(name) + struct.pack(">HHIH", rtype, 1, 120, len(data)) + data
+
+
+def studio_reply(instance, host, address, port=5004):
+    """what avahi answers for _apple-midi._udp: PTR to the instance, its SRV and its host's A"""
+    full = f"{instance}._apple-midi._udp.local"
+    records = [record("_apple-midi._udp.local", 12, name_bytes(full)),
+               record(full, 33, struct.pack(">HHH", 0, 0, port) + name_bytes(host)),
+               record(host, 1, socket.inet_aton(address))]
+    return struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 2) + b"".join(records)
+
+
+class Replies:
+    """a socket for find_studios: the query it sent, then the replies given"""
+    def __init__(self, *replies):
+        self.sent, self.replies = [], list(replies)
+
+    def setsockopt(self, *a):
+        pass
+
+    def sendto(self, packet, addr):
+        self.sent.append((packet, addr))
+
+    def recv(self, n):
+        return self.replies.pop(0)
+
+    def fileno(self):
+        return -1
+
+
+def test_find_studios():
+    """the Pocket's Studio link finds the Studios' music sessions by DNS-SD: not their control surfaces, a computer
+    or another Pocket"""
+    for name, studio in (("FM-1 Companion on fm1studio", True), ("FM-1 Companion MCU on fm1studio", False),
+                         ("XOXO Studio on xoxostudio", True), ("Pat's MacBook", False),
+                         ("FM-1 Companion Pocket", False)):
+        assert netmidi.is_studio(name + "._apple-midi._udp.local") == studio, name
+    reply = studio_reply("FM-1 Companion on fm1studio", "fm1studio.local", "169.254.10.20")
+    assert (("_apple-midi._udp.local", 12, "FM-1 Companion on fm1studio._apple-midi._udp.local")
+            in netmidi.mdns_records(reply))
+    mcu = studio_reply("FM-1 Companion MCU on fm1studio", "fm1studio.local", "169.254.10.20", 5006)
+    sock = Replies(mcu, reply)
+    was = netmidi.select.select
+    netmidi.select.select = lambda r, w, x, t: (r if sock.replies else [], [], [])
+    try:
+        assert netmidi.find_studios(sock=sock) == [("FM-1 Companion on fm1studio", "169.254.10.20", 5004)]
+    finally:
+        netmidi.select.select = was
+    assert sock.sent[0][1] == netmidi.MDNS and b"\x0b_apple-midi" in sock.sent[0][0]
+
+
+def test_link():
+    """the Pocket starts a session to a Studio's (as a computer does): MIDI both ways, gone from the Studio when
+    the link stops"""
+    at_studio, at_pocket = [], []
+    studio = netmidi.Session("FM-1 Companion", 15014, at_studio.append)
+    assert studio.start()
+    link = netmidi.Invitation(netmidi.LINK_NAME, at_pocket.append, find=lambda: [("FM-1 Companion", "127.0.0.1",
+                                                                                   15014)])
+    try:
+        assert link.start()
+        end = time.monotonic() + 5
+        while not (link.names() and studio.names()) and time.monotonic() < end:
+            time.sleep(0.05)
+        assert link.names() == ["FM-1 Companion"] and studio.names() == [netmidi.LINK_NAME]
+        studio.send([b"\xf8", b"\x90\x3c\x64"])
+        link.send([b"\xb0\x07\x50"])
+        end = time.monotonic() + 2
+        while (len(at_pocket) < 2 or not at_studio) and time.monotonic() < end:
+            time.sleep(0.05)
+        assert at_pocket == [b"\xf8", b"\x90\x3c\x64"] and at_studio == [b"\xb0\x07\x50"]
+        link.stop()
+        end = time.monotonic() + 2
+        while studio.names() and time.monotonic() < end:
+            time.sleep(0.05)
+        assert studio.names() == [] and link.names() == []
+    finally:
+        link.stop()
+    moving = netmidi.Invitation(netmidi.LINK_NAME, at_pocket.append, find=lambda: [
+        ("FM-1 Companion", "169.254.10.20", 15014), ("FM-1 Companion", "127.0.0.1", 15024)])
+    moving.peer = {"name": "FM-1 Companion", "control": ("127.0.0.1", 15024), "data": ("127.0.0.1", 15025)}
+    moving.sock = moving.dsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # (for its BY)
+    assert moving.to_cable() and moving.peer is None   # linked over Wi-Fi, the Studio on a cable too: moved
+    moving.peer = {"name": "FM-1 Companion", "control": ("169.254.10.20", 15014), "data": ("169.254.10.20", 15015)}
+    assert not moving.to_cable()                  # already on the cable
+    moving.sock.close()
+    nowhere = netmidi.Invitation(netmidi.LINK_NAME, at_pocket.append, find=lambda: [])
+    assert nowhere.target() is None and nowhere.error == "no Studio found"
+
+
+def test_link_clock():
+    """linked, the Studio leads: the Pocket's routes to NET carry notes but never clock or start / stop"""
+    import blemidi
+
+    class Net:
+        sent = []
+
+        def send(self, messages):
+            self.sent.append(list(messages))
+
+    b = blemidi.MidiBridge(["felucca"])
+    b.net, b.link = Net(), True
+    b.deliver("FM-1>NET", [b"\xf8", b"\xfa", b"\x90\x3c\x64", b"\xfc"])
+    b.deliver("FM-1>NET", [b"\xf8"])
+    assert Net.sent == [[b"\x90\x3c\x64"]]
+    b.link = False                            # (the Studio's own NET, to a computer: clock goes as before)
+    b.deliver("FM-1>NET", [b"\xf8"])
+    assert Net.sent[-1] == [b"\xf8"]
+
+
+def test_link_audio_config():
+    """the link's audio: PipeWire's RTP sender to the Studio's address (a sink the Pocket plays into), its receiver
+    on the Studio (a source); the same format both sides"""
+    import netaudio
+    send, receive = netaudio.sender_config("169.254.10.20"), netaudio.receiver_config()
+    assert 'destination.ip = "169.254.10.20"' in send and "libpipewire-module-rtp-sink" in send
+    assert f"rtp.ssrc = {netaudio.stream_id()}" in send and netaudio.stream_id() == netaudio.stream_id()
+    assert f'node.name = "{netaudio.SINK}"' in send and 'media.class = "Audio/Sink"' in send
+    assert "libpipewire-module-rtp-source" in receive and f"source.port = {netaudio.PORT}" in receive
+    assert f'node.name = "{netaudio.SOURCE}"' in receive and 'media.class = "Audio/Source"' in receive
+    for text in (send, receive):
+        assert netaudio.FORMAT in text and text.count("{") == text.count("}")
+    sender = netaudio.Sender()
+    sender.to(None)                           # not linked: nothing started
+    assert not sender.running() and sender.text is None
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

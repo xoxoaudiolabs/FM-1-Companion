@@ -124,7 +124,7 @@ def scenes(app):
         app.screen, app.setting, app.settings_menu = "settings", 0, "bt"
 
     def settings_midi():
-        app.screen, app.setting, app.settings_menu = "settings", 2, "midi"
+        app.screen, app.setting, app.settings_menu = "settings", 0, "midi"      # Studio link first
 
     def settings_fm1():
         app.screen, app.setting, app.settings_menu = "settings", 0, "fm1"
@@ -161,6 +161,33 @@ def scenes(app):
         take = "2026-10-22_081530_fm1.wav"
         (lib.folder("recordings") / take).write_bytes(b"RIFF" + bytes(40) + bytes(192000 * 47))
         app.pick_recording(take)
+
+    def songs():                              # Sloop > Load song: two songs saved
+        import library as lib
+        import sloop as sl
+        sections = {"A": bytes([0x36]) + b"NUF" + bytes(60), "B": bytes([0x36]) + b"NUF" + bytes(60), "C": b"",
+                    "D": b""}
+        for when, name, steps in (("2026-10-29_103243", "Night drive", 4), ("2026-10-28_201500", "Sunday jam", 6)):
+            order = bytes([steps, 1, 0, 0] + [0, 4] * 16)
+            sl.save_json(lib.folder("songs") / f"{when}_{name.lower().replace(' ', '-')}.json",
+                         sl.song_file(sections, order, name, "FELUCCA SLOOP 2.8"))
+        app.screen, app.settings_menu = "settings", "sloop"
+        app.setting = [r[0] for r in app.settings_rows()].index("song_load")
+        app.change_setting()
+
+    def dx7_bank():                           # FM-1 > DX7 patches: a bank's voices
+        import dx7
+        import library as lib
+        names = ["BRASS 1", "STRINGS 1", "ORCHESTRA", "PIANO 1", "PIANO 2", "E.PIANO 1", "GUITAR 1", "BASS 1",
+                 "ORGAN 1", "MARIMBA", "FLUTE 1", "HARP 1"] + [f"VOICE {i}" for i in range(13, 33)]
+        voice = [50] * 126 + [50] * 8 + [4, 3, 1, 35, 0, 0, 0, 1, 0, 3, 24]
+        bank = [dx7.pack(bytes(voice + list(n.ljust(10).encode()))) for n in names]
+        (lib.folder("patches") / "my-bank.syx").write_bytes(dx7.bank_message(bank))
+        app.screen, app.settings_menu = "settings", "fm1"
+        app.setting = [r[0] for r in app.settings_rows()].index("dx7")
+        app.change_setting()
+        app.pick["on"](app.pick["items"][0][2])
+        app.pick["cursor"] = 6
 
     def player():
         app.player, app.player_name, app.screen = Playing(), "2026-10-22_081530_fm1.wav", "player"
@@ -201,7 +228,7 @@ def scenes(app):
             ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings), ("bt-keys", bt_keys),
             ("editor", editor), ("editor-note", editor_note),
-            ("player", player), ("job", job)]
+            ("player", player), ("job", job), ("songs", songs), ("dx7-bank", dx7_bank)]
 
 
 def blemidi_routes():

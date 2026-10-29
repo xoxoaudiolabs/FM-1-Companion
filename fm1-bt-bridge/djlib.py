@@ -38,6 +38,7 @@ from pathlib import Path
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
 MUSIC = LIBRARY / "Studio DJ Music"
 CACHE = ".studio-dj.json"
+CONTROLLERS = ".studio-dj-controllers.json"    # beside the music: each controller's map, learned on the DECKS screen
 AUDIO = (".mp3", ".flac", ".wav", ".aif", ".aiff", ".ogg") + \
     ((".m4a",) if shutil.which(os.environ.get("FFMPEG") or "ffmpeg") else ())   # (AAC: ffmpeg's, not libsndfile's)
 MOUNTABLE = ("vfat", "exfat", "ntfs", "ntfs3", "ext4", "ext3", "ext2", "hfsplus")
@@ -483,6 +484,20 @@ def scan(folder=MUSIC, redetect=False, progress=lambda done, total, name: None, 
 
 
 # ---------------------------------------------------------------- USB drives
+
+def port_base(name):
+    """a MIDI port's name without ALSA's client:port numbers on its end (they can change from boot to boot)"""
+    return re.sub(r"\s+\d+:\d+$", "", name)
+
+
+def learned(folder=None):
+    """{controller's port name: [binding, ...]}: the controllers given a map by MIDI learn (decks.py)"""
+    try:
+        data = json.loads(((folder or MUSIC) / CONTROLLERS).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
 
 def usb_volumes(tree=None):
     """[{"path", "label", "uuid", "mountpoint"}]: the filesystems on USB drives (lsblk: a disk's TRAN is "usb", a

@@ -310,6 +310,191 @@ def test_decks_screen():
     assert ui.tab == "HOME"
 
 
+def test_decks_learn_screens():
+    """DECKS > LEARN: the controllers plugged in, one picked; a control to learn (BACK / SKIP / DONE); a map's
+    list (a row tapped: that one learnt again; LEARN ALL; held: forgotten), from a pretend decks program"""
+    import bridge
+    import deskui
+    import decks
+    sent = []
+
+    class Decks:
+        library, overviews, note = [], {0: [], 1: []}, None
+        library_n = note_n = 0
+        status = {"decks": [{}, {}], "xfade": 0.5, "cursor": 0, "scanning": None,
+                  "ports": [["DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1", False, True],
+                            ["K.O. Sidekick:K.O. Sidekick MIDI 1", False, False]], "learn": None}
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def running(self):
+            return True
+
+        def send(self, *cmd):
+            sent.append(cmd)
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+    ui.decks_proc, ui.tab = Decks(), "DECKS"
+    now = [0.0]
+
+    def tap(key, hold=0.1):
+        ui.render(now[0], force=True)
+        box = {w[3]: w for w in ui.widgets}[key][0]
+        ui.touch("down", box[0] + 2, box[1] + 2, now[0])
+        if hold > 0.5:                                              # held: it goes while the finger's still down
+            ui.render(now[0] + hold)
+        ui.touch("up", box[0] + 2, box[1] + 2, now[0] + hold)
+        now[0] += 1 + hold
+    tap("decks-learn")
+    assert ui.decks_learn
+    tap(("learn-port", "K.O. Sidekick:K.O. Sidekick MIDI 1"))       # no map: learning starts
+    tap(("learn-port", "DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1"))   # built in: its list
+    assert sent == [("learn", "K.O. Sidekick:K.O. Sidekick MIDI 1", True),
+                    ("learn_list", "DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1")]
+    L = decks.Learner("K.O. Sidekick:K.O. Sidekick MIDI 1", [], True, 2)   # what the decks would say: A's SHIFT
+    Decks.status["learn"] = L.status()
+    for key in ("learn-prev", "learn-skip", "learn-done", "learn-back"):
+        tap(key)
+    assert sent[2:] == [("learn_back",), ("learn_skip",), ("learn_done",), ("learn_done",)]
+    del sent[:]
+    L.step = len(decks.LEARN)                                       # the list
+    L.binds = [{"action": "a.play", "type": "note", "ch": 1, "num": 7}]
+    D = decks.Decks.__new__(decks.Decks)
+    D.learner = L
+    Decks.status["learn"] = D.learn_status()
+    ui.render(now[0], force=True)
+    rows = [w[3] for w in ui.widgets if isinstance(w[3], tuple) and w[3][0] == "learn-row"]
+    assert len(rows) == 9
+    tap(("learn-row", 3))                                           # the 4th control: A's PLAY
+    tap("learn-down")
+    assert ui.decks_learn_top == 9
+    tap("learn-all")
+    tap("learn-forget", hold=deskui.HOLD + 0.1)
+    tap("learn-back")
+    port = "K.O. Sidekick:K.O. Sidekick MIDI 1"
+    assert sent == [("learn", port, False, "a.play"), ("learn", port, True), ("learn_forget",), ("learn_end",)]
+
+
+def test_fm1_on_studio():
+    """MORE > FM-1 ON STUDIO: PLAY SLOOP / X0X and FM-1 CONTROLS; the FM-1's picture: a control tapped is learnt
+    (the MIDI process told), a mapped one says what it's on (CLEAR), tapped again learnt anew; back stops learning"""
+    import bridge
+    import deskui
+    sent = []
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    app.save_settings = lambda: None
+
+    class Midi:                                                   # (the MIDI process: its FM-1 map's status)
+        fm1map = {"learning": None, "heard": None, "count": 0, "map": {"btn:10": "MPK mini IV: NOTE 40 CH 10"}}
+        controllers, usb_b, net, clock, split, pads, notes, chans = [], None, [], None, False, False, [], 0
+
+        def fm1map_command(self, *a):
+            sent.append(a)
+    app.midi = Midi()
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+    now = [0.0]
+
+    def tap(key, hold=0.1):
+        ui.render(now[0], force=True)
+        box = {w[3]: w for w in ui.widgets}[key][0]
+        ui.touch("down", box[0] + 2, box[1] + 2, now[0])
+        if hold > 0.5:
+            ui.render(now[0] + hold)
+        ui.touch("up", box[0] + 2, box[1] + 2, now[0] + hold)
+        now[0] += 1 + hold
+    ui.open_tab("MORE")
+    tap(("more", "FM-1 ON STUDIO"))
+    assert ui.tab == "FM1"
+    ui.render(now[0], force=True)
+    keys = {w[3] for w in ui.widgets}
+    assert {("more", "PLAY SLOOP"), ("more", "PLAY X0X"), ("more", "FM-1 CONTROLS")} <= keys
+    tap(("more", "FM-1 CONTROLS"))
+    assert ui.tab == "FM1MAP"
+    ui.render(now[0], force=True)
+    keys = {w[3] for w in ui.widgets}
+    assert {("fm1", c) for c in __import__("fm1map").controls()} <= keys          # every control on the picture
+    assert not any(k[0] == "tab" for k in keys if isinstance(k, tuple))           # full screen
+    tap(("fm1", "key:0"))                                                         # not mapped: learnt at once
+    assert sent[-1] == ("learn", "key:0") and ui.fm1_pick == "key:0"
+    tap(("fm1", "btn:10"))                                                        # mapped: what it's on first
+    assert sent[-1] == ("learn", None) and ui.fm1_pick == "btn:10"
+    tap("fm1map-clear")
+    assert sent[-1] == ("clear", "btn:10")
+    tap(("fm1", "btn:10"))                                                        # again: learnt anew
+    assert sent[-1] == ("learn", "btn:10")
+    said = []
+    app.say = lambda text, seconds=3: said.append(text)
+    app.midi.fm1map = dict(app.midi.fm1map, count=1, heard="PLAY = MPK mini IV: NOTE 41 CH 10")
+    ui.render(now[0], force=True)
+    assert said == []                                                             # (the count as it was opened)
+    app.midi.fm1map = dict(app.midi.fm1map, count=2, heard="REC = MPK mini IV: NOTE 42 CH 10")
+    ui.render(now[0] + 0.5, force=True)
+    assert said == ["REC = MPK mini IV: NOTE 42 CH 10"]
+    tap("fm1map-forget", hold=deskui.HOLD + 0.1)
+    assert sent[-1] == ("forget",)
+    tap("fm1map-back")
+    assert sent[-1] == ("learn", None) and ui.tab == "FM1"
+    tap("fm1-back")
+    assert ui.tab == "MORE"
+
+
+def test_decks_in_the_mixer():
+    """the DJ decks while they run: a DECKS channel in MIXER (its level, CUE on the jack); Settings > Audio > DJ
+    decks out (STUDIO / HERCULES) told to the decks; with an app or the decks playing, recordings take the speaker"""
+    import bridge
+    import deskui
+    sent = []
+
+    class Decks:
+        library, overviews, note, status = [], {0: [], 1: []}, None, None
+        library_n = note_n = 0
+
+        def start(self):
+            pass
+
+        def running(self):
+            return True
+
+        def send(self, *cmd):
+            sent.append(cmd)
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    app.save_settings = lambda: None
+    app.jack = {"id": 9, "name": "alsa_output.bcm2835", "label": "PHONES"}
+    ui = deskui.DeskUI(app, app.display)
+    app.desk = ui
+    ui.theme_check = 1e12
+    ui.render(0.0, force=True)
+    ui.open_tab("MIX")
+    ui.render(0.0, force=True)
+    assert not any(w[3] == ("slide", "decks") for w in ui.widgets)   # not running: no channel
+    ui.decks_proc = Decks()
+    ui.open_decks()
+    assert sent[-1] == ("output", "studio")
+    ui.open_tab("MIX")
+    ui.render(1.0, force=True)
+    keys = {w[3]: w for w in ui.widgets}
+    assert ("slide", "decks") in keys and ("cue", "decks") in keys
+    keys[("cue", "decks")][2]()
+    assert "decks" in app.state["cues"]
+    app.screen, app.settings_menu = "settings", "audio"
+    row = next(i for i, r in enumerate(app.settings_rows()) if r[0] == "decks_out")
+    assert app.settings_rows()[row][2] == "studio"
+    app.setting = row
+    app.change_setting()
+    assert app.state["decks_out"] == "hercules" and sent[-1] == ("output", "hercules")
+    app.screen = "status"
+    app.sink, app.source = {"id": 2, "name": "bluez_output.jbl", "label": "JBL"}, {"id": 1, "name": "fm1-in"}
+    assert app.capture_target() == "fm1-in"                         # the FM-1 alone: its input
+    app.app_here = {"decks"}
+    assert app.capture_target() == "monitor:bluez_output.jbl"       # the decks playing too: the speaker
+
+
 def test_hdmi_mirror():
     """a monitor on HDMI: the KMS framebuffer found (not the touchscreen's), the screen scaled up by a whole
     number and centred, in its pixel format; nothing while unplugged"""
@@ -417,15 +602,26 @@ def test_touch_screens():
     assert not ui.classic and any(w[3] == "page-back" for w in ui.widgets)
     app.screen = "status"
     ui.render(now, force=True)
-    tab("MORE")                                                       # then THEME round to AMBER
+    tab("MORE")                                                       # then THEME: its page, AMBER tapped
     ui.more_top = 5                                                    # scrolled to the end of MORE
     ui.render(now, force=True)
     row = next(w for w in ui.widgets if w[3] == ("more", "THEME"))
     tap(row[0][0] + 20, row[0][1] + 10)
-    tap(row[0][0] + 20, row[0][1] + 10)
+    assert ui.tab == "THEME"
+    ui.render(now, force=True)
+    assert {w[3] for w in ui.widgets} >= {("theme", n) for n in ["follow"] + sloopstyle.ALL}   # every theme
+    swatch = next(w for w in ui.widgets if w[3] == ("theme", "AMBER"))
+    tap(swatch[0][0] + 20, swatch[0][1] + 10)
     assert app.state["desk_theme"] == "AMBER"
     ui.render(now + 5, force=True)
-    assert ui.theme.name == "AMBER"
+    assert ui.theme.name == "AMBER" and ui.tab == "THEME"              # still on the page, to try another
+    swatch = next(w for w in ui.widgets if w[3] == ("theme", "KAWAII"))
+    tap(swatch[0][0] + 20, swatch[0][1] + 10)
+    ui.render(now + 10, force=True)
+    assert ui.theme.name == "KAWAII" and ui.theme.bg == sloopstyle.EXTRA["KAWAII"][2]
+    back = next(w for w in ui.widgets if w[3] == "theme-back")
+    tap(back[0][0] + 20, back[0][1] + 10)
+    assert ui.tab == "MORE"
 
 
 def test_tab_bar():
@@ -980,7 +1176,7 @@ def test_studio_apps():
     ui.render(0.0, force=True)
     assert any(w[3] == ("slide", "sloop") for w in ui.widgets) and app.mix_level("sloop") == 100
     assert any(w[3] == ("slide", "x0x") for w in ui.widgets) and app.mix_level("x0x") == 100
-    ui.tab = "MORE"
+    ui.tab = "FM1"                                          # (MORE > FM-1 ON STUDIO)
     ui.render(0.0, force=True)
     assert any(w[3] == ("more", "PLAY SLOOP") for w in ui.widgets)
     assert any(w[3] == ("more", "PLAY X0X") for w in ui.widgets)
@@ -1014,7 +1210,7 @@ def test_studio_apps():
     assert proc.signals == [deskui.APP_HIDE] and ui.app_proc is proc and ui.tab == "HOME"
     ui.render(2.0)
     assert app.display.image is not margins                 # the Companion's screen again
-    ui.tab = "MORE"
+    ui.tab = "FM1"                                          # (MORE > FM-1 ON STUDIO)
     ui.render(2.0, force=True)
     tile = next(w for w in ui.widgets if w[3] == ("more", "PLAY SLOOP"))
     tile[2]()                                               # PLAY SLOOP (it says ON): shown again, as it was
@@ -1067,7 +1263,7 @@ def test_studio_apps():
     tap(20, deskui.H - 20, ui.app_shown_at + 3, held=1.2)   # X0X off: SLOOP still plays behind the Companion
     ui.render(5.0)
     assert set(ui.app_procs) == {"sloop"} and ui.app_key is None and sloop.code is None
-    ui.tab = "MORE"
+    ui.tab = "FM1"                                          # (MORE > FM-1 ON STUDIO)
     ui.render(5.0, force=True)
     assert ui.app_proc is None and app.display.image is not None
     tile = lambda label: next(w for w in ui.widgets if w[3] == ("more", label))   # noqa: E731

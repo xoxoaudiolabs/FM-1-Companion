@@ -327,6 +327,53 @@ def test_fast_conversion_and_sample_level():
         assert library.read_state()["state"] == "error" and fake.objects[34][8:13] == b"QUIET", e
 
 
+def test_song_backup_and_load():
+    """a SLOOP song: its four sections (an empty one too) and the song order (settings bytes 48-83) to a file and
+    back; the FM-1's other settings kept; backed up first; refused while it plays, by old firmware, from a damaged
+    file"""
+    fake = fake_fm1.FakeFM1()
+    use(fake)
+    order = bytes([3, 1, 0, 0, 0, 4, 1, 8, 3, 2] + [0, 4] * 13)            # A 4 bars, B 8, D 2; loops
+    settings = bytearray(fake.objects[1])
+    settings[sloop.ORDER] = order
+    fake.objects[1] = bytes(settings)
+    fake.objects[3] = fake_fm1.project(6, 3)
+    library.job_song_backup("My song")
+    state = library.read_state()
+    assert state["state"] == "done" and "3 steps, sections ABD" in state["message"], state
+    path = TMP / "library" / "songs" / state["result"]["file"]
+    sections, saved = sloop.song_from(sloop.load_json(path))
+    assert saved == order and sections["C"] == b"" and sections["A"] == fake.objects[2]
+    assert sloop.song_steps(saved) == ([("A", 4), ("B", 8), ("D", 2)], True)
+    entry = next(e for e in library.listing()["songs"] if e["name"] == path.name)
+    assert (entry["title"], entry["sections"], entry["steps"], entry["loop"]) == ("My song", "ABD", 3, True)
+    a, b, d = fake.objects[2], fake.objects[3], fake.objects[5]
+    fake.objects[2], fake.objects[3], fake.objects[4] = b"", fake_fm1.project(6, 9), fake_fm1.project(6, 7)
+    settings = bytearray(fake.objects[1])
+    settings[sloop.ORDER], settings[10] = bytes(36), 7                       # another song order; a setting changed
+    fake.objects[1] = bytes(settings)
+    fake.playing = True                                                      # playing: nothing written
+    assert library.main(["song-load", str(path)]) == 1
+    assert library.read_state()["state"] == "error" and fake.objects[2] == b""
+    fake.playing = False
+    before = set((TMP / "library" / "backups").glob("*_before-song.json"))
+    library.job_song_load(str(path))
+    assert library.read_state()["state"] == "done", library.read_state()
+    assert (fake.objects[2], fake.objects[3], fake.objects[4], fake.objects[5]) == (a, b, b"", d)
+    assert fake.objects[1][sloop.ORDER] == order and fake.objects[1][10] == 7       # the rest of the settings kept
+    assert set((TMP / "library" / "backups").glob("*_before-song.json")) - before    # backed up first
+    damaged = sloop.load_json(path)
+    damaged["order"]["crc"] ^= 1
+    try:
+        sloop.song_from(damaged)
+        assert False, "a damaged song loaded"
+    except sloop.SloopError as e:
+        assert e.code == "bad"
+    use(fake_fm1.FakeFM1(version="SLOOP 2.4"))                              # no song mode before 2.5
+    assert library.main(["song-backup"]) == 1
+    assert library.read_state()["state"] == "error" and "2.5" in library.read_state()["message"]
+
+
 def test_timed_backups_skip_unchanged():
     fake = fake_fm1.FakeFM1()
     use(fake)

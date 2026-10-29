@@ -31,7 +31,7 @@ your phone.
 | Screen and controls | A Waveshare Zero HAT: the 1.3" OLED, the 1.44" colour LCD or the 1.3" colour LCD (not tried yet); joystick and three keys | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
 | Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, DJ decks, a sampler with SLOOP's sequencer and punch-in FX, a headphone jack with cue, a DAW control surface, four USB ports, Ethernet, HDMI out |
-| Software | v2.11 | Studio v1.6, and newer work on main |
+| Software | v2.12 | Studio v1.6, and newer work on main |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do. What's been
@@ -64,8 +64,8 @@ it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
   reshape velocity and filter, with four presets.
 - **Eleven meters.** LED bars, VU needles, spectrum, scope, a tape deck, a tuner, a keyboard view, a waterfall, a
   goniometer, a level history and a beat counter (the Studio shows ten, without the tuner).
-- **Looks after the FM-1 (SLOOP 2.3+).** Back up and restore everything on it, load projects and samples, and
-  install firmware: [SLOOP](https://github.com/isod89/sloop-fm1) or isod89's experimental
+- **Looks after the FM-1 (SLOOP 2.3+).** Back up and restore everything on it, back up and load songs, load
+  projects and samples, and install firmware: [SLOOP](https://github.com/isod89/sloop-fm1) or isod89's experimental
   [Clipper](https://github.com/isod89/clipper-fm1). Backups are SLOOP's own files.
 - **A web app on your phone** at `http://<the box's hostname>.local`: live status, the mixer, the MIDI matrix, a
   sample editor, your recordings and the library. [Try it with sample data](https://xoxoaudiolabs.com/app/).
@@ -80,6 +80,8 @@ it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
   - **Headphones:** the 3.5 mm jack with a DJ-style cue on every source.
   - **A DAW control surface** over network MIDI, for [Kraken](https://github.com/isod89/sodwave-site) (Ableton
     Live untested).
+- **DX7 patches** for FM-1 firmwares that take them: a library of `.syx` banks, sent whole or a voice at a time
+  (not tried on such a firmware yet).
 - **Coming:** 5-pin DIN MIDI in, out and thru, on an expansion card of its own (in its own repository).
 
 ```
@@ -144,6 +146,12 @@ Drawn by the Companion's own code on a computer (`tools/render_screens.py`).
 
 The latest of each box; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+- **Pocket v2.12: a Studio link, one-click updates, a new web app, SLOOP songs.** The Pocket links to a Studio
+  over Wi-Fi or an Ethernet cable: MIDI both ways, the Studio's clock, and the Pocket's sound played on the Studio
+  (the Studio's side of the link comes out on 30 October). The web app updates the box to the newest release and
+  keeps your settings and library, and it's redrawn. SLOOP songs backed up and loaded back; a DX7 bank loader (not
+  tried on a firmware that takes DX7 patches yet).
+  ([More](docs/CHANGELOG.md#pocket-v212-a-studio-link-one-click-updates-a-new-web-app-sloop-songs))
 - **Pocket v2.11: more boards and screens, a tidier Settings.** Any Pi Zero with wireless, the 1.3" LCD HAT (not
   tried yet) and the OLED over I2C; a screen picker, `fm1-screen` and `fm1-report`; an installer that checks the
   Pi first; Settings opening with Mixer, MIDI routes, Sample editor, Sloop, FM-1 and Bluetooth.
@@ -152,7 +160,8 @@ The latest of each box; every release in full: **[docs/CHANGELOG.md](docs/CHANGE
   redrawn in colour with the Studio's look, and Settings › Theme. The OLED's screens are unchanged.
   ([More](docs/CHANGELOG.md#pocket-v210-a-colour-screen))
 - **On main since Studio v1.6:** MIDI recording (a `.mid` beside each take), the 808 KIT for the sampler, a
-  speaker that reconnects itself once, and sources heard again at once after a short USB drop.
+  speaker that reconnects itself once, sources heard again at once after a short USB drop, eight Studio themes,
+  FM-1 ON STUDIO (map a controller onto SLOOP or X0X) and MIDI learn for the DJ decks (not tried with hardware).
   ([More](docs/CHANGELOG.md#since-studio-v16-on-main-not-a-numbered-release-yet-midi-recording-an-808-kit-a-speaker-that-comes-back))
 - **Studio v1.6:** DJ decks, SLOOP and X0X together in time, backups of the Studio's SLOOP and X0X, CUE for both.
   ([More](docs/CHANGELOG.md#studio-v16-dj-decks))
@@ -190,6 +199,14 @@ Girl next to two FM-1s).
 - The HUB HAT under it: the Zero W finds its USB hub and Ethernet adapter, with no under-voltage.
 - The screen picker on the 1.44" LCD (v2.11): KEY1 on its prompt, KEY1 again to keep it, remembered after a
   restart; `fm1-screen` and `fm1-report` on the real Pocket.
+- The Studio link (v2.12) over Wi-Fi and over an Ethernet cable from the HUB HAT: MIDI both ways, the Studio's
+  clock, and the Pocket's FM-1 heard on the Studio, coming back after the Pocket's sound stream restarted.
+- The update (v2.12): an install from a release file as the updater does it, settings and all 57 library files
+  kept as they were; going back to the code from before; the web app asking, the box's hold-press, and an update
+  turned down when there's nothing newer, with nothing restarted.
+- SLOOP songs (v2.12) on an FM-1 running SLOOP 2.8: a song backed up, then loaded back from the box and again from
+  `library.py`, read back the same, a backup made first each time. The DX7 loader refusing that SLOOP FM-1 (SLOOP
+  doesn't take DX7 patches).
 
 **Not tested on the real Pocket yet**
 - From v2.9: connecting to Bluetooth MIDI keyboards (BT keys) and several Bluetooth MIDI devices at once. v2.9 runs
@@ -197,10 +214,16 @@ Girl next to two FM-1s).
 - v2.10 on the OLED HAT: its screens are compared as pictures on a computer only.
 - Following FM-1 A's colours on the LCD as they change: the theme is read, but the screen hasn't been watched
   following a change.
-- The HUB HAT's Ethernet (no cable tried) and its extra USB ports.
+- The HUB HAT's extra USB ports.
+- The Studio link with Wi-Fi off (the cable only), the Pocket's Ethernet coming up by itself after a restart, and
+  the Pocket handing its Bluetooth speaker over to the Studio while linked.
+- A whole online update to a newer release: v2.12 is the first release with the updater, so the first real one is
+  the next release. A box on v2.11 or older needs one update over SSH to get it. The Studio's update.
 - A Pi Zero 2 W, 64-bit Raspberry Pi OS, and Bookworm (for this release).
 - The 1.3" LCD HAT (ST7789), and the OLED HAT switched to I2C.
-- The web app (tried only in a browser with sample data, [on the website](https://xoxoaudiolabs.com/app/)).
+- Sending DX7 patches to a firmware that takes them (M-VAVE's own, FM-1+VA): automated tests only.
+- The new web app (tried only in a browser with sample data, [on the website](https://xoxoaudiolabs.com/app/)),
+  and its Studio link, theme, auto backup and speaker controls.
 - The safe shutdown at 5% battery.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
 - The rest, with automated tests only: the MIDI matrix's route options and presets, the other seven meters,
@@ -359,6 +382,11 @@ DJ: its tags in them).
 | `fm1-bt-bridge/lcd.py` | The Pocket's 1.44" LCD HAT (ST7735S) |
 | `fm1-bt-bridge/pocketui.py` | The Pocket's screens on the LCD, in colour, and Settings › Theme |
 | `fm1-bt-bridge/pocketmeters.py` | The eleven meters on the LCD |
+| `fm1-bt-bridge/dx7.py` | DX7 banks and voices for firmwares that take them: read, named, sent |
+| `fm1-bt-bridge/netaudio.py` | The Pocket's Studio link: its sound to the Studio over the network (PipeWire RTP) |
+| `fm1-bt-bridge/update.py` | The web app's one-click update |
+| `fm1-bt-bridge/config/fm1-update` | Installs the newest release for the update (root helper, run through sudo) |
+| `fm1-bt-bridge/config/50-fm1-ethernet-link.conf` | An Ethernet cable straight to a Studio gets an address with no router |
 | `fm1-bt-bridge/battery.py` | The PiSugar battery's charge, read over I2C |
 | `fm1-bt-bridge/device.py` | Which build a box is and what its hardware can do |
 | `fm1-bt-bridge/deskui.py` | The Studio's touch screens and tabs; starting SLOOP or X0X on the Studio and their margins |

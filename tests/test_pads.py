@@ -128,6 +128,7 @@ def test_sloop_layout():
             self.image = img
     app = bridge.App(Display(), dict(bridge.DEFAULTS))
     app.save_settings = lambda: None
+    app.state["kit"] = pads.empty_kit()                  # an MPC kit (a first start's 808 KIT is SLOOP's already)
     ui = deskui.DeskUI(app, app.display)
     ui.theme_check = 1e12
     ui.open_tab("PADS")
@@ -391,6 +392,24 @@ def test_factory_kits():
     pads.kit_path("808 KIT").unlink()
     pads._factory_checked = False
     assert "808-KIT" not in pads.list_kits()                                 # deleted: stays deleted
+
+
+def test_first_kit_is_the_808():
+    """a first start (no kit chosen yet): the pads have the 808 KIT, so they play out of the box; a kit chosen
+    later stays"""
+    import bridge
+    import library
+    was = library.LIBRARY
+    library.LIBRARY, pads._factory_checked = TMP / "fresh-library", False
+    try:
+        app = bridge.App(None, dict(bridge.DEFAULTS))
+        kit = app.kit()
+        assert kit["name"] == "808 KIT" and Path(kit["pads"][0]["sample"]).name == "808-KICK.wav"
+        assert app.state["kit"]["name"] == "808 KIT"                         # kept: made once
+        app.state["kit"] = dict(pads.empty_kit("MINE"))
+        assert app.kit()["name"] == "MINE"
+    finally:
+        library.LIBRARY, pads._factory_checked = was, False
 
 
 def test_pads_tab():

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The FM-1 Companion's web page, http://fm1bridge.local over Wi-Fi or Ethernet.
 
-Four tabs: Status (the box's live status, and the settings you change while playing: metronome, tempo,
-clock, arp, chord, volume, audio rate, Start/Stop, recording), MIDI (the routes as a grid, each route's
-settings, the four presets), Library (backups, projects, samples, firmware) and Recordings (listen in the
-browser, download, resample into a slot, delete).
+Five tabs: Status (the box's live status, and the settings you change while playing: metronome, tempo,
+clock, arp, chord, volume, audio rate, Start/Stop, recording, the Pocket's Studio link), MIDI (the routes as a
+grid, each route's settings, the four presets), Library (backups, projects, songs, DX7 patches, samples,
+firmware, software updates), Editor (the sample editor) and Recordings (listen in the browser, download, edit as
+a sample, delete). It looks like xoxoaudiolabs.com.
 
 Settings go to the box as commands (library.queue_command; the box applies them like the joystick).
 Anything that writes to the FM-1's data (restore, loads, firmware) is handed to the box and waits for a
@@ -28,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import blemidi  # noqa: E402
 import library  # noqa: E402
+import update  # noqa: E402
 import sampler  # noqa: E402
 import sloop  # noqa: E402
 
@@ -37,7 +39,7 @@ TARGETS = {"working": "the working project", "A": "project A", "B": "project B",
            "D": "project D"}
 ICONS = Path(__file__).resolve().parent / "icons"    # the home-screen icons, for installing the page as an app
 MANIFEST = {"name": "FM-1 Companion", "short_name": "FM-1", "start_url": "/", "scope": "/", "display": "standalone",
-            "background_color": "#0f1115", "theme_color": "#0f1115",
+            "background_color": "#0b0b0b", "theme_color": "#0b0b0b",
             "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
                       {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
                       {"src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
@@ -66,6 +68,10 @@ def check_command(c):
               "chord_on": isinstance(value, bool), "bpm": number and 30 <= value <= 300,
               "clock_mode": value in ("follow", "box"), "click": value in ("low", "mid", "high"),
               "audio_rate": value in (44100, 48000),
+              "studio_link": isinstance(value, bool), "link_audio": isinstance(value, bool),   # the Pocket's Studio link
+              "auto_backup": not isinstance(value, bool) and value in ("off", "boot", 2, 5, 10, 30),
+              "output": value in ("both", "speaker", "phones"),
+              "theme": isinstance(value, str) and len(value) <= 24,          # the box checks it against its list
               "volume": number and int(value) == value and 0 <= value <= 100}.get(key)
         if isinstance(key, str) and re.fullmatch(r"mix_(a|b|usb|u-[a-z0-9]+)", key):
             ok = number and int(value) == value and 0 <= value <= 200
@@ -77,6 +83,10 @@ def check_command(c):
     if cmd in ("transport", "record"):
         if c.get("value") not in ("start", "stop"):
             raise ValueError("start or stop")
+        return {"cmd": cmd, "value": c["value"]}
+    if cmd == "speaker":
+        if c.get("value") not in ("connect", "disconnect"):
+            raise ValueError("connect or disconnect")
         return {"cmd": cmd, "value": c["value"]}
     if cmd == "routes":
         return {"cmd": cmd, "routes": blemidi.clean_routes(c.get("routes"))}
@@ -165,6 +175,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.parent != ICONS or path.suffix != ".png" or not path.is_file():
                 return self.fail("not found", 404)
             self.send(200, path.read_bytes(), "image/png")
+        elif url.path == "/api/update":                    # Library > Software: installed, newest
+            self.send(200, update.check(fresh=query.get("fresh") == "1"))
         elif url.path == "/api/library":
             self.send(200, library.listing())
         elif url.path == "/api/status":
@@ -228,7 +240,8 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError as e:
                     return self.fail(str(e))
                 return self.send(200, {"ok": True, "message": f"{len(copied)} new file(s) from the SD card"})
-            jobs = {"backup": ["backup"], "fetch-sloop": ["fetch", "sloop"], "fetch-clipper": ["fetch", "clipper"]}
+            jobs = {"backup": ["backup"], "fetch-sloop": ["fetch", "sloop"], "fetch-clipper": ["fetch", "clipper"],
+                    "song-backup": ["song-backup"]}
             if command not in jobs:
                 return self.fail("unknown command")
             error = library.spawn(jobs[command])
@@ -339,6 +352,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.fail("pick a project and where it goes")
             library.ask_box(["load-project", str(path), source, target], "Load project?",
                             [f"{path.stem[:14]} {source if source != '-' else ''}".strip(), f"into {TARGETS[target]}"])
+        elif command == "dx7-send":
+            path, voice = safe_path("patches", r.get("file")), r.get("voice")
+            if not path or not path.is_file() or not (voice is None or (isinstance(voice, int) and 1 <= voice <= 32)):
+                return self.fail("pick a .syx and a voice")
+            library.ask_box(["dx7-send", str(path)] + ([] if voice is None else [str(voice)]), "Send to FM-1?",
+                            [path.stem[:16], "all 32 voices" if voice is None else f"voice {voice}"])
+        elif command == "update":                 # the newest release: confirmed on the box, it restarts
+            info = update.check()
+            if info["busy"]:
+                return self.fail(info["busy"])
+            if not info["helper"]:
+                return self.fail("this box needs one update over SSH first (install.sh)")
+            if not info["newer"]:
+                return self.fail(info["error"] or f"already up to date ({info['installed']})")
+            library.ask_box(["update"], "Update?", [f"{info['installed']} > {info['newest']}", "restarts; files kept"])
+        elif command == "load-song":
+            path = safe_path("songs", r.get("file"))
+            if not path or not path.is_file():
+                return self.fail("no such song")
+            library.ask_box(["song-load", str(path)], "Load song?", [path.stem[:16], "replaces sections A-D"])
         elif command == "load-sample":
             paths = [safe_path("samples", n) for n in r.get("files") or []]
             slot, name = r.get("slot"), (r.get("name") or "")[:8]
@@ -360,86 +393,127 @@ class Handler(BaseHTTPRequestHandler):
 
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0b0b0b">
 <title>FM-1 Companion</title>
 <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/icon-192.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="FM-1"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
-:root{--bg:#f4f5f7;--card:#fff;--ink:#16181d;--dim:#626875;--line:#e2e5ea;--soft:#eef0f3;--accent:#1677c9;--on:#1d8a4a;--bad:#c23a32;--rec:#d6332b}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--ink:#e8eaee;--dim:#9aa1ad;--line:#2a2f38;--soft:#20242c;--accent:#5fb0ff;--on:#4cc27e;--bad:#ff6b61;--rec:#ff5a52}}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
-header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;gap:10px;padding:12px 16px 8px;max-width:820px;margin:0 auto}
-header h1{font-size:20px;margin:0;flex:1}
-.pill{font-size:13px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--soft);color:var(--dim)}
-.pill.live{background:var(--on);color:#fff}.pill.rec{background:var(--rec);color:#fff}.pill.off{background:var(--bad);color:#fff}
-main{max-width:820px;margin:0 auto;padding:0 16px 16px}
+/* xoxoaudiolabs.com's look: near-black, off-white, one signal colour, square edges. The box is often offline, so the
+   fonts are the site's (Anton, IBM Plex Mono) when the phone has them, else close ones it already has. */
+:root{color-scheme:dark;--bg:#0b0b0b;--soft:#161615;--ink:#f2f0eb;--dim:#8a8780;--line:#2a2a28;--edge:#3d3d3a;--accent:#ff3b1f;--on:#f2f0eb;--bad:#ff3b1f;--rec:#ff3b1f;
+  --display:Anton,Impact,Haettenschweiler,"Avenir Next Condensed","Arial Narrow",sans-serif-condensed,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,"Roboto Mono","Liberation Mono",monospace}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 var(--mono);-webkit-font-smoothing:antialiased;padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+h1,h2,.big,.recbtn{font-family:var(--display);font-weight:700;font-synthesis:none;text-transform:uppercase;letter-spacing:.02em}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top)}
+header .in{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:12px 16px}
+header h1{font-size:24px;line-height:1;margin:0;flex:1;white-space:nowrap}header h1 i{font-style:normal;color:var(--dim);padding:0 .08em}
+.pill{font:600 11px/1 var(--mono);text-transform:uppercase;letter-spacing:.14em;padding:6px 8px;border:1px solid var(--edge);color:var(--dim);white-space:nowrap}
+.pill.live{color:var(--ink);border-color:var(--ink)}.pill.live:before{content:"";display:inline-block;width:7px;height:7px;background:var(--accent);margin-right:7px;vertical-align:0}
+.pill.off{color:var(--bad);border-color:var(--bad)}.pill.rec{background:var(--rec);border-color:var(--rec);color:var(--bg);animation:blink 1.2s steps(2) infinite}
+@keyframes blink{50%{opacity:.55}}
+main{max-width:1040px;margin:0 auto;padding:20px 16px 24px}
 .tab{display:none}.tab.shown{display:block}
-nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-nav button{flex:1;border:0;background:none;color:var(--dim);padding:10px 4px 9px;font:600 13px system-ui,sans-serif;border-radius:0}
-nav button.shown{color:var(--accent)}nav svg{display:block;margin:0 auto 2px;width:24px;height:24px}
-section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
-h2{font-size:15px;margin:0 0 10px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.grid section{margin:0}
-.line{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;border-top:1px solid var(--line);padding:6px 0}
-.line:first-of-type{border-top:0}.line .k{color:var(--dim)}.line .v{font-weight:600;text-align:right}
-button,select,input[type=text],input[type=number]{font:inherit;border-radius:10px;border:1px solid var(--line);background:var(--soft);color:var(--ink);padding:9px 14px;min-height:42px}
-button{cursor:pointer;font-weight:600}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.danger{color:var(--bad)}button:disabled{opacity:.45;cursor:default}
-input[type=number]{width:76px;text-align:center}
+nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;justify-content:center;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;max-width:200px;min-height:0;border:0;background:none;color:var(--dim);padding:9px 2px 8px;font:600 10px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.12em}
+nav button:hover{color:var(--ink)}nav button.shown{background:var(--ink);color:var(--bg)}nav svg{display:block;margin:0 auto 4px;width:22px;height:22px}
+section{border-top:2px solid var(--ink);padding:12px 0 22px;margin:0;scroll-margin-top:64px}
+h2{font-size:24px;line-height:1;margin:2px 0 14px}
+.label,.k{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.14em;color:var(--dim)}
+.group{margin:28px 0 10px}.group:first-child{margin-top:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 32px}
+.line{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:46px;border-top:1px solid var(--line);padding:6px 0}
+.line:first-of-type{border-top:0}.line .v{font-weight:600;text-align:right}
+button,select,input[type=text],input[type=number]{font:inherit;font-size:13px;border-radius:0;border:1px solid var(--edge);background:var(--soft);color:var(--ink);padding:8px 12px;min-height:40px}
+button{cursor:pointer;background:transparent;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+button:hover{border-color:var(--ink)}button.primary{background:var(--ink);border-color:var(--ink);color:var(--bg)}button.primary:hover{background:var(--accent);border-color:var(--accent)}
+button.danger{color:var(--bad)}button.danger:hover{border-color:var(--bad)}button:disabled{opacity:.4;cursor:default}
+select{-webkit-appearance:none;appearance:none;padding-right:30px;background:var(--soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0h10L5 6z' fill='%238a8780'/%3E%3C/svg%3E") no-repeat right 10px center}
+input[type=number]{width:76px;text-align:center}input[type=checkbox]{accent-color:var(--accent)}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.seg button{border:0;border-radius:0;background:var(--soft);min-width:72px}.seg button.on{background:var(--accent);color:#fff}
-.sw{position:relative;width:52px;height:30px;flex:none}.sw input{opacity:0;width:0;height:0}
-.sw span{position:absolute;inset:0;background:var(--line);border-radius:30px;transition:.2s}
-.sw span:before{content:"";position:absolute;width:24px;height:24px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 2px #0004}
-.sw input:checked+span{background:var(--on)}.sw input:checked+span:before{transform:translateX(22px)}
-.big{font-size:44px;font-weight:700;line-height:1.1;letter-spacing:-.02em}
-.dim{color:var(--dim)}.small{font-size:13px}
-input[type=range]{width:100%;accent-color:var(--accent);height:30px}
-.recbtn{width:100%;font-size:18px;padding:14px;border-radius:12px}.recbtn.on{background:var(--rec);border-color:var(--rec);color:#fff}
-.item{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid var(--line)}
-.item:first-of-type{border-top:0}.name{font-weight:600;word-break:break-all}.meta{color:var(--dim);font-size:13px}
-.empty{color:var(--dim)}.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px}
+.seg{display:inline-flex;border:1px solid var(--edge)}
+.seg button{border:0;border-left:1px solid var(--edge);min-width:64px}.seg button:first-child{border-left:0}.seg button.on{background:var(--ink);color:var(--bg)}
+.sw{position:relative;width:50px;height:28px;flex:none}.sw input{opacity:0;width:0;height:0}
+.sw span{position:absolute;inset:0;background:var(--soft);border:1px solid var(--edge);transition:.15s;cursor:pointer}
+.sw span:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:var(--dim);transition:.15s}
+.sw input:checked+span{background:var(--ink);border-color:var(--ink)}.sw input:checked+span:before{background:var(--bg);transform:translateX(21px)}
+.sw input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.big{font-size:76px;line-height:.9}.big .unit{font-size:22px;color:var(--dim);margin-left:8px}
+.dim{color:var(--dim)}.small{font-size:12px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:24px;margin-top:-10px;background:var(--ink);border:0}
+input[type=range]::-moz-range-track{height:4px;background:var(--line)}input[type=range]::-moz-range-progress{height:4px;background:var(--dim)}
+input[type=range]::-moz-range-thumb{width:14px;height:24px;background:var(--ink);border:0;border-radius:0}
+input[type=range]:disabled{opacity:.4}
+.recbtn{width:100%;font-size:26px;line-height:1;padding:18px;border:2px solid var(--rec);color:var(--rec);background:transparent}
+.recbtn:hover{border-color:var(--rec);background:#ff3b1f1a}.recbtn.on{background:var(--rec);color:var(--bg)}
+.item{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0}.name{font-weight:600;word-break:break-word}.meta{color:var(--dim);font-size:12px}
+.empty{color:var(--dim);margin:4px 0}.bar{height:4px;background:var(--line);overflow:hidden;margin-top:10px}
 .bar div{height:100%;background:var(--accent);width:0;transition:width .3s}
-audio{width:100%;height:40px;margin-top:6px}
+.job{border:1px solid var(--edge);padding:10px 12px}
+audio{width:100%;height:40px;margin-top:8px}
 label.file{display:inline-block}label.file input{display:none}
-table.mx{border-collapse:separate;border-spacing:8px;margin:-8px}table.mx th{font-size:13px;color:var(--dim);font-weight:600;text-align:left}
-table.mx td button{width:100%;min-width:92px}table.mx td button.on{background:var(--on);border-color:var(--on);color:#fff}
-table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
-.chgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.chgrid label{font-size:12px;color:var(--dim)}
-.chgrid select{width:100%;padding:6px;min-height:36px}
-#toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90%;text-align:center}
-#toast.shown{opacity:.94}
-.banner{border-radius:12px;padding:10px 12px;margin:0 0 12px;background:var(--soft)}
-#sed-wave{width:100%;height:150px;display:block;border-radius:10px;background:var(--soft);touch-action:none;cursor:ew-resize}
-.sedgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px;margin:10px 0}.sedgrid label{font-size:13px;color:var(--dim);display:flex;flex-direction:column;gap:3px}
-.sedgrid input,.sedgrid select{width:100%;box-sizing:border-box}.warn{color:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px}.chips button{min-height:34px;padding:6px 10px;font-size:11px}
+.chips b{color:var(--dim);font-weight:600;margin-left:6px}
+.mxwrap{overflow-x:auto;margin:0 -16px;padding:0 16px 4px}
+table.mx{border-collapse:collapse}table.mx th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);text-align:left;padding:6px;white-space:nowrap}
+table.mx td{padding:3px}table.mx td button{width:100%;min-width:76px}table.mx td.self{color:var(--line);text-align:center}
+table.mx td button.on{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+table.mx td button.sel{outline:2px solid var(--accent);outline-offset:2px}
+.midi{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:0 32px}.midi .wide{grid-column:1/-1}
+.chgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.chgrid label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em}
+.chgrid select{width:100%;padding:6px 26px 6px 8px;min-height:36px}
+#toast{position:fixed;left:50%;bottom:calc(78px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90%;text-align:center}
+#toast.shown{opacity:1}
+.banner{border:1px solid var(--bad);padding:10px 12px;margin:0 0 16px}
+#sed-wave{width:100%;height:200px;display:block;background:var(--soft);border:1px solid var(--line);touch-action:none;cursor:ew-resize}
+.sedgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px;margin:14px 0}
+.sedgrid label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);display:flex;flex-direction:column;gap:4px}
+.sedgrid input,.sedgrid select{width:100%;text-transform:none;letter-spacing:0;font-weight:400}.warn{color:var(--bad)}
+details summary{cursor:pointer}
+@media (max-width:899px){.midi{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:420px){header h1{font-size:20px}.big{font-size:64px}nav button{letter-spacing:.06em}}
 </style></head><body>
-<header><h1>FM-1 Companion</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></header>
+<header><div class="in"><h1>FM-1<i>//</i>Companion</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></div></header>
 <main>
 
 <!-- ======================= STATUS ======================= -->
 <div class="tab" id="tab-status">
 <div id="offline" class="banner" hidden>The box isn't answering: it may be starting, or its bridge stopped. Settings will work again when it's back.</div>
 <div class="grid">
-<section><h2>Audio</h2>
-  <div class="line" id="s-batline" hidden><span class="k">Battery</span><span class="v" id="s-bat">–</span></div>
-  <div class="line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
-  <div class="line"><span class="k">Speaker</span><span class="v" id="s-spk">–</span></div>
-  <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
-    <input type="range" id="s-vol" min="0" max="100" step="2"></div>
-  <div id="s-mix"></div>
-  <div class="line"><span class="k">Audio rate</span><div class="seg" id="s-rate"><button data-v="44100">44.1</button><button data-v="48000">48 kHz</button></div></div>
-</section>
 <section><h2>Clock</h2>
-  <div class="row" style="justify-content:space-between;align-items:flex-end"><div><div class="big" id="s-bpm">–</div><div class="dim small" id="s-src"></div></div>
+  <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:8px"><div><div class="big"><span id="s-bpm">–</span><span class="unit">BPM</span></div><div class="dim small" id="s-src" style="margin-top:6px"></div></div>
     <div class="seg" id="s-mode"><button data-v="follow">Follow</button><button data-v="box">Box</button></div></div>
-  <div class="line"><span class="k">Box tempo</span><div class="row"><button onclick="bump(-1)">−</button><input type="number" id="s-tempo" min="30" max="300"><button onclick="bump(1)">+</button></div></div>
+  <div class="line"><span class="k">Box tempo</span><div class="row"><button onclick="bump(-1)" aria-label="Slower">−</button><input type="number" id="s-tempo" min="30" max="300"><button onclick="bump(1)" aria-label="Faster">+</button></div></div>
   <div class="line"><span class="k">Transport</span><div class="row"><button class="primary" onclick="cmd({cmd:'transport',value:'start'})">▶ Start</button><button onclick="cmd({cmd:'transport',value:'stop'})">■ Stop</button></div></div>
   <div class="line"><span class="k">Metronome</span><label class="sw"><input type="checkbox" id="s-metro"><span></span></label></div>
   <div class="line"><span class="k">Click level</span><div class="seg" id="s-click"><button data-v="low">Low</button><button data-v="mid">Mid</button><button data-v="high">High</button></div></div>
+</section>
+<section><h2>Audio</h2>
+  <div class="line" id="s-batline" hidden><span class="k">Battery</span><span class="v" id="s-bat">–</span></div>
+  <div class="line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
+  <div class="line"><span class="k">Speaker</span><div class="row" style="justify-content:flex-end"><span class="v" id="s-spk">–</span><button id="s-spkbtn" onclick="speaker()" hidden>Connect</button></div></div>
+  <div class="line" id="s-outline" hidden><span class="k">Output</span><div class="seg" id="s-out"><button data-v="speaker">Speaker</button><button data-v="phones">Jack</button><button data-v="both">Both</button></div></div>
+  <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
+    <input type="range" id="s-vol" min="0" max="100" step="2" aria-label="Volume"></div>
+  <div id="s-mix"></div>
+  <div class="line"><span class="k">Audio rate</span><div class="seg" id="s-rate"><button data-v="44100">44.1</button><button data-v="48000">48 kHz</button></div></div>
+</section>
+<section id="s-link" hidden><h2>Studio link</h2>
+  <div class="line"><span class="k">Link</span><label class="sw"><input type="checkbox" id="s-lon"><span></span></label></div>
+  <div class="line"><span class="k">Studio</span><span class="v" id="s-lstudio">–</span></div>
+  <div class="line"><span class="k">Link audio</span><label class="sw"><input type="checkbox" id="s-laudio"><span></span></label></div>
+  <div class="line"><span class="k">Audio</span><span class="v" id="s-lsend">–</span></div>
+  <p class="dim small" style="margin:6px 0 0">Links this Pocket to an XOXO Studio on the same network: its MIDI, and its sound when Link audio is on.</p>
+</section>
+<section><h2>Record</h2>
+  <button class="recbtn" id="s-rec" onclick="toggleRec()">● Record</button>
+  <p class="dim small" style="margin:10px 0 0">Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.</p>
 </section>
 <section><h2>Keyboard</h2>
   <div class="line"><span><span class="k">Arp</span> <span class="dim small" id="s-arpd"></span></span><label class="sw"><input type="checkbox" id="s-arp"><span></span></label></div>
@@ -448,61 +522,79 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
   <div class="line"><span class="k">USB keys</span><span class="v" id="s-usbkeys">–</span></div>
   <p class="dim small" style="margin:6px 0 0">Pattern, rate and chord type: MIDI tab, Bluetooth → FM-1.</p>
 </section>
-<section><h2>Record</h2>
-  <button class="recbtn" id="s-rec" onclick="toggleRec()">● Record</button>
-  <p class="dim small" style="margin:8px 0 0">Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.</p>
+<section id="s-box" hidden><h2>Box</h2>
+  <div class="line" id="s-themeline" hidden><span class="k">Screen theme</span><select id="s-theme" onchange="set('theme', this.value)"></select></div>
+  <div class="line" id="s-autoline"><span class="k">Auto backup</span><select id="s-auto" onchange="set('auto_backup', /^\d+$/.test(this.value) ? +this.value : this.value)">
+    <option value="off">off</option><option value="boot">at start</option><option value="2">every 2 min</option><option value="5">every 5 min</option><option value="10">every 10 min</option><option value="30">every 30 min</option></select></div>
+  <p class="dim small" style="margin:6px 0 0">Auto backups go to Library → Backups.</p>
 </section>
 </div>
 </div>
 
 <!-- ======================= MIDI ======================= -->
 <div class="tab" id="tab-midi">
+<div class="midi">
 <section><h2>Routes</h2>
-  <p class="dim small" style="margin:-4px 0 10px">Green: the route passes MIDI. Tap to switch it, then edit it below.</p>
-  <table class="mx" id="mx"></table>
+  <p class="dim small" style="margin:-6px 0 12px">Filled: the route passes MIDI. Tap a route to edit it; tap it again to switch it on or off.</p>
+  <div class="mxwrap"><table class="mx" id="mx"></table></div>
 </section>
 <section id="editor"><h2 id="ed-title">Route</h2><div id="ed"></div><p class="dim small" id="ed-saved" style="margin:8px 0 0"></p></section>
-<section><h2>Presets</h2><div id="presets"></div></section>
+<section class="wide"><h2>Presets</h2><div id="presets"></div></section>
+</div>
 </div>
 
 <!-- ======================= LIBRARY ======================= -->
 <div class="tab" id="tab-library">
-<section><h2>Now</h2><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div>
-<div class="row" style="margin-top:10px"><button class="primary" onclick="run('backup')">Back up now</button>
-<button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('fetch-clipper')" title="isod89's synthesizer firmware, experimental">Get Clipper (exp.)</button><button onclick="run('import-sd')">Import SD card</button></div></section>
+<div class="chips" id="libnav"><button onclick="jump('lib-backups')">Backups<b id="n-backups"></b></button><button onclick="jump('lib-projects')">Projects<b id="n-projects"></b></button><button onclick="jump('lib-songs')">Songs<b id="n-songs"></b></button><button onclick="jump('lib-patches')">DX7<b id="n-patches"></b></button><button onclick="jump('lib-samples')">Samples<b id="n-samples"></b></button><button onclick="jump('lib-firmware')">Firmware<b id="n-firmware"></b></button><button onclick="jump('lib-software')">Software</button></div>
+<section><h2>Now</h2><div class="job"><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div></div>
+<div class="row" style="margin-top:12px"><button class="primary" onclick="run('backup')">Back up now</button>
+<button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('fetch-clipper')" title="isod89's synthesizer firmware, experimental">Get Clipper (exp.)</button><button onclick="run('import-sd')">Import SD card</button></div>
+<p class="meta" style="margin:12px 0 0">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. Restores, projects, songs and firmware back the FM-1 up first; a sample only replaces its slot.</p></section>
 
-<section><h2>Backups</h2><div id="backups"></div>
+<p class="label group">On the FM-1</p>
+<section id="lib-backups"><h2>Backups</h2><div id="backups"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".json" onchange="upload('backups',this)"><button onclick="this.previousElementSibling.click()">Upload a backup…</button></label></div></section>
 
-<section><h2>Projects</h2><p class="meta" style="margin:0 0 6px">Load a project into the FM-1, from a project file or from any backup.</p>
+<section id="lib-projects"><h2>Projects</h2><p class="meta" style="margin:0 0 6px">Load a project into the FM-1, from a project file or from any backup.</p>
 <div id="projects"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".json" onchange="upload('projects',this)"><button onclick="this.previousElementSibling.click()">Upload a project…</button></label></div></section>
 
-<section><h2>Samples</h2><p class="meta" style="margin:0 0 6px">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
+<section id="lib-songs"><h2>Songs</h2><p class="meta" style="margin:0 0 6px">A SLOOP song (2.5+): its four sections (projects A-D) and the song order, in one file. Loading one replaces sections A-D and the song order; the FM-1's other settings stay as they are.</p>
+<div id="songs"></div>
+<div class="row" style="margin-top:8px"><button class="primary" onclick="run('song-backup')">Back up song</button><label class="file"><input type="file" accept=".json" onchange="upload('songs',this)"><button onclick="this.previousElementSibling.click()">Upload a song…</button></label></div></section>
+
+<section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank (the FM-1 asks where it goes) or one voice. Not for SLOOP or Clipper, which have their own patches. <i>Not tried on an FM-1 yet.</i></p>
+<div id="patches"></div>
+<div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
+
+<section id="lib-samples"><h2>Samples</h2><p class="meta" style="margin:0 0 6px">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
 <div id="samples"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".wav" multiple onchange="upload('samples',this)"><button onclick="this.previousElementSibling.click()">Upload WAVs…</button></label>
 <input type="text" id="sname" placeholder="name (8 letters)" maxlength="8" size="12"><select id="sslot"><option value="1">USR1</option><option value="2">USR2</option><option value="3">USR3</option><option value="4">USR4</option></select>
 <button class="primary" onclick="loadSamples()">Load ticked into slot</button></div></section>
 
-<section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
+<p class="label group">Firmware and software</p>
+<section id="lib-firmware"><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
-<p class="meta">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. Restores, projects and firmware back the FM-1 up first; a sample only replaces its slot.</p>
+<section id="lib-software"><h2>Software</h2><p class="meta" style="margin:0 0 6px">Updates come from the project's GitHub. Everything you've saved stays as it is: settings, pairings, backups, projects, songs, samples, recordings. The box asks you to confirm, then installs (several minutes on a Pi Zero) and restarts; if the new version doesn't start, it goes back to this one.</p>
+<div id="software" class="job meta">Checking…</div>
+<div class="row" style="margin-top:12px"><button onclick="software(true)">Check again</button><button class="primary" id="sw-update" onclick="ask({cmd:'update'})" hidden>Update…</button><a id="sw-notes" target="_blank" rel="noopener" hidden><button>What's new</button></a></div></section>
 </div>
 
 <!-- ======================= RECORDINGS ======================= -->
 <div class="tab" id="tab-recordings">
-<section><button class="recbtn" id="r-rec" onclick="toggleRec()">● Record</button></section>
-<section><h2>Takes</h2><p class="meta" style="margin:-4px 0 6px">Listen here, download, or <i>edit as sample</i>: trim it, fade it, set its note, and save it to the samples.</p>
+<section><h2>Record</h2><button class="recbtn" id="r-rec" onclick="toggleRec()">● Record</button></section>
+<section><h2>Takes</h2><p class="meta" style="margin:-6px 0 6px">Listen here, download, or <i>edit as sample</i>: trim it, fade it, set its note, and save it to the samples.</p>
 <div id="recordings"></div></section>
 </div>
 
 <!-- ======================= SAMPLE EDITOR ======================= -->
 <div class="tab" id="tab-editor">
-<section><h2>Edit</h2><p class="meta" style="margin:-4px 0 8px">Make a sample from a recording, or edit one that's already in the samples. Saving always makes a new file.</p>
+<section><h2>Edit</h2><p class="meta" style="margin:-6px 0 10px">Make a sample from a recording, or edit one that's already in the samples. Saving always makes a new file.</p>
   <div class="row"><select id="sed-pick" style="flex:1;min-width:0"></select><button class="primary" onclick="sedPicked()">Open</button></div></section>
-<section id="sed" hidden><h2>Sample editor <span class="dim small" id="sed-take"></span></h2>
+<section id="sed" hidden><h2>Sample editor <span class="dim small" id="sed-take" style="font-family:var(--mono);text-transform:none;letter-spacing:0"></span></h2>
   <canvas id="sed-wave"></canvas>
-  <div class="row" style="margin-top:6px"><span class="small dim">Zoom</span><input type="range" id="sed-zoom" min="1" max="40" value="1" style="flex:1"></div>
+  <div class="row" style="margin-top:8px"><span class="k">Zoom</span><input type="range" id="sed-zoom" min="1" max="40" value="1" style="flex:1" aria-label="Zoom"></div>
   <div class="sedgrid">
     <label>Start (s)<input type="number" id="sed-start" step="0.01" min="0"></label>
     <label>End (s)<input type="number" id="sed-end" step="0.01" min="0"></label>
@@ -513,22 +605,21 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
   </div>
   <div class="row"><label class="row small"><input type="checkbox" id="sed-norm" checked style="width:20px;height:20px"> Normalize to the Sample level</label>
     <label class="row small"><input type="checkbox" id="sed-rev" style="width:20px;height:20px"> Reverse</label></div>
-  <p class="small" id="sed-len" style="margin:8px 0"></p>
+  <p class="small" id="sed-len" style="margin:10px 0"></p>
   <div class="row"><button onclick="sedPlay()">▶ Play selection</button><button class="primary" onclick="sedSave()">Save to samples</button><button onclick="sedClose()">Close</button></div>
-  <p class="dim small" style="margin:8px 0 0">Drag on the waveform to move the nearer marker. Saved samples go to Library → Samples, ready to load into a slot (on the box: Sloop → Load sample).</p>
+  <p class="dim small" style="margin:10px 0 0">Drag on the waveform to move the nearer marker. Saved samples go to Library → Samples, ready to load into a slot (on the box: Sloop → Load sample).</p>
 </section>
 </div>
 </main>
 
 <nav>
 <button data-tab="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Status</button>
-<button data-tab="midi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v8M12 5v8M16 5v8"/></svg>MIDI</button>
+<button data-tab="midi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14"/><path d="M8 5v8M12 5v8M16 5v8"/></svg>MIDI</button>
 <button data-tab="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v16H4zM14 4l6 2-4 14-6-2z"/></svg>Library</button>
 <button data-tab="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2"/></svg>Editor</button>
 <button data-tab="recordings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>Recordings</button>
 </nav>
 <div id="toast"></div>
-
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -536,7 +627,7 @@ const q = (s) => esc(JSON.stringify(s));            // a JS string literal insid
 const when = (t) => new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
 const fw = (s) => esc((s || "?").split(" ").pop());
 const mins = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[]};
+let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[], songs:[], patches:[]};
 let st = null;                                     // the box's status
 let tab = "status";
 
@@ -597,6 +688,22 @@ function renderStatus() {
   $("s-arpd").textContent = `${s.arp} ${s.arp_rate}`; $("s-chordd").textContent = s.chord;
   $("s-midi").textContent = st.midi.error ? "Bluetooth error" : !st.midi.enabled ? "off" : (st.midi.peer || "waiting");
   $("s-usbkeys").textContent = (st.midi.controllers || []).join(", ") || "none";
+  renderLink(st.link);
+  $("s-spkbtn").hidden = !st.speaker_saved; $("s-spkbtn").textContent = st.speaker || st.connecting ? "Disconnect" : "Connect";
+  $("s-outline").hidden = !st.jack; if (st.jack) seg("s-out", s.output, (v) => set("output", v));
+  const th = st.theme; $("s-themeline").hidden = !th;
+  if (th && document.activeElement !== $("s-theme")) $("s-theme").innerHTML = opt(th.choices, th.value, (x) => x === "follow" ? "FM-1 A" : x);
+  $("s-autoline").hidden = s.auto_backup == null; $("s-box").hidden = !th && s.auto_backup == null;   // a box from before these
+  if (s.auto_backup != null && document.activeElement !== $("s-auto")) $("s-auto").value = String(s.auto_backup);
+}
+const speaker = () => cmd({cmd:"speaker", value: st && (st.speaker || st.connecting) ? "disconnect" : "connect"}, false);
+function renderLink(l) {                           // the Pocket's Studio link (null on the Studio)
+  $("s-link").hidden = !l;
+  if (!l) return;
+  $("s-lon").checked = l.on; $("s-lon").onchange = (e) => set("studio_link", e.target.checked);
+  $("s-laudio").checked = l.audio; $("s-laudio").onchange = (e) => set("link_audio", e.target.checked);
+  $("s-lstudio").textContent = !l.on ? "off" : l.studio ? `${l.studio} · ${l.cable ? "cable" : "Wi-Fi"}` : (l.error || "looking…");
+  $("s-lsend").textContent = !l.on || !l.audio ? "off" : l.sending ? "going to the Studio" : "not going yet";
 }
 // the mixer: a level for each sound source while there's more than one (FM-1 A and B, a USB keyboard's synth)
 // a source with more than two channels (an audio interface) shows which pair it takes; tap it for the next
@@ -648,7 +755,7 @@ function renderMatrix() {
   $("mx").innerHTML = `<tr><th></th>${DESTS.map((d) => `<th>to ${destName(d)}</th>`).join("")}</tr>` +
     Object.keys(SOURCES).map((s) => `<tr><th>${SOURCES[s]}</th>${DESTS.map((d) => {
       const key = `${s}>${d}`;
-      if (s === d) return `<td class="dim" style="text-align:center">–</td>`;
+      if (s === d) return `<td class="self">–</td>`;
       const r = routes[key];
       return `<td><button class="${r.on ? "on" : ""} ${key === sel ? "sel" : ""}" onclick="pick(${q(key)})">${r.on ? "on" : "off"}</button></td>`;
     }).join("")}</tr>`).join("");
@@ -722,7 +829,10 @@ async function upload(folder, input) {
 function targetSelect(id) {
   return `<select id="${id}">${["working","A","B","C","D"].map((t) => `<option value="${t}">${t === "working" ? "working project" : "project " + t}</option>`).join("")}</select>`;
 }
+const jump = (id) => $(id).scrollIntoView({behavior:"smooth", block:"start"});   // the Library's chips
 function renderLibrary() {
+  for (const k of ["backups", "songs", "patches", "samples", "firmware"]) $("n-" + k).textContent = (lib[k] || []).length || "";
+  $("n-projects").textContent = lib.projects.length + lib.backups.reduce((n, b) => n + (b.projects || []).length, 0) || "";
   $("backups").innerHTML = lib.backups.length ? lib.backups.map((b) => `<div class="item"><div><div class="name">${when(b.date)}</div>
     <div class="meta">${fw(b.firmware)} · projects ${esc((b.projects || []).join(" ") || "none")} · samples ${esc((b.samples || []).join(" ") || "none")}${b.name.includes("_auto") ? " · auto" : ""}</div></div>
     <div class="row"><a href="/files/backups/${encodeURIComponent(b.name)}" download><button>Download</button></a>
@@ -735,6 +845,19 @@ function renderLibrary() {
     <div class="row">${targetSelect("t" + i)}<button onclick="ask({cmd:'load-project', folder:${q(p.folder)}, file:${q(p.file)}, source:${q(p.source)}, target:$('t${i}').value})">Load…</button>
     ${p.folder === "backups" ? `<a href="/api/project?backup=${encodeURIComponent(p.file)}&source=${p.source}" download><button>Download</button></a>` : `<a href="/files/projects/${encodeURIComponent(p.file)}" download><button>Download</button></a><button class="danger" onclick="del('projects',${q(p.file)})">Delete</button>`}</div></div>`).join("")
     : `<p class="empty">No projects yet: make a backup, or upload a project file.</p>`;
+  const patches = lib.patches || [];
+  $("patches").innerHTML = patches.length ? patches.map((p, i) => `<div class="item"><div><div class="name">${esc(p.name)}</div>
+    <div class="meta">${p.damaged ? "damaged" : p.kind === "bank" ? "bank · " + esc((p.voices || []).filter(Boolean).slice(0, 6).join(", ")) + "…" : "voice · " + esc((p.voices || [""])[0])}</div></div>
+    <div class="row">${p.damaged ? "" : p.kind === "bank" ? `<select id="v${i}"><option value="">whole bank</option>${(p.voices || []).map((v, k) => `<option value="${k + 1}">${k + 1} ${esc(v)}</option>`).join("")}</select>
+    <button onclick="ask({cmd:'dx7-send', file:${q(p.name)}, voice:$('v${i}').value ? +$('v${i}').value : null})">Send…</button>` : `<button onclick="ask({cmd:'dx7-send', file:${q(p.name)}, voice:null})">Send…</button>`}
+    <a href="/files/patches/${encodeURIComponent(p.name)}" download><button>Download</button></a><button class="danger" onclick="del('patches',${q(p.name)})">Delete</button></div></div>`).join("")
+    : `<p class="empty">No DX7 patches yet: upload a .syx.</p>`;
+  const songs = lib.songs || [];
+  $("songs").innerHTML = songs.length ? songs.map((s) => `<div class="item"><div><div class="name">${esc(s.title || s.name)}</div>
+    <div class="meta">${when(s.date)} · ${fw(s.firmware)} · sections ${esc(s.sections || "none")} · ${s.steps || 0} steps${s.loop ? ", loops" : ""}${s.damaged ? " · damaged" : ""}</div></div>
+    <div class="row">${s.damaged ? "" : `<button onclick="ask({cmd:'load-song', file:${q(s.name)}})">Load…</button>`}<a href="/files/songs/${encodeURIComponent(s.name)}" download><button>Download</button></a>
+    <button class="danger" onclick="del('songs',${q(s.name)})">Delete</button></div></div>`).join("")
+    : `<p class="empty">No songs yet: Back up song saves the one on the FM-1.</p>`;
   $("samples").innerHTML = lib.samples.length ? lib.samples.map((s) => `<div class="item"><label class="row"><input type="checkbox" class="pick" value="${esc(s.name)}" style="width:22px;height:22px"><span class="name">${esc(s.name)}</span></label>
     <div class="row"><span class="meta">${(s.bytes / 1024).toFixed(0)} KB</span><button onclick="sedOpen('samples', ${q(s.name)})">Edit…</button><button class="danger" onclick="del('samples',${q(s.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No WAV files yet.</p>`;
@@ -889,7 +1012,20 @@ async function status() {
   if (r !== shownRoutes && Date.now() > routesDirtyUntil) { routes = JSON.parse(r); shownRoutes = r; renderMatrix(); renderEditor(); }
   if (p !== shownPresets && !String(document.activeElement && document.activeElement.id).startsWith("pn")) { shownPresets = p; renderPresets(); }
 }
-async function refresh() { lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); renderLibrary(); }
+async function refresh() { lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); renderLibrary(); if (tab === "library") software(); }
+async function software(fresh) {                   // Library > Software: the installed version, the newest, the last update
+  const u = await fetch("/api/update" + (fresh ? "?fresh=1" : "")).then((r) => r.json()).catch(() => null);
+  if (!u) { $("software").textContent = "Couldn't ask the box."; return; }
+  const last = u.last && u.last.state ? `<br>Last update: ${esc(u.last.message)}${u.last.time ? " (" + when(u.last.time) + ")" : ""}` : "";
+  const running = u.last && (u.last.state === "installing" || u.last.state === "restarting");
+  $("software").innerHTML = `Installed: <b>${esc(u.installed)}</b> (${u.build === "pocket" ? "Pocket" : "Studio"})<br>`
+    + (u.error ? esc(u.error) : u.newer ? `Newest: <b>${esc(u.newest)}</b>, ready to install` : `Up to date${u.newest ? " (newest: " + esc(u.newest) + ")" : ""}`)
+    + (!u.helper ? "<br>This box needs one update over SSH first (install.sh) before it can update itself." : "")
+    + (u.busy && !running ? `<br>Can't update now: ${esc(u.busy)}` : "") + last;
+  $("sw-update").hidden = !(u.newer && u.helper) || running;
+  $("sw-notes").hidden = !u.newest; $("sw-notes").href = u.notes;
+  if (running) setTimeout(software, 3000);
+}
 async function pollJobs() { setTimeout(pollJobs, (await update()) ? 700 : 3000); }
 async function pollStatus() { if (!document.hidden && (tab === "status" || tab === "midi" || tab === "recordings")) await status(); setTimeout(pollStatus, 1000); }
 show((location.hash || "#status").slice(1).replace(/[^a-z]/g, "") || "status");

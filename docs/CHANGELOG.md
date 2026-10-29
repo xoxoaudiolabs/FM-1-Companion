@@ -2,6 +2,51 @@
 
 Every release of both boxes, newest first. [Back to the main page](../README.md)
 
+## Pocket v2.12: a Studio link, one-click updates, a new web app, SLOOP songs
+
+| MIDI › Studio link | Sloop › Load song | FM-1 › DX7 patches: a bank's voices |
+|---|---|---|
+| ![MIDI: Studio link off, Link audio on, USB keys, MIDI routes, Route presets](images/lcd-settings-midi.png) | ![Load song: Night drive and Sunday jam](images/lcd-songs.png) | ![A DX7 bank: Whole bank, then its 32 voices by name](images/lcd-dx7-bank.png) |
+
+*Drawn by the Companion's own code on a computer (`tools/render_screens.py --lcd`).*
+
+- **The Studio link.** **MIDI › Studio link** links the Pocket to a Studio on the same network, over Wi-Fi or an
+  Ethernet cable straight from the HUB HAT to the Studio (no router: both get an address by themselves). It finds
+  the Studio by itself and prefers the cable when there is one, moving to it within 30 s when it's plugged in.
+  While linked:
+  - **MIDI both ways**, as the Pocket's network MIDI (NET in the MIDI matrix).
+  - **The Studio's clock:** the Studio leads; the Pocket sends it no clock or start/stop of its own.
+  - **The Pocket's sound on the Studio** (**Link audio**, on at first): the Pocket's mix, sent uncompressed. With
+    no speaker on the Pocket it's the Pocket's output; with one, a copy. The Studio's Bluetooth speaker takes over:
+    the Pocket lets go of its own while linked.
+  - The link's Studio side isn't in Studio v1.6: it comes out on 30 October.
+  - Tried over Wi-Fi and over a cable: MIDI, the clock, and the Pocket's FM-1 heard on the Studio. *Not tried yet:*
+    the cable with Wi-Fi off, the Pocket's Ethernet after a restart, the speaker handing over.
+- **One-click updates from the web app.** **Library › Software** shows the version on the box and the newest
+  release; **Update** asks the box, which wants its hold-press (as for anything that writes to the FM-1), then
+  installs the newest release from GitHub and restarts. Your settings, pairings and library (backups, projects,
+  songs, samples, recordings, kits, patches) stay as they are. It won't start during a recording or a library job,
+  and if the new version doesn't start, the one from before is put back.
+  - A box on v2.11 or older needs this release installed over SSH once; after that the web app does it.
+  - Tried: an install from a release file as the updater does it (settings and the library kept), going back, and
+    an update turned down with nothing newer. *Not tried yet:* a whole update to a newer release (there isn't one
+    yet), the Studio.
+- **A new web app**, in the look of xoxoaudiolabs.com, with the Studio link, the screen's theme, auto backup and
+  the Bluetooth speaker (connect, disconnect) added. *Tried only in a browser with sample data so far.*
+- **SLOOP songs (SLOOP 2.5+).** **Sloop › Back up song** saves the song on the FM-1 as one file: its four sections
+  (projects A–D, an empty one too) and the song order (the steps, their sections and bars, and the loop).
+  **Load song** puts one back: the sections, and the song order into the FM-1's settings, changing only those
+  36 bytes, so its other settings stay as they are. It backs the FM-1 up first and won't while a song plays.
+  The web app's Library has the same (**Songs**: back up, load, download, upload). Tried on an FM-1 running SLOOP
+  2.8: a song saved, loaded back, read back the same.
+- **DX7 patches**, for FM-1 firmwares that take them. `.syx` banks (32 voices) and single voices go in the
+  library's `patches` folder (from the SD card, or the web app's **DX7 patches**). **FM-1 › DX7 patches** sends a
+  whole bank (the FM-1 asks on its screen where it goes) or one voice by name (a bank's voice unpacked to a single
+  voice: for firmwares that take only those). Only the two standard Yamaha messages are sent: never M-VAVE's
+  updater messages. It asks first whether the FM-1 runs SLOOP or Clipper, which don't take DX7 patches, and sends
+  nothing to them (seen on a SLOOP FM-1). *Not tried yet on a firmware that takes DX7 patches* (by others'
+  research: M-VAVE's own, and Baud Girl's FM-1+VA before its FM-1_079): tried one? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml).
+
 ## Pocket v2.11: more boards and screens, a tidier Settings
 
 | Settings | Mixer | Bluetooth |
@@ -76,6 +121,15 @@ with an FM-1 plugged in.*
 </details>
 
 ## Since Studio v1.6 (on main, not a numbered release yet): MIDI recording, an 808 kit, a speaker that comes back
+
+- **Eight Studio themes** (MORE › THEME, a page of swatches: tap one and it's used at once): NEON NOIR, KAWAII,
+  BUBBLEGUM, SYNTHWAVE, 8-BIT, INFERNO, TOXIC and DEEP SEA, after SLOOP's five. Each tried on the Studio.
+- **FM-1 ON STUDIO** (a MORE tile): a picture of the FM-1; tap one of its knobs, keys or buttons, then move a
+  control on a USB MIDI controller, and that control plays it on the Studio's SLOOP or X0X. PLAY SLOOP and PLAY
+  X0X moved there. Tried with an Akai MPK mini mkIV: its knobs, and PLAY and REC from its DAW port.
+- **MIDI learn for the DJ decks** (LEARN on DECKS): any MIDI controller on the decks, step by step (the
+  crossfader, the browse knob, then each deck's buttons and faders), each map kept and relearnt one control at a
+  time. *Not tried with a controller yet.*
 
 - **MIDI recording:** each take the RECORDER makes now has a `.mid` beside its WAV, of the same name: the MIDI
   played into the box while it recorded, a track for each source (FM-1 A, FM-1 B, each USB keyboard by its own

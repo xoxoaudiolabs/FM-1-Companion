@@ -15,6 +15,7 @@ the FM-1's USB MIDI and Bluetooth LE MIDI (blemidi.py), and drives the HAT:
   bridge.py --sim DIR       run without the HAT, writing frames as PNG files to DIR
 """
 import json
+import netaudio
 import os
 import queue
 import re
@@ -51,6 +52,9 @@ DEFAULTS = {
     "last_name": None,
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
+    "studio_link": False,   # the Pocket: network MIDI to a Studio (Ethernet or Wi-Fi), the Studio leading the clock
+    "studio_host": None,    # the Studio to link to (a name or address); None: the one found on the network
+    "link_audio": True,     # the Pocket's sound to the Studio too while linked (netaudio.py)
     "ble_keys": [],         # Bluetooth MIDI keyboards the box connects to whenever they're on: [[address, name]]
     "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
     "audio_rate": 48000,    # PipeWire's rate (Hz), 48000 or 44100: the FM-1 is opened at this rate
@@ -70,6 +74,7 @@ DEFAULTS = {
     "touch_cal": [3900, 200, 3900, 200, True],   # the desk touchscreen: raw x left/right, y top/bottom, swap
     "desk_theme": "follow",  # the desk box's colours: "follow" (FM-1 A's, as SLOOP shows them) or a SLOOP palette
     "output": "both",       # the Studio's sound: "speaker" (Bluetooth), "phones" (the 3.5 mm jack) or "both"
+    "decks_out": "studio",  # the DJ decks' master: "studio" (where the Studio plays, its MIXER) or "hercules"
     "phones": 80,           # the jack's level (%)
     "cue": False,           # the click and previews on the jack only, not the speaker
     "cues": [],             # mixer keys cued to the jack, as on a DJ mixer: heard there before their fader
@@ -547,7 +552,8 @@ class Loopback:
 
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
 APP_NODES = {"sloop": "sloop-remote-out",          # the Studio apps' sound (deskui.APPS): mixer key -> its
-             "x0x": "x0x-companion-studio"}           # PipeWire node, its level set there
+             "x0x": "x0x-companion-studio",           # PipeWire node, its level set there; the DJ decks' too
+             "decks": "fm1-decks"}                    # (decks.py, DJ decks out: STUDIO)
 
 
 def link_ports(links):
@@ -830,6 +836,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         self.mixer = Mixer(state["audio_rate"])        # a second FM-1, or a USB keyboard's sound: mixed
         self.jack, self.jack_set = None, None  # the Studio's 3.5 mm jack (jack_node); (node id, level) last set
         self.jack_loop = Loopback(state["audio_rate"])  # output "both": the speaker's sound copied to the jack
+        self.net_audio = netaudio.Sender()   # the Pocket's Studio link: its sound to the Studio (netaudio.SINK)
+        self.net_sink = None                  # that sink's name, while it's there
+        self.net_loop = Loopback(state["audio_rate"])   # the speaker's sound copied to it
+        self.handed_at = 0.0                  # when the speaker was last let go for the Studio (handed_over)
         self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
         self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
         self.app_set = {}                     # mixer key -> (node id, level) last set on a Studio app's sound
@@ -901,6 +911,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                 settled = self.source and self.sink and (not self.midi or self.midi.usb_label())
                 next_scan = now + (2 if now < fast_until else 15 if settled else 6)
             if (not self.sink and self.auto and self.state["last_mac"] and self.screen == "status"
+                    and not self.handed_over()
                     and now >= next_reconnect and self.bt_lock.acquire(blocking=False)):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
@@ -949,12 +960,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.source, self.sink, self.source_b, self.others, self.volume = source, sink, source_b, others, volume
             self.post("status", changed)
         channels = self.mix_channels()
-        loops = [self.loop, self.jack_loop] + list(self.mixer.channels.values()) + list(self.cue_mixer.channels.values())
-        for loop in loops:
+        loops = [self.loop, self.jack_loop]
+        for loop in loops + list(self.mixer.channels.values()) + list(self.cue_mixer.channels.values()):
             if loop.follow(objects):           # an end came back anew: made again below, in this scan
                 self.post("status", False)
         main, copy = self.outputs()
         self.jack_loop.ensure(copy and "monitor:" + main, copy, "fm1-phones")
+        self.link_audio(objects, main)
         app_ids = {key: next((o.get("id") for o in objects
                               if ((o.get("info") or {}).get("props") or {}).get("node.name") == node), None)
                    for key, node in APP_NODES.items()}
@@ -990,11 +1002,40 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.loop.ensure(only and only["name"], main)
         self.heal_pipewire(source)
 
+    def link_audio(self, objects, main):
+        """the Studio link's audio: the sender to the Studio's address while linked (and Link audio is on), and
+        what the speaker plays copied to it; with no speaker, the sound goes to the Studio alone (outputs)"""
+        address = (getattr(self.midi, "link_address", None)
+                   if not self.desk and self.state.get("studio_link") and self.state.get("link_audio", True) else None)
+        self.net_audio.to(address)
+        here = address and any(((o.get("info") or {}).get("props") or {}).get("node.name") == netaudio.SINK
+                               for o in objects)
+        if bool(here) != bool(self.net_sink):
+            self.net_sink = netaudio.SINK if here else None
+            self.post("status", True)
+        if self.net_loop.follow(objects):
+            self.post("status", False)
+        copy = main and self.net_sink and main != self.net_sink
+        self.net_loop.ensure(copy and "monitor:" + main, copy and self.net_sink, "fm1-net")
+        if self.handed_over() and self.sink and time.monotonic() - self.handed_at > 10:
+            self.handed_at = time.monotonic()  # the speaker is the Studio's while linked: let it go (again if it
+            mac = self.state.get("last_mac")    # calls the Pocket by itself); not reconnected till the link ends
+            if mac and mac.replace(":", "_").upper() in self.sink["name"].upper():
+                self.say("Speaker: the Studio's now", 2)
+                threading.Thread(target=bt, args=("disconnect", mac), kwargs={"timeout": 10}, daemon=True).start()
+
+    def handed_over(self):
+        """linked to a Studio with the link's audio: the Studio plays the Pocket's sound, on its own speaker"""
+        return bool(not self.desk and self.state.get("studio_link") and self.state.get("link_audio", True)
+                    and getattr(self.midi, "link_address", None))
+
     def outputs(self):
         """(the node name the sound goes to, a second one that gets a copy of it, or None): the Bluetooth
         speaker, the Studio's 3.5 mm jack, or both (the speaker's sound copied to the jack: no Bluetooth delay
         on it). Either one alone when the other isn't there."""
         bt, jack = self.sink and self.sink["name"], self.jack and self.jack["name"]
+        if not bt and not jack and self.net_sink:  # linked to a Studio, no speaker: the Studio plays it
+            return self.net_sink, None
         out = self.state.get("output", "both")
         if (out == "phones" and jack) or not bt:
             return jack, None
@@ -1062,9 +1103,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         return label.upper()[:10]
 
     def kit(self):
-        """the Studio's kit in use"""
+        """the Studio's kit in use; none yet (a first start): the ready-made 808 KIT, so the pads play out of the box"""
         import pads
-        return pads.clean_kit(self.state.get("kit") or pads.empty_kit())
+        if not self.state.get("kit"):
+            pads.factory_kits()
+            self.state["kit"] = pads.load_kit(pads.kit_path(pads.FACTORY_KITS[0][1])) or pads.empty_kit()
+        return pads.clean_kit(self.state["kit"])
 
     def set_kit(self, kit):
         import pads
@@ -1135,9 +1179,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         return self.loop.running() or self.mixer.running()
 
     def capture_target(self):
-        """what recordings and the meters listen to: the FM-1, or while mixing, what plays on the speaker"""
+        """what recordings and the meters listen to: the FM-1, or while mixing (or a Studio app or the DJ decks
+        play: they go to the speaker themselves), what plays on the speaker"""
         if self.mixer.running() and self.mixer.sink:
             return "monitor:" + self.mixer.sink
+        main = self.outputs()[0]
+        if self.app_here and main:
+            return "monitor:" + main
         return self.source and self.source["name"]
 
     def heal_pipewire(self, source):
@@ -1161,7 +1209,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         box, a few seconds in; never during a recording."""
         mac = (self.state.get("last_mac") or "").replace(":", "_").upper()
         if (not mac or mac not in sink["name"].upper() or time.monotonic() - self.own_connect_at < OWN_CONNECT
-                or self.recorder.recording()):
+                or self.recorder.recording() or self.handed_over()):
             return
         threading.Thread(target=self.refresh_speaker, daemon=True).start()
 
@@ -1365,11 +1413,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                                  ("sample_level", "Sample level", self.state["sample_level"]),
                                  ("sd", "Import SD card", "")]
             return which + [("backup", "Back up now", ""), ("restore", "Restore", "›"),
-                            ("project", "Load project", "›"), ("sample", "Load sample", "›"),
+                            ("project", "Load project", "›"), ("song_backup", "Back up song", ""),
+                            ("song_load", "Load song", "›"), ("sample", "Load sample", "›"),
                             ("sample_level", "Sample level", self.state["sample_level"]),
                             ("auto", "Auto backup", self.auto_label(self.auto_mode())), ("sd", "Import SD card", "")]
         if self.settings_menu == "fm1":       # the FM-1 itself, whatever it runs
-            return [("fw_info", "Runs", self.fw_label or "?"), ("firmware", "Install firmware", "›")]
+            return [("fw_info", "Runs", self.fw_label or "?"), ("firmware", "Install firmware", "›"),
+                    ("dx7", "DX7 patches", "›")]     # (for firmwares that take them: dx7.py)
         if self.settings_menu == "play":      # what changes while playing
             keys = self.keys_route()
             return [("metronome", "Metronome", onoff(self.state["metronome"])),
@@ -1393,9 +1443,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                 mix, parts = [], []
             jack = ([("output", "Output", self.state["output"]), ("cue", "Click to phones", onoff(self.state["cue"]))]
                     if self.jack else [])           # the Studio's 3.5 mm jack
+            decks = [("decks_out", "DJ decks out", self.state.get("decks_out", "studio"))] if self.desk else []
             bt = [("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] if self.desk else []   # (the
             return (bt + jack                 # Pocket's are in Bluetooth)
-                    + [("rate", "Audio rate", rate)] + mix + parts)
+                    + [("rate", "Audio rate", rate)] + mix + parts + decks)
         if self.settings_menu in ("midi", "bt"):
             keys = getattr(self.midi, "controllers", None) or []
             bt_keys = getattr(self.midi, "ble_keys", None) or []
@@ -1405,8 +1456,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                        ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›")]
             if self.settings_menu == "bt":    # the Pocket's Bluetooth: the speaker, then Bluetooth MIDI
                 return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] + bt_midi
-            return ((bt_midi if self.desk else []) + [("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
-                    ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")])
+            link = [] if self.desk else [("link", "Studio link", self.link_label()),
+                                         ("link_audio", "Link audio", "on" if self.state.get("link_audio", True)
+                                          else "off")]
+            return ((bt_midi if self.desk else []) + link
+                    + [("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
+                       ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")])
         theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
         editor = [("editor", "Sample editor", "›")]
         fm1 = [("g_sloop", "Sloop", "›"), ("g_fm1", "FM-1", "›")]
@@ -1419,6 +1474,38 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         return ([("g_mixer", "Mixer", "›"), ("routes", "MIDI routes", "›")] + editor + fm1
                 + [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
                    ("recording", "Recordings", "›")] + theme + [("wifi", "Wi-Fi", wifi)])
+
+    def set_studio_link(self, on):
+        """the Pocket's Studio link on or off (Settings > MIDI > Studio link, or the web page)"""
+        if self.midi:
+            self.midi.set_link(on, self.state.get("studio_host"))
+        self.state["studio_link"] = on
+        save_state(self.state)
+        self.say("Looking for a Studio" if on else "Studio link off")
+
+    def set_link_audio(self, on):
+        """the Pocket's sound to the Studio too while linked, or not (and the speaker the Studio's then)"""
+        self.state["link_audio"] = on
+        save_state(self.state)
+        self.say(f"Link audio {'on' if on else 'off'}", 1.5)
+
+    def link_status(self):
+        """the Studio link for the web page: None on the Studio"""
+        if self.desk:
+            return None
+        names = getattr(self.midi, "net", None) or []
+        address = getattr(self.midi, "link_address", None)
+        return {"on": bool(self.state.get("studio_link")), "audio": bool(self.state.get("link_audio", True)),
+                "studio": names[0] if names else None, "address": address,
+                "cable": bool(address and address.startswith("169.254.")), "sending": bool(self.net_sink),
+                "error": getattr(self.midi, "net_error", None) if self.state.get("studio_link") else None}
+
+    def link_label(self):
+        """the Studio link's row: off, looking, or the Studio it's linked to"""
+        if not self.state.get("studio_link"):
+            return "off"
+        names = getattr(self.midi, "net", None) or []
+        return names[0][:12] if names else "looking"
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
@@ -1438,6 +1525,14 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.state["output"] = outs[(outs.index(now_out) + 1) % 3] if now_out in outs else "both"
             self.save_settings()
             self.scan_now = True
+        elif key == "decks_out":              # the DJ decks' master: the Studio's (its MIXER), or the Hercules's
+            self.state["decks_out"] = "hercules" if self.state.get("decks_out", "studio") == "studio" else "studio"
+            self.save_settings()
+            proc = self.desk and self.desk.decks_proc
+            if proc:
+                proc.send("output", self.state["decks_out"])
+            self.say("DJ decks: through the Studio's mixer" if self.state["decks_out"] == "studio"
+                     else "DJ decks: the Hercules's own outputs", 2)
         elif key == "cue":
             self.state["cue"] = not self.state["cue"]
             self.save_settings()
@@ -1449,6 +1544,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.loop.reopen(rate)
             self.mixer.reopen(rate)
             self.jack_loop.reopen(rate)
+            self.net_loop.reopen(rate)
             self.cue_mixer.reopen(rate)
             self.say(f"{rate / 1000:g} kHz: audio restarts")
         elif key == "clock":
@@ -1502,6 +1598,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             save_state(self.state)
         elif key == "btkeys":                  # Bluetooth MIDI keyboards: the box connects to them
             self.start_scan("midi")
+        elif key == "link" and self.midi:     # the Pocket's Studio link: MIDI both ways, the Studio's clock
+            self.set_studio_link(not self.state.get("studio_link"))
+        elif key == "link_audio":             # the Pocket's sound to the Studio as well, while linked
+            self.set_link_audio(not self.state.get("link_audio", True))
         elif key == "usbkeys":                 # USB MIDI controllers on a hub, found by themselves
             keys = getattr(self.midi, "controllers", None) or []
             self.say(", ".join(keys) if keys else "Plug a USB keyboard into the hub", 3)
@@ -2077,6 +2177,8 @@ def main():
         midi.set_ble_saved(state["ble_keys"])
         midi.set_clock(state["clock_mode"], state["bpm"])
         midi.set_routes(state["routes"])
+        if box["build"] != "desk" and state["studio_link"]:
+            midi.set_link(True, state["studio_host"])
     if boot:
         deskboot.show(display, boot, 2)
     state["touch_cal"] = list(state["touch_cal"])   # its own list: calibrating changes it in place
@@ -2110,6 +2212,8 @@ def main():
         app.recorder.stop()
         app.loop.stop()
         app.jack_loop.stop()
+        app.net_loop.stop()
+        app.net_audio.stop()
         app.cue_mixer.stop()
 
 

@@ -16,6 +16,7 @@ import re
 import threading
 import time
 
+import fm1map                           # any controller as FM-1 A's panel, for SLOOP and X0X on the Studio
 import sloop                            # which FM-1 is A and which is B (fm1_cards, port_card)
 
 MIDI_SERVICE = "03b80e5a-ede8-4b33-a751-6ce34ec4c700"
@@ -136,6 +137,20 @@ FM1_IDS = ("0x1209:0x01", "pid.codes")    # the FM-1's USB ID, its ALSA name whe
 
 
 DJ_CONTROLLERS = ("djcontrol",)                # Hercules DJControl: the Studio's DJ decks read it themselves
+_dj_learned = (None, set())
+
+
+def dj_learned(name):
+    """a MIDI port the DJ decks have a learnt map for (decks.py's LEARN): theirs, kept off the routes"""
+    global _dj_learned
+    import djlib
+    try:
+        stamp = (djlib.MUSIC / djlib.CONTROLLERS).stat().st_mtime
+    except OSError:
+        stamp = None
+    if stamp != _dj_learned[0]:                # (read again only when the maps change)
+        _dj_learned = (stamp, set(djlib.learned()))
+    return djlib.port_base(name) in _dj_learned[1]
 
 
 class UsbMidi:
@@ -755,10 +770,12 @@ class UsbControllers:
 
     MAX, MAX_STUDIO = 4, 8
 
-    def __init__(self, fm1, on_message):
+    def __init__(self, fm1, on_message, on_extra=None):
         import mido
-        self.mido, self.fm1, self.on_message = mido, fm1, on_message
+        self.mido, self.fm1, self.on_message, self.on_extra = mido, fm1, on_message, on_extra
         self.ports = {}                     # client name ("SMK-37+VA") -> {"in": port, "out": port or None}
+        self.extra, self.extra_failed = {}, set()   # the Studio: their other ports (on_extra's), ones that won't open
+        self.extras_on = False
         self.last_activity = 0.0
         self.lock = threading.Lock()
 
@@ -770,17 +787,43 @@ class UsbControllers:
             if (any(s in low for s in UsbMidi.SKIP) or any(m in low for m in self.fm1.match)
                     or ADDRESS.search(name) or sloop.port_card(name) in fm1s):   # (an FM-1's, by its card)
                 continue
-            if any(d in low for d in DJ_CONTROLLERS):  # a DJ controller: the decks' (decks.py), not a keyboard
-                continue
+            if any(d in low for d in DJ_CONTROLLERS) or dj_learned(name):   # a DJ controller: the decks'
+                continue                               # (decks.py), not a keyboard
             out.setdefault(name.split(":")[0], name)
         return out
 
+    def extras(self, names):
+        """{port name without its numbers: port}: the controllers' other input ports (an MPK mini IV's transport
+        buttons are on its DAW port): for the FM-1 map alone (fm1map.py), never the routes"""
+        wanted = self.wanted(names)
+        firsts = set(wanted.values())
+        return {fm1map.port_base(n): n for n in names if n not in firsts and n.split(":")[0] in wanted}
+
+    def poll_extras(self, names):
+        found = self.extras(names) if self.extras_on and self.on_extra else {}
+        for base in [b for b in self.extra if b not in found]:
+            try:
+                self.extra.pop(base).close()
+            except Exception:
+                pass
+        self.extra_failed &= set(found)           # (unplugged: tried again when it's back)
+        for base, port in found.items():
+            if base in self.extra or base in self.extra_failed:
+                continue
+            try:
+                self.extra[base] = self.mido.open_input(
+                    port, callback=lambda msg, base=base: self.on_extra(bytes(msg.bytes()), base))
+            except Exception:                     # (some won't: an MPK's DIN port)
+                self.extra_failed.add(base)
+
     def poll(self):
         try:
-            ins = self.wanted(self.mido.get_input_names())
+            names = self.mido.get_input_names()
+            ins = self.wanted(names)
             outs = self.wanted(self.mido.get_output_names())
         except Exception:
             return
+        self.poll_extras(names)
         for name in [n for n in self.ports if n not in ins]:
             self.close(name)
         for name, port in ins.items():
@@ -1153,7 +1196,8 @@ class MidiBridge:
     def __init__(self, source_match, enabled=True, net=False, pads=None):
         self.enabled, self.paused = enabled, False
         self.pads, self.pads_lock = pads, threading.Lock()    # the sampler's pipe (the Studio), notes for its pads
-        self.net = self.mcu = None            # network MIDI (the desk box): music, and a Mackie Control surface
+        self.net = self.mcu = None            # network MIDI (the desk box): music, and a Mackie Control surface;
+        self.link = False                     # the Pocket: its Studio link is its NET (link(), netmidi.Invitation)
         if net:
             import netmidi
             self.net = netmidi.Session("FM-1 Companion", 5004, self.from_net)
@@ -1175,10 +1219,12 @@ class MidiBridge:
         self.lock = threading.Lock()
         self.usb = UsbMidi(source_match, self.from_usb)
         self.usb_b = UsbMidi(source_match, lambda message: self.from_fm1("FM-1 B", message), slot=1)
-        self.controllers = UsbControllers(self.usb, self.from_controllers)
+        self.controllers = UsbControllers(self.usb, self.from_controllers, self.from_extra)
+        self.fm1map = fm1map.Mapper()           # controls of theirs learnt onto the FM-1's (the Studio's apps)
         self.split = bool(net)                # the Studio: each USB MIDI device its own row and column
         if net:                               # the Studio: four USB ports, more on a hub (the Pocket: 4, its CPU)
             self.controllers.MAX = UsbControllers.MAX_STUDIO
+            self.controllers.extras_on = True
         self.streams = {}                   # device path -> MidiStream: each sender's running status its own
         self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
         self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
@@ -1220,7 +1266,9 @@ class MidiBridge:
         elif dest.startswith(DEVICE):         # one USB device (the Studio)
             self.controllers.send_to(dest[len(DEVICE):], messages)
         elif dest == "NET":
-            if self.net:
+            if self.link:                     # (linked, the Studio leads: no clock or start / stop back to it)
+                messages = [m for m in messages if m[0] not in TRANSPORT]
+            if self.net and messages:
                 self.net.send(messages)
         elif dest == "SMP":
             if self.pads is not None:
@@ -1434,6 +1482,17 @@ class MidiBridge:
             return
         self.route_from("NET", message)
 
+    def set_link(self, on, host=None):
+        """the Pocket's Studio link on (to host, or the Studio DNS-SD finds) or off: a session it starts to a
+        Studio's music session, the routes' NET while it's on"""
+        import netmidi
+        if self.link and self.net:
+            self.net.stop()
+        self.net, self.link = None, False
+        if on:
+            self.net = netmidi.Invitation(netmidi.LINK_NAME, self.from_net, host=host or None)
+            self.link = self.net.start()
+
     def from_mcu(self, message):
         replies = self.mackie.feed(message)
         if replies:                           # the handshake some DAWs make before they use a surface
@@ -1443,8 +1502,9 @@ class MidiBridge:
         """{"net": computers on the music session, "mcu": the control surface's state, or None}"""
         if not self.net:
             return {}
-        mcu = self.mackie.state() if self.mcu.names() else None
-        return {"net": self.net.names(), "mcu": mcu, "net_error": self.net.error}
+        mcu = self.mackie.state() if self.mcu and self.mcu.names() else None
+        return {"net": self.net.names(), "mcu": mcu, "net_error": self.net.error, "link": self.link,
+                "link_address": self.net.address() if self.link else None}
 
     # ---- MIDI recording: what's played in, while the recorder records, kept for a .mid beside the take
 
@@ -1477,12 +1537,18 @@ class MidiBridge:
     # USB controllers -> the FM-1 (and Bluetooth, if that route is on); called on rtmidi's thread
     def from_controllers(self, message, name=None):
         """name: the controller it came from (the Studio routes each on its own)"""
+        if self.fm1map.handle(name, message, self.tap_path is not None, self.tap):
+            return                              # (learning one, or an app's: as FM-1 A's panel, into its FIFO)
         source = device_key(name) if self.split and name else "USB"
         if name and source != "USB":
             self.source_names[source] = name
         if is_library_sysex(message) or not self.passes(source, message):
             return
         self.route_from(source, message)
+
+    def from_extra(self, message, name):
+        """a controller's other port (UsbControllers.extras): only ever the FM-1 map's"""
+        self.fm1map.handle(name, message, self.tap_path is not None, self.tap)
 
     def to_ble(self, message):
         if not (self.bluez and self.enabled and (self.peers or self.keyboards)):
@@ -1634,6 +1700,8 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 bridge.set_routes(command[1])
             elif command[0] == "metronome":        # ("metronome", on, speaker, level, rate)
                 wanted[:] = command[1:5]
+            elif command[0] == "link":             # ("link", on, host): the Pocket's Studio link
+                bridge.set_link(bool(command[1]), command[2] if len(command) > 2 else None)
             elif command[0] == "mcu" and bridge.mcu:   # ("mcu", [messages]): the control surface, to the DAW
                 bridge.mcu.send([bytes(m) for m in command[1]])
             elif command[0] == "ble_saved":        # ("ble_saved", [[address, name]]): the keyboards, at start
@@ -1641,6 +1709,13 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 bridge.ble_loaded = True
             elif command[0] == "ble":              # ("ble", "scan") / ("ble", "connect" or "forget", address)
                 bridge.keyboard_command(*command[1:])
+            elif command[0] == "fm1map":           # ("fm1map", "learn" / "clear", control) / ("fm1map", "forget")
+                if command[1] == "learn":
+                    bridge.fm1map.learn(command[2])
+                elif command[1] == "clear":
+                    bridge.fm1map.clear(command[2])
+                elif command[1] == "forget":
+                    bridge.fm1map.forget()
             elif command[0] == "tap":              # ("tap", FIFO path or None): FM-1 A's MIDI to SLOOP on the Studio
                 bridge.set_tap(command[1])
             elif command[0] == "midirec":          # ("midirec", True): log what's played in; (.., False): stop
@@ -1668,6 +1743,7 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
         status["notes"], status["chans"] = bridge.notes_status(now)
         status.update(bridge.net_status())
         status["pads"] = bridge.pads is not None
+        status["fm1map"] = bridge.fm1map.status()
         status["split"] = bridge.split
         status.update(ble_keys=bridge.keyboard_list() if bridge.ble_loaded else None, ble_found=bridge.ble_found,
                       ble_scanning=bridge.ble_scanning, ble_note=bridge.ble_note)
@@ -1738,6 +1814,8 @@ class MidiProcess:
                                 name="fm1-midi")
         self.pads = pads is not None          # the Studio's sampler takes notes (the routes' SMP)
         self.net, self.mcu = [], None        # network MIDI: computers connected; the control surface's state
+        self.link, self.net_error = False, None   # the Pocket's Studio link: on, and why it isn't linked
+        self.link_address = None              # the Studio's address while linked (the link's audio goes there)
         self.enabled, self.peer, self.error = enabled, None, None
         self.pairing_until = 0.0
         self.usb, self.last_activity = None, 0.0
@@ -1748,6 +1826,7 @@ class MidiProcess:
         self.ble_keys, self.ble_found, self.ble_scanning = [], [], False   # Bluetooth MIDI keyboards (MidiBridge's)
         self.ble_note = 0
         self.on_note = self.on_saved = None  # the app's: a keyboard's news to say; the saved keyboards to keep
+        self.fm1map = None                  # fm1map.Mapper.status(): the FM-1 controls learnt, one being learnt
 
     def start(self):
         self.proc.start()
@@ -1768,7 +1847,10 @@ class MidiProcess:
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
             self.net, self.mcu = status.get("net") or [], status.get("mcu")
+            self.link, self.net_error = status.get("link", False), status.get("net_error")
+            self.link_address = status.get("link_address")
             self.ble_found, self.ble_scanning = status.get("ble_found") or [], status.get("ble_scanning", False)
+            self.fm1map = status.get("fm1map")
             keys = status.get("ble_keys")
             if keys is not None:              # None: the saved ones not sent yet (not "none saved")
                 if [k[:2] for k in keys] != [k[:2] for k in self.ble_keys] and self.on_saved:
@@ -1781,6 +1863,10 @@ class MidiProcess:
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
+
+    def fm1map_command(self, *args):
+        """("learn", control or None) / ("clear", control) / ("forget",): the FM-1 map (fm1map.Mapper)"""
+        self.send_command(("fm1map",) + args)
 
     def midi_record(self, on):
         """the MIDI played in logged while a take records (on), or stopped (kept for midi_write)"""
@@ -1821,6 +1907,10 @@ class MidiProcess:
 
     def set_routes(self, routes):
         self.conn.send(("routes", routes))
+
+    def set_link(self, on, host=None):
+        """the Pocket's Studio link on (to host, or the Studio found on the network) or off"""
+        self.conn.send(("link", on, host))
 
     def set_metronome(self, on, target, level, rate):
         self.conn.send(("metronome", on, target, level, rate))

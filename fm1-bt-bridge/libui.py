@@ -15,7 +15,7 @@ from meters import Player, clips_file, clock, wav_seconds
 SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
            ("D", "Project D")]
-WRITES = ("restore", "load-project", "load-sample", "flash")
+WRITES = ("restore", "load-project", "load-sample", "flash", "song-load", "dx7-send", "update")
 AUTO_CHOICES = ["off", "boot", 2, 5, 10, 30]            # the "auto_backup" setting: minutes between backups
 AUTO_LABELS = {"off": "off", "boot": "at start"}
 
@@ -45,7 +45,8 @@ def short_firmware(text):
     return (text or "?").split()[-1]
 
 
-LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto")
+LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto",
+                "song_backup", "song_load", "dx7")
 
 
 class LibraryScreens:
@@ -213,6 +214,9 @@ class LibraryScreens:
         if key == "auto":
             self.cycle_auto()
             return
+        if key == "song_backup":              # SLOOP's song: its sections A-D and the song order, one file
+            self.start_job(["song-backup"], "Song backup")
+            return
         listing = library.listing()
         if key == "restore":
             items = [(short_date(b["name"]), short_firmware(b.get("firmware")), b["name"])
@@ -224,6 +228,14 @@ class LibraryScreens:
             items = [(p.get("title") or p["name"], "file", ("project", p["name"]))
                      for p in listing["projects"] if not p.get("damaged")] + items
             self.open_pick("Project from", items, self.pick_project_source, "No projects yet")
+        elif key == "song_load":
+            items = [(s.get("title") or Path(s["name"]).stem, f"{s.get('steps', 0)} st", s["name"])
+                     for s in listing["songs"] if not s.get("damaged")]
+            self.open_pick("Load song", items, self.pick_song, "No songs yet: Back up song")
+        elif key == "dx7":                    # DX7 .syx banks and voices (patches folder), for firmwares that take them
+            items = [(Path(p["name"]).stem, "bank" if p.get("kind") == "bank" else "voice", p["name"])
+                     for p in listing["patches"] if not p.get("damaged")]
+            self.open_pick("DX7 patches", items, self.pick_dx7, "No .syx files yet: SD card or web")
         elif key == "sample":
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing["samples"]]
             self.open_pick("Sample", items, self.pick_sample, "No WAV files yet")
@@ -263,6 +275,37 @@ class LibraryScreens:
         self.ask("Restore?", [short_date(name) + "  " + short_firmware(library.sloop.load_json(path).get("firmware")),
                               "replaces the FM-1's data", "(backed up first)"],
                  lambda: self.start_job(["restore", str(path)], "Restore"))
+
+    def pick_dx7(self, name):
+        """a bank: the whole bank, or one of its voices by name; a voice file: itself"""
+        import dx7
+        path = library.folder("patches") / name
+        try:
+            what = dx7.describe(path)
+        except (OSError, dx7.DX7Error) as e:
+            self.say(str(e)[:40])
+            return
+        if what["kind"] == "voice":
+            self.ask_dx7(path, None, what["voices"][0] or path.stem)
+            return
+        items = [("Whole bank", "32", None)] + [(f"{i + 1} {v or '-'}", "", i + 1)
+                                                for i, v in enumerate(what["voices"])]
+        self.open_pick(path.stem[:14], items, lambda voice: self.ask_dx7(path, voice, path.stem if voice is None
+                                                                           else what["voices"][voice - 1]),
+                       "", back="pick")
+
+    def ask_dx7(self, path, voice, label):
+        lines = ([str(label)[:20], "all 32 voices: the FM-1", "asks where they go"] if voice is None
+                 else [str(label)[:20], f"voice {voice} as a single", "voice (selected preset)"])
+        self.ask("Send to FM-1?", lines, lambda: self.start_job(["dx7-send", str(path)] + ([] if voice is None
+                                                                                       else [str(voice)]), "DX7"))
+
+    def pick_song(self, name):
+        path = library.folder("songs") / name
+        song = library.sloop.load_json(path)
+        self.ask("Load song?", [str(song.get("name") or Path(name).stem)[:20], "replaces sections A-D",
+                                "and the song order (backed up first)"],
+                 lambda: self.start_job(["song-load", str(path)], "Load song"))
 
     def pick_project_source(self, payload):
         kind, name = payload

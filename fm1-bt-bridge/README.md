@@ -228,6 +228,8 @@ faster after a second and a half.
 | **Audio ›** | |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
 | **MIDI ›** | |
+| · **Studio link** off / on | Links the Pocket to a Studio over Wi-Fi or an Ethernet cable: MIDI both ways and the Studio's clock (the Studio's side of the link comes out on 30 October). Shows the Studio while linked. |
+| · **Link audio** on/off | While linked, the Pocket's sound plays on the Studio too, and the Studio's speaker takes over from the Pocket's. |
 | · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
@@ -469,6 +471,8 @@ itself, whatever it runs). Recordings has its own row on Settings.
 | **Back up now** | Saves everything on the FM-1: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots. |
 | **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
 | **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
+| **Back up song** | SLOOP 2.5+: the song as one file (in `songs`): its four sections (projects A–D) and the song order. |
+| **Load song ›** | Pick a song: it replaces sections A–D and the song order; the FM-1's other settings stay as they are. |
 | **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
 | **Sample level** | How loud samples are made when they're loaded: **-6 dB** (leaves room in the mix), **-3 dB** or **full**. |
 | **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
@@ -478,6 +482,7 @@ itself, whatever it runs). Recordings has its own row on Settings.
 |---|---|
 | **Runs** | The firmware on the FM-1 (SLOOP 2.8, say), as the FM-1 reports it. |
 | **Install firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
+| **DX7 patches ›** | For firmwares that take DX7 patches (not SLOOP or Clipper): pick a `.syx` from the `patches` folder, then the whole bank (the FM-1 asks where it goes) or one voice by name. *Not tried on such a firmware yet.* |
 
 ![Job screen](../docs/images/screen-job.png)
 
@@ -631,6 +636,11 @@ The main files; the [main README](../README.md) lists every one, the Studio's in
 | `meters.py` | `~/.local/share/fm1-bridge/` | The eleven meters, recording and playback, pitch detection |
 | `screenpick.py` | `~/.local/share/fm1-bridge/` | The screen setting and the screen picker |
 | `oledi2c.py` | `~/.local/share/fm1-bridge/` | The OLED HAT switched to I2C |
+| `dx7.py` | `~/.local/share/fm1-bridge/` | DX7 banks and voices: read, named, sent |
+| `netaudio.py` | `~/.local/share/fm1-bridge/` | The Studio link's sound to the Studio |
+| `update.py` | `~/.local/share/fm1-bridge/` | The web app's one-click update |
+| `config/fm1-update` | `/usr/local/sbin/` | Installs the newest release for an update (root helper, run through sudo) |
+| `config/50-fm1-ethernet-link.conf` | `/etc/NetworkManager/conf.d/` | An address on an Ethernet cable with no router (the Studio link) |
 | `config/fm1-screen` | `/usr/local/bin/` | Sets the screen HAT over SSH |
 | `config/fm1-report` | `/usr/local/bin/` | A report of the box to paste into an email or issue |
 | `lcd.py` | `~/.local/share/fm1-bridge/` | The 1.44" (ST7735S) and 1.3" (ST7789) LCD HATs |

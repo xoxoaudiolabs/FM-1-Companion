@@ -319,6 +319,7 @@ def test_usb_drive_plugged_in_and_out():
         assert D.library[0][1]["bpm"] == 174.0 and D.entry_of("usb:1234-ABCD/b.mp3")[1]["title"] == "Bee"
         D.scanning = None
         D.hercules = type("H", (), {"lights": lambda self: None})()
+        D.maps, D.inputs, D.learner = {}, [], None
         D.command(["source"], said.append)                 # the button: the Studio's again, then the drive
         assert D.source == 0 and [k for k, _e in D.library] == ["a.mp3"]
         D.command(["source"], said.append)
@@ -363,6 +364,169 @@ def test_usb_drive_mounted_again_after_a_quick_replug():
         assert djlib.usb_music(tried) == [] and len(mounts) == 3
     finally:
         djlib.usb_volumes, djlib.mount = was
+
+
+def learn_through(L, b, now):
+    """a message to a Learner: -> whether it taught the step"""
+    return L.hear(b, now)
+
+
+def test_midi_learn_guided():
+    """the guided run: a 14-bit crossfader, a browse knob, SHIFT, PLAY, a CC button, a tempo fader on pitch bend,
+    a jog (63 / 65), a hot cue with and without SHIFT; SKIP and BACK; what's learnt then played on the decks"""
+    L = decks.Learner("Any DJ 1", [], True)
+    now = 100.0
+    assert L.action == "xfade"
+    for v in (10, 40, 70, 100):                                   # CC 8 + its fine half CC 40
+        taught = learn_through(L, [0xB0, 8, v], now) or learn_through(L, [0xB0, 40, 5], now)
+    assert taught and L.heard == "CC 8+40 CH 1"
+    L.next()
+    assert L.action == "browse"
+    assert not learn_through(L, [0xB0, 9, 1], now + 0.1)           # (still quiet: the crossfader let go)
+    for v in (1, 1, 127, 1):
+        taught = learn_through(L, [0xB0, 9, v], now + 1)
+    assert taught and L.bound("browse")["rel"] == "twos"
+    L.next()
+    assert L.action == "a.shift" and learn_through(L, [0x91, 4, 127], now + 2)
+    L.next()
+    assert L.action == "a.play"
+    assert not learn_through(L, [0x91, 7, 0], now + 3)              # a note-off isn't a press
+    assert learn_through(L, [0x91, 7, 127], now + 3)
+    L.next()
+    assert learn_through(L, [0xB1, 20, 127], now + 4)               # a.cue: a CC button
+    L.next(2)                                                       # SKIP sync
+    assert L.action == "a.load"
+    L.next(-1)                                                      # BACK
+    assert L.action == "a.sync"
+    while L.action != "a.pitch":
+        L.next()
+    for v in (0, 30, 60, 90):
+        taught = learn_through(L, [0xE1, 0, v], now + 5)
+    assert taught and L.bound("a.pitch")["type"] == "pb"
+    while L.action != "a.jog":
+        L.next()
+    assert not learn_through(L, [0x91, 30, 127], now + 6)           # (a jog's touch note: not the jog)
+    for v in (65, 65, 63, 65):
+        taught = learn_through(L, [0xB1, 31, v], now + 6)
+    assert taught and L.bound("a.jog")["rel"] == "center"
+    while L.action != "a.hot1":
+        L.next()
+    assert learn_through(L, [0x91, 40, 127], now + 7)
+    L.next()
+    learn_through(L, [0x91, 4, 127], now + 8)                       # SHIFT held ...
+    assert learn_through(L, [0x91, 41, 127], now + 8)               # ... + a pad: a.hot2 is SHIFT + it
+    assert L.bound("a.hot2")["shift"] is True and L.heard == "SHIFT + NOTE 41 CH 2"
+    learn_through(L, [0x91, 4, 0], now + 9)
+    while L.action != "b.play":
+        L.next()
+    assert learn_through(L, [0x91, 7, 127], now + 10)               # A's PLAY taught to B: moved (one job each)
+    assert L.bound("b.play") and L.bound("a.play") is None
+    L.next(len(decks.LEARN))
+    assert L.action is None
+
+    e = decks.Engine()
+    loads, steps = [], []
+    m = decks.Learned(e, L.binds, steps.append, loads.append)
+    a, b = e.decks
+    a.track = Track()
+    m.message([0xB0, 8, 127])
+    m.message([0xB0, 40, 127])
+    assert e.xfade == 1.0
+    m.message([0xB0, 9, 127])
+    assert steps == [-1]
+    m.message([0xE1, 0, 64])                                       # the tempo fader at the middle: no change
+    assert abs(a.pitch) < 0.01
+    m.message([0xB1, 31, 66])                                       # the jog, untouched, stopped: moves through
+    assert a.pos > 0                                                # (66 on a 63 / 65 jog: 2 steps on)
+    m.message([0x91, 40, 127])                                      # hot cue 1 set
+    assert 0 in a.track.cues
+    m.message([0x91, 41, 127])                                      # (pad 41 alone: nothing, it's SHIFT's)
+    assert 1 not in a.track.cues
+    m.message([0xB1, 20, 127])                                      # CUE (a CC): down then up
+    assert a.cue_held
+    m.message([0xB1, 20, 0])
+    assert not a.cue_held
+
+
+def test_midi_learn_on_the_decks():
+    """LEARN through the Decks: a new controller's map learnt, saved beside the music, played; one control
+    relearnt from the list, one cleared; the map forgotten"""
+    folder = Path(tempfile.mkdtemp())
+    D = decks.Decks.__new__(decks.Decks)
+    D.engine, D.folder, D.maps, D.ports, D.inputs, D.learner = decks.Engine(), folder, {}, {}, ["Any DJ 1"], None
+    D.hercules = decks.Hercules(D.engine)
+    D.browse = D.load_selected = lambda *a: None
+    D.note = lambda text: None
+    D.command(["learn", "Any DJ 1", True], lambda m: None)
+    assert D.wanted_ports() == {"Any DJ 1"}                         # opened while it's learnt
+    D.learner.next(2)                                               # to A's SHIFT
+    D.received("Any DJ 1", Message([0x90, 1, 127]))
+    assert D.learner.action == "a.play" and "Any DJ 1" in D.maps    # learnt, and on to the next
+    assert djlib.learned(folder)["Any DJ 1"][0]["action"] == "a.shift"   # saved at once
+    D.learner.quiet = 0
+    D.received("Any DJ 1", Message([0x90, 2, 127]))                 # PLAY
+    D.command(["learn_done"], lambda m: None)
+    st = D.learn_status()
+    assert st["action"] is None and ["a.play", "A", "PLAY", "NOTE 2 CH 1"] in st["map"]
+    a = D.engine.decks[0]
+    a.track = Track()
+    D.received("Any DJ 1", Message([0x90, 2, 127]))                 # the list showing: the map plays
+    assert a.playing
+    D.command(["learn", "Any DJ 1", False, "a.pfl"], lambda m: None)   # one control from the list
+    assert D.learner.action == "a.pfl" and not D.learner.guided
+    D.received("Any DJ 1", Message([0x90, 3, 127]))
+    assert D.learner.action is None                                 # done: the list again
+    D.received("Any DJ 1", Message([0x90, 3, 127]))
+    assert a.pfl
+    D.command(["learn_clear", "a.play"], lambda m: None)
+    assert "a.play" not in {b["action"] for b in djlib.learned(folder)["Any DJ 1"]}
+    D.command(["learn_end"], lambda m: None)
+    assert D.learner is None
+    D2 = decks.Decks.__new__(decks.Decks)                           # read back by a new run
+    D2.engine, D2.folder, D2.maps = decks.Engine(), folder, {}
+    D2.browse = D2.load_selected = lambda *a: None
+    D2.load_maps()
+    assert {b["action"] for b in D2.maps["Any DJ 1"].binds} == {"a.shift", "a.pfl"}
+    import blemidi
+    was, djlib.MUSIC = djlib.MUSIC, folder                          # the MIDI routes leave it to the decks
+    try:
+        assert blemidi.dj_learned("Any DJ 1 28:0") and not blemidi.dj_learned("SMK-37+VA:SMK-37+VA MIDI 1 20:0")
+    finally:
+        djlib.MUSIC = was
+    D.command(["learn_list", "Any DJ 1"], lambda m: None)
+    D.command(["learn_forget"], lambda m: None)
+    assert djlib.learned(folder) == {} and D.maps == {}
+    herc = "DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1"
+    D.received(herc, Message([0x91, 12, 127]))                      # the Hercules, no map: its own (PFL on A)
+    assert D.engine.decks[0].pfl is False                           # (A's PFL was on: toggled off)
+    assert decks.Decks.learnable("Midi Through:Midi Through Port-0") is False
+    assert djlib.port_base("DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1 24:0")         == "DJControl Inpulse 200 MK2:DJControl Inpulse 200 MK2 MIDI 1"
+
+
+def test_decks_out():
+    """DJ decks out: STUDIO (the default) where the Studio plays (no target: PipeWire's default, the DECKS channel
+    of its mixer), HERCULES its master out (channels 1-2); its headphones the cue either way; changed while running"""
+    made = []
+    was_sinks, was_stream = decks.sinks, decks.Output.stream
+    decks.sinks = lambda: ("alsa_output.usb-Guillemot_DJControl_Inpulse_200_Mk2", "bluez_output.jbl")
+    decks.Output.stream = lambda self, node, label, ch, target, cmap: made.append((node, target, cmap)) or object()
+    try:
+        decks.Output()
+        decks.Output("hercules")
+        decks.sinks = lambda: (None, None)
+        decks.Output("hercules")                                   # no Hercules: where the Studio plays
+    finally:
+        decks.sinks, decks.Output.stream = was_sinks, was_stream
+    herc = "alsa_output.usb-Guillemot_DJControl_Inpulse_200_Mk2"
+    assert made == [("fm1-decks", None, None), ("fm1-decks-cue", herc, "RL,RR"),
+                    ("fm1-decks", herc, "FL,FR"), ("fm1-decks-cue", herc, "RL,RR"),
+                    ("fm1-decks", None, None)]
+    D = decks.Decks.__new__(decks.Decks)
+    D.engine, D.out_to, D.hercules, D.maps = decks.Engine(), "studio", decks.Hercules(decks.Engine()), {}
+    D.command(["output", "hercules"], lambda m: None)
+    assert D.out_to == "hercules"
+    D.command(["output", "loud"], lambda m: None)                   # (not a way out: left as it was)
+    assert D.out_to == "hercules"
 
 
 if __name__ == "__main__":

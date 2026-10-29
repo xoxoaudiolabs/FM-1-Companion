@@ -24,7 +24,7 @@ def theme(state):
     if saved:
         return st.theme_load(saved)
     pick = state.get("desk_theme", "follow")
-    return st.Theme(pick) if pick in st.NAMES else st.Theme()
+    return st.Theme(pick) if pick in st.ALL else st.Theme()
 
 
 def frame(t, step=None, version=VERSION):

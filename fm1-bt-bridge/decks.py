@@ -16,6 +16,7 @@ second. Its MASTER and HEADPHONES knobs work in its own hardware. Without it, th
 Runs as a process of its own (DeckProcess, like the sampler's), the engine rendering BLOCK frames with numpy: the
 tempo by reading the track faster or slower (no key lock yet: a faster track sounds higher), the EQ and filter by
 a gain on each frequency of a short spectrum, block by block (overlapped: no clicks)."""
+import json
 import math
 import os
 import queue
@@ -406,6 +407,19 @@ class Engine:
         self.lock = threading.Lock()
         self.peak, self.limited = 0.0, 0          # the master's recent peak, blocks the limiter touched
 
+    def pitch_fader(self, d, v):
+        """deck d's tempo fader at v (0 .. 1)"""
+        d.fader = (0.5 - v) * 2                  # up is slower, as on a CDJ and in Serato (checked on the MK2)
+        other = self.decks[1 - self.decks.index(d)]
+        if d.synced and other.synced:            # both synced: this deck leads now, the other follows it
+            self.leader, d.pitch = self.decks.index(d), d.fader
+        elif d.synced and other.track and d.track and other.track.bpm:
+            d.pitch = d.fader                    # synced to an unsynced deck: that one taken along
+            want = other.target_bpm(d) / other.track.bpm - 1.0
+            other.pitch = other.fader = max(-1.0, min(1.0, want / PITCH_RANGE))
+        else:
+            d.pitch = d.fader
+
     def render(self, n=BLOCK):
         """-> (master [n, 2], headphones [n, 2]) float32"""
         nm = np()
@@ -448,16 +462,10 @@ class Hercules:
         self.inp = self.out = None
         self.lit = {}
 
-    def open(self, mido):
-        name = next((n for n in mido.get_input_names() if HERCULES in n), None)
-        out = next((n for n in mido.get_output_names() if HERCULES in n), None)
-        if not name:
-            return False
-        self.inp = mido.open_input(name, callback=self.message)
-        if out:
-            self.out = mido.open_output(out)
-            self.out.send(mido.Message.from_bytes([0xB0, 0x7F, 0x7F]))   # tell me where every fader and knob is
-        return True
+    def hello(self, mido):
+        """its output just opened: asked where every fader and knob is"""
+        if self.out:
+            self.out.send(mido.Message.from_bytes([0xB0, 0x7F, 0x7F]))
 
     def value14(self, ch, cc, value):
         """a 14-bit control's 0..1 (its coarse half when the fine one hasn't come)"""
@@ -468,7 +476,7 @@ class Hercules:
         return ((coarse << 7) | value) / 16383.0
 
     def message(self, msg):
-        b = msg.bytes()
+        b = msg.bytes() if hasattr(msg, "bytes") else msg
         self.count += 1
         if len(b) < 3:
             return
@@ -513,16 +521,7 @@ class Hercules:
                 elif base == 5:
                     d.gain = v
                 elif base == 8:
-                    d.fader = (0.5 - v) * 2          # up is slower, as on a CDJ and in Serato (checked on the MK2)
-                    other = e.decks[1 - e.decks.index(d)]
-                    if d.synced and other.synced:    # both synced: this deck leads now, the other follows it
-                        e.leader, d.pitch = e.decks.index(d), d.fader
-                    elif d.synced and other.track and d.track and other.track.bpm:
-                        d.pitch = d.fader            # synced to an unsynced deck: that one taken along
-                        want = other.target_bpm(d) / other.track.bpm - 1.0
-                        other.pitch = other.fader = max(-1.0, min(1.0, want / PITCH_RANGE))
-                    else:
-                        d.pitch = d.fader
+                    e.pitch_fader(d, v)
 
     def button(self, ch, note, down):
         e = self.engine
@@ -599,6 +598,238 @@ class Hercules:
                 self.lit[(st, note)] = on
 
 
+# ---------------------------------------------------------------- any controller: MIDI learn
+
+LEARN_DECK = [("shift", "SHIFT", "button"), ("play", "PLAY", "button"), ("cue", "CUE", "button"),
+              ("sync", "SYNC", "button"), ("load", "LOAD", "button"), ("pfl", "PFL (HEADPHONES)", "button"),
+              ("volume", "VOLUME FADER", "fader"), ("pitch", "TEMPO FADER", "fader"), ("gain", "GAIN", "fader"),
+              ("high", "HIGH EQ", "fader"), ("low", "LOW EQ", "fader"), ("filter", "FILTER", "fader"),
+              ("jog", "JOG WHEEL", "encoder"), ("touch", "JOG TOUCH", "button"), ("vinyl", "VINYL", "button"),
+              ("loop_in", "LOOP IN", "button"), ("loop_out", "LOOP OUT", "button"),
+              ("loop_half", "LOOP HALF", "button"), ("loop_double", "LOOP DOUBLE", "button"),
+              ("hot1", "HOT CUE 1", "button"), ("hot2", "HOT CUE 2", "button"), ("hot3", "HOT CUE 3", "button"),
+              ("hot4", "HOT CUE 4", "button")]
+LEARN = ([("xfade", "", "CROSSFADER", "fader"), ("browse", "", "BROWSE KNOB", "encoder")]
+         + [(f"{x}.{a}", x.upper(), label, kind) for x in "ab" for a, label, kind in LEARN_DECK])   # the guided order
+KIND = {a: kind for a, _deck, _label, kind in LEARN}
+HINT = {"button": "PRESS IT", "fader": "MOVE IT END TO END", "encoder": "TURN IT"}
+LIT = ("play", "cue", "sync", "pfl", "vinyl", "loop_in", "hot1", "hot2", "hot3", "hot4")   # lit as on the Hercules
+QUIET = 0.6                                   # after a control's learnt: what it still sends (let go) isn't the next
+
+
+def describe(b):
+    """a binding as the screen shows it: "NOTE 7 CH 2", "CC 13+45 CH 1", "SHIFT + ..." """
+    if b["type"] == "pb":
+        what = "PITCH BEND"
+    elif b["type"] == "note":
+        what = f"NOTE {b['num']}"
+    else:
+        what = f"CC {b['num']}" + (f"+{b['fine']}" if b.get("fine") is not None else "")
+    return ("SHIFT + " if b.get("shift") else "") + f"{what} CH {b['ch'] + 1}"
+
+
+class Learned:
+    """a controller played from a map learned on the DECKS screen: its buttons, faders, knobs and jog wheels, as
+    notes, CCs (7-bit or 14-bit, a knob's relative steps either way they come) or pitch bend, on the decks' controls.
+    A learnt SHIFT gives each control a second job (a control learnt with SHIFT held); SHIFT + a hot cue clears it.
+    Its lights: a button's own note sent back, 127 on, 0 off (what many controllers do; not every one)"""
+
+    def __init__(self, engine, binds, on_browse=lambda step: None, on_load=lambda deck: None):
+        self.engine, self.on_browse, self.on_load = engine, on_browse, on_load
+        self.out, self.shift, self.msb, self.lit = None, False, {}, {}
+        self.set(binds)
+
+    def set(self, binds):
+        self.binds, self.index = binds, {}
+        for b in binds:
+            self.index[(b["type"], b["ch"], b["num"], bool(b.get("shift")))] = (b, False)
+            if b.get("fine") is not None:
+                self.index[("cc", b["ch"], b["fine"], bool(b.get("shift")))] = (b, True)
+
+    def find(self, kind, ch, num):
+        """(binding, its fine half?) for a message: the SHIFT layer's first while SHIFT is held"""
+        return (self.shift and self.index.get((kind, ch, num, True))) or self.index.get((kind, ch, num, False))
+
+    def message(self, b):
+        if len(b) < 3:
+            return
+        kind, ch, num, val = b[0] & 0xF0, b[0] & 0x0F, b[1], b[2]
+        if kind in (0x90, 0x80):
+            hit = self.find("note", ch, num)
+            if hit:
+                self.act(hit[0], down=kind == 0x90 and val > 0)
+        elif kind == 0xE0:
+            hit = self.find("pb", ch, 0)
+            if hit:
+                self.act(hit[0], value=((val << 7) | num) / 16383.0)
+        elif kind == 0xB0:
+            hit = self.find("cc", ch, num)
+            if not hit:
+                return
+            bind, fine = hit
+            how = KIND.get(bind["action"])
+            if how == "button":
+                self.act(bind, down=val >= 64)
+            elif how == "encoder":
+                self.act(bind, ticks=val - 64 if bind.get("rel") == "center" else (val if val < 64 else val - 128))
+            elif fine:
+                self.act(bind, value=((self.msb.get((ch, bind["num"]), 0) << 7) | val) / 16383.0)
+            else:
+                self.msb[(ch, num)] = val
+                self.act(bind, value=val / 127.0)
+
+    def act(self, bind, down=False, value=0.0, ticks=0):
+        e = self.engine
+        name, d, other, k = bind["action"], None, None, None
+        if "." in name:
+            k = "ab".index(name[0])
+            d, other, name = e.decks[k], e.decks[1 - k], name[2:]
+        if name == "xfade":
+            e.xfade = value
+        elif name == "browse":
+            self.on_browse(ticks)
+        elif d is None:
+            return
+        elif name == "shift":
+            self.shift = d.shift = down
+        elif name in ("volume", "gain"):
+            setattr(d, name, value)
+        elif name in ("low", "high", "filter"):
+            setattr(d.tone, name, value)
+        elif name == "pitch":
+            e.pitch_fader(d, value)
+        elif name == "jog":                      # touched: the Hercules's top (scratch in VINYL), else its edge
+            d.jog_top(ticks) if d.touched else d.jog_edge(ticks)
+        elif name == "touch":
+            d.touched = down
+        elif name == "cue":
+            d.cue_press(down)
+        elif name.startswith("hot"):
+            d.hotcue(int(name[3]) - 1, down, clear=self.shift)
+        elif not down:
+            return
+        elif name == "play":
+            d.play_pause(other)
+        elif name == "sync":
+            d.toggle_sync(other)
+        elif name == "load":
+            self.on_load(k)
+        elif name == "pfl":
+            d.pfl = not d.pfl
+        elif name == "vinyl":
+            d.vinyl = not d.vinyl
+        elif name == "loop_in":
+            d.loop_in()
+        elif name == "loop_out":
+            d.loop_out()
+        elif name == "loop_half":
+            d.loop_size(0.5)
+        elif name == "loop_double":
+            d.loop_size(2.0)
+
+    def lights(self):
+        if not self.out:
+            return
+        import mido
+        for b in self.binds:
+            name = b["action"]
+            if b["type"] != "note" or "." not in name or name[2:] not in LIT or b.get("shift"):
+                continue
+            d, what = self.engine.decks["ab".index(name[0])], name[2:]
+            on = (d.playing if what == "play" else
+                  bool(d.track) and abs(d.pos - d.cue) < 1 and not d.playing if what == "cue" else
+                  d.synced if what == "sync" else d.pfl if what == "pfl" else d.vinyl if what == "vinyl" else
+                  bool(d.loop) if what == "loop_in" else bool(d.track and int(what[3]) - 1 in d.track.cues))
+            if self.lit.get(name) != on:
+                try:
+                    self.out.send(mido.Message.from_bytes([0x90 | b["ch"], b["num"], 127 if on else 0]))
+                except Exception:
+                    pass
+                self.lit[name] = on
+
+
+class Learner:
+    """learning a controller's map: guided (every control in LEARN's order, SKIP the ones it hasn't, BACK) or one
+    control. A button: its first press (a note, or a CC that comes up from 0). A fader or knob: a CC (or pitch
+    bend) that moved through a few values, with its fine half if CC n+32 came too. A jog or endless knob: a CC
+    that sent a few steps, read as 1 / 127 or as 63 / 65 by what it sent"""
+
+    def __init__(self, port, binds, guided, start=0):
+        self.port, self.binds, self.guided = port, [dict(b) for b in binds], guided
+        self.step = start
+        self.heard, self.seen, self.quiet, self.shift = None, {}, 0.0, False
+        self.heard_what = None                    # the control the last one learnt went on ("A PLAY")
+
+    @property
+    def action(self):
+        return LEARN[self.step][0] if self.step < len(LEARN) else None
+
+    def bound(self, action):
+        return next((b for b in self.binds if b["action"] == action), None)
+
+    def hear(self, b, now):
+        """a message from the controller: -> True when it taught the step a control"""
+        if len(b) < 3 or self.action is None:
+            return False
+        kind, ch, num, val = b[0] & 0xF0, b[0] & 0x0F, b[1], b[2]
+        shift = self.bound(self.action.split(".")[0] + ".shift") if "." in self.action else None
+        if shift and self.action[2:] != "shift" and shift["type"] == "note" and kind in (0x90, 0x80) \
+                and (ch, num) == (shift["ch"], shift["num"]):      # its SHIFT held: what's learnt is SHIFT + it
+            self.shift = kind == 0x90 and val > 0
+            return False
+        if now < self.quiet:
+            return False
+        how = KIND[self.action]
+        got = None
+        if how == "button":
+            if kind == 0x90 and val > 0:
+                got = {"type": "note", "ch": ch, "num": num}
+            elif kind == 0xB0 and val >= 64:
+                got = {"type": "cc", "ch": ch, "num": num}
+        elif kind == 0xE0 and how == "fader":
+            n = self.seen.setdefault(("pb", ch, 0), [])
+            n.append(val)
+            if len(n) >= 4 and len(set(n)) >= 3:
+                got = {"type": "pb", "ch": ch, "num": 0}
+        elif kind == 0xB0:
+            if how == "fader" and num >= 32 and ("cc", ch, num - 32) in self.seen:
+                self.seen[("cc", ch, num - 32)].append(None)          # its fine half: noted with the coarse one
+                self.seen.setdefault(("fine", ch, num - 32), True)
+                return False
+            n = self.seen.setdefault(("cc", ch, num), [])
+            n.append(val)
+            vals = [v for v in n if v is not None]
+            if how == "fader" and len(vals) >= 4 and len(set(vals)) >= 3:
+                got = {"type": "cc", "ch": ch, "num": num,
+                       "fine": num + 32 if ("fine", ch, num) in self.seen else None}
+            elif how == "encoder" and len(vals) >= 4:
+                got = {"type": "cc", "ch": ch, "num": num,
+                       "rel": "center" if all(48 <= v <= 80 for v in vals) else "twos"}
+        if not got:
+            return False
+        got = dict(got, action=self.action, shift=self.shift)
+        same = (got["type"], got["ch"], got["num"], got["shift"])
+        self.binds = [x for x in self.binds if x["action"] != self.action
+                      and (x["type"], x["ch"], x["num"], bool(x.get("shift"))) != same]   # one job a control
+        self.binds.append({k: v for k, v in got.items() if v is not None and v is not False})
+        self.heard, self.seen, self.quiet = describe(got), {}, now + QUIET
+        self.heard_what = " ".join(x for x in LEARN[self.step][1:3] if x)
+        return True
+
+    def next(self, step=1):
+        """on (or back, -1) a step; what was last learnt stays said"""
+        self.step = max(0, min(len(LEARN), self.step + step))
+        self.seen = {}
+
+    def status(self):
+        a = self.action
+        _id, deck, label, kind = LEARN[self.step] if a else (None, "", "", "button")
+        b = self.bound(a) if a else None
+        return {"port": self.port, "guided": self.guided, "step": self.step, "steps": len(LEARN), "action": a,
+                "deck": deck, "label": label, "hint": HINT[kind], "heard": self.heard, "heard_what": self.heard_what,
+                "now": b and describe(b), "shift": self.shift}
+
+
 # ---------------------------------------------------------------- sound out
 
 def sinks():
@@ -620,19 +851,20 @@ def sinks():
 
 
 class Output:
-    """the master to the Studio's Bluetooth speaker (else the Hercules's master out, its channels 1-2, else the
-    default output), the headphones to the Hercules's headphone out (its channels 3-4). Two streams, each written a
-    block at a time (the writes pace the engine: real time)"""
+    """the master: "studio" (Settings > Audio > DJ decks out, the default) where the Studio plays, as its apps do
+    (the speaker or the jack, the DECKS channel of its MIXER: its level, CUE, recorded); "hercules" the Hercules's
+    master out (its channels 1-2: its own speakers), else where the Studio plays. The headphones: the Hercules's
+    headphone out (its channels 3-4). Two streams, each written a block at a time (the writes pace the engine: real
+    time)"""
 
-    def __init__(self):
+    def __init__(self, to="studio"):
         self.herc, self.bt = sinks()
+        self.to = to
         self.streams = []
-        if self.bt:
-            self.master = self.stream("fm1-decks", "DECKS", 2, self.bt, None)
-        elif self.herc:
+        if to == "hercules" and self.herc:
             self.master = self.stream("fm1-decks", "DECKS", 2, self.herc, "FL,FR")
-        else:
-            self.master = self.stream("fm1-decks", "DECKS", 2, None, None)
+        else:                                    # (no target: PipeWire's default, where the Studio plays, and
+            self.master = self.stream("fm1-decks", "DECKS", 2, None, None)   # along when that changes)
         self.phones = self.stream("fm1-decks-cue", "DECKS CUE", 2, self.herc, "RL,RR") if self.herc else None
 
     def stream(self, node, label, ch, target, channel_map):
@@ -684,6 +916,12 @@ class Decks:
         self.cursor = 0
         self.loads = queue.Queue()
         self.hercules = Hercules(self.engine, self.browse, self.load_selected, lambda: None)
+        self.maps = {}                           # {port name: Learned}: controllers with a learnt map
+        self.ports = {}                          # {port name: (input, output or None)}: the controllers open
+        self.inputs = []                         # every MIDI input there is (LEARN's list)
+        self.learner = None                      # Learner while LEARN is on
+        self.out_to = "studio"                   # the master's way out (Output): "studio" or "hercules"
+        self.midi_lock = threading.Lock()
         self.stop = threading.Event()
         self.memory = self.read_memory()         # {"tracks": {rel: {"cues", "colors", "cue"}}, "session": {...}}
         self.saved = None
@@ -903,23 +1141,137 @@ class Decks:
             except Exception as e:               # a file that won't decode: said, not crashed on
                 d.error = str(e)[:60]
             d.loading = None
-            self.hercules.lights()
+            self.lights()
+
+    # ---- controllers: the Hercules (its map built in) and any with a learnt map, opened as they come and go
+
+    def load_maps(self):
+        for name, binds in djlib.learned(self.folder).items():
+            if isinstance(binds, list):
+                self.maps[name] = Learned(self.engine, binds, self.browse, self.load_selected)
+
+    def save_maps(self):
+        data = {name: m.binds for name, m in self.maps.items()}
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            tmp = self.folder / (djlib.CONTROLLERS + ".tmp")
+            tmp.write_text(json.dumps(data, indent=1))
+            tmp.replace(self.folder / djlib.CONTROLLERS)
+        except OSError as e:
+            self.note(f"the map wasn't saved: {e}"[:60])
+
+    @staticmethod
+    def learnable(name):
+        low = name.lower()
+        return not any(s in low for s in ("midi through", "rtmidi", "fm1-", "pipewire"))
+
+    def wanted_ports(self):
+        """the controllers to have open: the Hercules, those with a map, the one being learnt"""
+        return {n for n in self.inputs if HERCULES in n or n in self.maps
+                or (self.learner and n == self.learner.port)}
+
+    def received(self, name, msg):
+        b = msg.bytes()
+        if len(b) < 3:
+            return
+        e = self.engine
+        if self.learner and self.learner.port == name and self.learner.action is not None:
+            with e.lock:
+                if self.learner.hear(b, time.monotonic()):
+                    self.learnt()
+            return
+        if name in self.maps:
+            with e.lock:
+                self.maps[name].message(b)
+        elif HERCULES in name:
+            self.hercules.message(b)             # (it takes the engine's lock itself)
+        self.lights()
+
+    def learnt(self):
+        """a control learnt: kept (saved at once), and the guided run on to the next"""
+        lr = self.learner
+        if HERCULES in lr.port:                  # the Hercules given a map: its built-in one (and lights) off
+            self.hercules.out = None
+        m = self.maps.get(lr.port)
+        if m:
+            m.set(lr.binds)
+        else:
+            self.maps[lr.port] = Learned(self.engine, lr.binds, self.browse, self.load_selected)
+            self.wire(lr.port)
+        self.save_maps()
+        if lr.guided:
+            lr.next()
+            if lr.action is None:                # all done: the list, to check or change one
+                lr.guided = False
+        else:
+            lr.step = len(LEARN)                 # one control: done, the list again
+
+    def wire(self, name):
+        """a learnt map given the port's output for its lights"""
+        if name in self.maps and name in self.ports:
+            self.maps[name].out = self.ports[name][1]
+
+    def poll_ports(self, mido):
+        try:
+            names = mido.get_input_names()
+            outs = mido.get_output_names()
+        except Exception:
+            return
+        with self.midi_lock:
+            self.inputs = sorted({djlib.port_base(n) for n in names if self.learnable(n)})
+            full = {djlib.port_base(n): n for n in names}
+            outs = {djlib.port_base(n): n for n in outs}
+            want = self.wanted_ports()
+            for name in [n for n in self.ports if n not in want]:
+                inp, out = self.ports.pop(name)
+                for port in (inp, out):
+                    try:
+                        port and port.close()
+                    except Exception:
+                        pass
+            for name in want - set(self.ports):
+                try:
+                    inp = mido.open_input(full[name], callback=lambda msg, name=name: self.received(name, msg))
+                except Exception:
+                    continue
+                try:
+                    out = mido.open_output(outs[name]) if name in outs else None
+                except Exception:
+                    out = None
+                self.ports[name] = (inp, out)
+                if HERCULES in name and name not in self.maps:
+                    self.hercules.out = out
+                    self.hercules.hello(mido)
+                self.wire(name)
+
+    def watch_ports(self):
+        import mido
+        first = True
+        while not self.stop.is_set():
+            self.poll_ports(mido)
+            if first and not self.ports:
+                self.note("no DJ controller found: the decks play from the screen (LEARN: any controller)")
+            first = False
+            self.stop.wait(2)
+
+    def lights(self):
+        self.hercules.lights()
+        for m in self.maps.values():
+            m.lights()
 
     def run(self):
-        import mido
-        try:
-            found = self.hercules.open(mido)
-        except Exception:                        # (no MIDI at all: the screen still plays them)
-            found = False
-        if not found:
-            self.note("no Hercules found: the decks play from the screen only")
+        self.load_maps()
+        threading.Thread(target=self.watch_ports, daemon=True).start()   # (no MIDI at all: the screen plays)
         threading.Thread(target=self.loader, daemon=True).start()
         threading.Thread(target=self.keeper, daemon=True).start()
         self.restore()
         threading.Thread(target=self.watch_drives, daemon=True).start()   # (the sound never waits on a mount)
-        out = Output()
+        out = Output(self.out_to)
         try:
             while not self.stop.is_set():
+                if out.to != self.out_to:        # DJ decks out changed: the streams made again
+                    out.close()
+                    out = Output(self.out_to)
                 master, phones = self.engine.render(BLOCK)
                 out.write(master, phones)        # the write waits for room: real time
         finally:
@@ -944,7 +1296,54 @@ class Decks:
                 "scanning": self.scanning, "source": self.browsed()["name"],
                 "usb": bool(self.browsed()["uuid"]), "sources": len(self.sources),
                 "selected": sel and {"title": sel[1].get("title"), "bpm": sel[1].get("bpm"),
-                                     "key": sel[1].get("key"), "camelot": sel[1].get("camelot")}}
+                                     "key": sel[1].get("key"), "camelot": sel[1].get("camelot")},
+                "ports": [[n, n in self.maps, HERCULES in n] for n in self.inputs],
+                "learn": self.learn_status()}
+
+    def learn_status(self):
+        lr = self.learner
+        if not lr:
+            return None
+        out = lr.status()
+        if lr.action is None:                    # the list: every control and what it's on
+            bound = {b["action"]: describe(b) for b in lr.binds}
+            out["map"] = [[a, deck, label, bound.get(a)] for a, deck, label, _kind in LEARN]
+        return out
+
+    def learn_command(self, name, args):
+        """LEARN's messages from the screen"""
+        lr = self.learner
+        if name == "learn":                      # [port, guided?, action]: learning starts (or one control)
+            port, guided = args[0], bool(args[1]) if len(args) > 1 else True
+            binds = self.maps[port].binds if port in self.maps else []
+            step = next((i for i, s in enumerate(LEARN) if s[0] == args[2]), 0) if len(args) > 2 else 0
+            self.learner = Learner(port, binds, guided, step if args[2:] or guided else len(LEARN))
+        elif name == "learn_list" and args:      # a controller's map, to look at
+            self.learner = Learner(args[0], self.maps[args[0]].binds if args[0] in self.maps else [], False,
+                                   len(LEARN))
+        elif not lr:
+            return
+        elif name == "learn_skip":
+            lr.next()
+            if lr.action is None:
+                lr.guided = False
+        elif name == "learn_back":
+            lr.next(-1)
+        elif name == "learn_done":               # the guided run (or one control) left: the list
+            lr.guided, lr.step = False, len(LEARN)
+        elif name == "learn_clear" and args:     # a control taken off the map
+            lr.binds = [b for b in lr.binds if b["action"] != args[0]]
+            if lr.port in self.maps:
+                self.maps[lr.port].set(lr.binds)
+                self.save_maps()
+        elif name == "learn_forget":             # the whole map gone (the Hercules: its own map again)
+            self.maps.pop(lr.port, None)
+            lr.binds = []
+            self.save_maps()
+            if lr.port in self.ports and HERCULES in lr.port:
+                self.hercules.out = self.ports[lr.port][1]
+        elif name == "learn_end":
+            self.learner = None
 
 
     # ---- the Companion's side talks to this one through stdin / stdout, a JSON message a line (DeckProcess)
@@ -991,14 +1390,19 @@ class Decks:
                 self.cursor = max(0, min(len(self.library) - 1, int(args[0])))
             elif name == "browse":
                 self.browse(int(args[0]))
-        if name == "load":
+        if name == "output" and args and args[0] in ("studio", "hercules"):   # Settings > Audio > DJ decks out
+            self.out_to = args[0]
+        elif name.startswith("learn"):
+            with e.lock:
+                self.learn_command(name, args)
+        elif name == "load":
             self.load_selected(int(args[0]))
         elif name == "source" and not self.scanning:     # the next source: the Studio's, each USB drive
             self.pick_source(self.source + 1)
         elif name == "scan" and not self.scanning:
             self.scanning = "starting"
             threading.Thread(target=self.scan, args=(say,), daemon=True).start()
-        self.hercules.lights()
+        self.lights()
 
 
 def serve():

@@ -11,7 +11,13 @@ import time
 import blemidi
 import library
 
-SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate")
+SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate", "auto_backup", "output")
+OUTPUTS = ("both", "speaker", "phones")       # the "output" setting: where the sound goes when there's a jack
+
+
+def library_auto_choices():
+    from libui import AUTO_CHOICES          # off, at start, every 2-30 min
+    return AUTO_CHOICES
 
 
 class WebLink:
@@ -40,7 +46,18 @@ class WebLink:
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
                              arp=keys["arp"], arp_rate=keys["arp_rate"], chord=keys["chord"]),
             "routes": self.routes(), "presets": self.presets(), "wifi": self.wifi,
+            "link": self.link_status(),       # the Pocket's Studio link (None on the Studio)
+            "theme": self.theme_status(),     # the Pocket's colour screen's theme (None: no colour screen)
+            "jack": bool(self.jack),          # a 3.5 mm jack to choose with "output" (the Studio's)
+            "speaker_saved": bool(self.state.get("last_mac")),   # one to connect / disconnect
         }
+
+    def theme_status(self):
+        """the Pocket's theme and its choices ("follow": FM-1 A's), or None without a colour screen"""
+        if self.desk or not getattr(self.display, "colour", False):
+            return None
+        import sloopstyle
+        return {"value": self.state.get("desk_theme", "follow"), "choices": ["follow", *sloopstyle.ALL]}
 
     def web_publish(self):
         """called by the monitor thread every second: the status file, rewritten when it changed, and every 2 s
@@ -100,6 +117,24 @@ class WebLink:
             if re.fullmatch(r"input_u-[a-z0-9]+", key):          # a multichannel source: its next pair
                 pair = self.next_input_pair(key[6:])
                 return pair and f"Web: inputs {pair}"
+            if key == "auto_backup" and not isinstance(value, bool) and value in library_auto_choices():
+                self.state["auto_backup"] = value
+                self.last_auto = time.monotonic()
+                self.save_settings()
+                return f"Web: Auto backup {self.auto_label(value)}"
+            if key == "output" and value in OUTPUTS:
+                self.state["output"] = value
+                self.save_settings()
+                self.scan_now = True
+                return f"Web: Output {value}"
+            if key == "theme" and self.theme_status() and value in self.theme_status()["choices"]:
+                self.state["desk_theme"] = value
+                self.save_settings()
+                self.theme_check = 0.0        # (pocket_theme looks again now)
+                return f"Web: Theme {'FM-1 A' if value == 'follow' else value}"
+            if key in ("studio_link", "link_audio") and isinstance(value, bool) and not self.desk:
+                (self.set_studio_link if key == "studio_link" else self.set_link_audio)(value)
+                return None                   # (they say it)
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:
                 self.volume_to(value)
                 return None
@@ -109,6 +144,11 @@ class WebLink:
                 self.playing = c["value"] == "start"
                 self.midi.transport(c["value"])
             return f"Web: {c['value'].title()}"
+        if cmd == "speaker" and c.get("value") in ("connect", "disconnect"):
+            if not self.state.get("last_mac"):
+                raise ValueError("no speaker paired")
+            self.reconnect() if c["value"] == "connect" else self.disconnect()
+            return None                       # (they say it)
         if cmd == "record" and c.get("value") in ("start", "stop"):
             if (c["value"] == "start") != self.recorder.recording():
                 self.toggle_recording()

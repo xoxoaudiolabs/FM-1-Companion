@@ -27,6 +27,7 @@ import blemidi
 import library
 import sloopstyle as st
 from deskdecks import DeskDecks
+from deskfm1 import DeskFM1
 from deskpads import DeskPads
 from deskpages import HOLD, DeskPages
 
@@ -35,14 +36,16 @@ TAB_H, HDR_H = 44, 34
 TABS = ("HOME", "MIX", "PADS", "REC", "MIDI", "MORE")
 TAB_LABEL = {"MIX": "MIXER", "PADS": "SAMPLER", "REC": "RECORDER"}   # what a tab says, if not its name
 METER_TABS = ("METER", "REC")                   # tabs with live audio levels (the meters' reader runs)
-PARENT = {"METER": "MIX", "DAW": "MIDI"}        # pages opened from a tab: it stays lit under them
+PARENT = {"METER": "MIX", "DAW": "MIDI", "THEME": "MORE", "FM1": "MORE", "FM1MAP": "MORE"}   # pages opened from a
+                                                # tab: it stays lit under them
 DAW_KEYS = [("<<", "rewind"), (">>", "forward"), ("STOP", "stop"), ("PLAY", "play"), ("REC", "record"),
             ("LOOP", "loop")]
-MORE = [("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("menu", "play")),
+MORE = [("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("FM-1 ON STUDIO", ("fm1studio", None)),
+        ("PLAYING", ("menu", "play")),
         ("AUDIO", ("menu", "audio")), ("MIDI SETTINGS", ("menu", "midi")), ("WI-FI", ("wifi", None)),
         ("THEME", ("theme", None)), ("TOUCH SETUP", ("calibrate", None)), ("DJ DECKS", ("decks", None)),
         ("SHUT DOWN", ("off", None))]
-THEMES = ["FOLLOW FM-1 A"] + st.NAMES
+THEMES = ["FOLLOW FM-1 A"] + st.ALL
 APPS = {                                        # FM-1 firmwares running on the Studio itself, played from FM-1 A's
     "sloop": ("SLOOP", Path.home() / ".local/share/sloop-remote-out/sloop-remote-out"),       # REMOTE OUT (SLOOP
     "x0x": ("X0X", Path.home() / ".local/share/x0x-companion-studio/x0x-companion-studio"),   # Remote Out): key ->
@@ -59,13 +62,14 @@ APP_SHOW = getattr(signal, "SIGUSR2", 12)       # (Linux's numbers where there a
 HIDDEN_METERS = ("Tuner",)                      # meters the Studio leaves out (the Pocket keeps all eleven)
 
 
-class DeskUI(DeskPages, DeskPads, DeskDecks):
+class DeskUI(DeskPages, DeskPads, DeskDecks, DeskFM1):
     def __init__(self, app, display):
         self.app, self.display = app, display
         self.tab, self.classic = "HOME", False      # (classic: never, now; desk.Touch still asks)
         self.page_init()
         self.pads_init()
         self.decks_init()
+        self.fm1_init()
         self.widgets, self.held, self.shown = [], None, None
         self.theme, self.theme_seen, self.theme_check = st.Theme(), None, 0.0
         self.more_top = 0
@@ -158,6 +162,8 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
                      json.dumps(sorted(self.daw_local.items())))
         if self.tab == "DECKS":
             base += self.decks_view()
+        if self.tab in ("FM1", "FM1MAP"):
+            base += self.fm1_view()
         return base
 
     def settle(self):
@@ -204,7 +210,8 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
             self.draw_page(img, ImageDraw.Draw(img), now)
         else:
             getattr(self, "draw_" + self.tab.lower())(img, ImageDraw.Draw(img), now)
-            if not self.pads_screen() and self.tab != "DECKS":   # a pad's page, kits, sampling, the decks: full
+            if not self.pads_screen() and self.tab not in ("DECKS", "FM1MAP"):   # a pad's page, kits, sampling,
+                                                                              # the decks, the FM-1: full screen
                 self.draw_tabs(img)
         a = self.app
         if a.busy:
@@ -576,6 +583,8 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
         for key, (name, program) in APPS.items():   # a Studio app: its level, set before or while it plays
             if program.exists():
                 cols.append((key, name, 1, a.mix_level(key), 200))
+        if self.decks_proc and self.decks_proc.running():   # the DJ decks (MORE > DJ DECKS), while they run
+            cols.append(("decks", "DECKS", 0, a.mix_level("decks"), 200))
         cols.append(("spk", "SPKR", 3, a.volume or 0, 100))
         if a.jack:                           # the 3.5 mm jack
             cols.append(("phones", "PHONES", 2, a.state.get("phones", 80), 100))
@@ -615,11 +624,11 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
             self.widget((x0, top_k - 10, x0 + width - 1, bottom + 10), "slide",
                         lambda f, key=key, most=most: self.slide(key, f, most), ("slide", key))
             box = (x0 + 6, H - TAB_H - 36, x0 + width - 7, H - TAB_H - 6)
-            if a.jack and (key in nodes or key in APPS):   # a DJ mixer's cue: this source on the jack, before
-                                             # its fader (a Studio app's: after it, its level set on its sound; lit
-                                             # while it's off too, heard once it plays)
+            if a.jack and (key in nodes or key in APPS or key == "decks"):   # a DJ mixer's cue: this source on
+                                             # the jack, before its fader (a Studio app's or the decks': after it,
+                                             # its level set on its sound; lit while it's off, heard once it plays)
                 self.button(img, d, box, "CUE", lambda key=key: a.toggle_cue(key), color=t.track[k],
-                            on=key in a.cued() or (key in APPS and key in (a.state.get("cues") or [])),
+                            on=key in a.cued() or (key not in nodes and key in (a.state.get("cues") or [])),
                             key=("cue", key))
             elif key == "phones":            # the jack's blend of the cued sources and the main mix
                 m = a.state.get("cue_mix", 50)
@@ -820,8 +829,7 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
     def draw_more(self, img, d, now):
         t = self.theme
         self.header(img, d, "MORE", self.status_right())
-        items = MORE + [(f"PLAY {name}", ("studio_app", key)) for key, (name, program) in APPS.items()
-                        if program.exists()]
+        items = MORE                               # (PLAY SLOOP / X0X: in FM-1 ON STUDIO)
         cols = 3                                   # tiles, three a row: everything on one screen, no scrolling
         rows = (len(items) + cols - 1) // cols
         top, bottom = HDR_H + 4, H - TAB_H - 4
@@ -837,13 +845,51 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
                      ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else
                      ("ON" if what[1] in self.app_procs else "OFF")
                      if what[0] == "studio_app" else
-                     ("ON" if self.decks_proc and self.decks_proc.running() else "OFF") if what[0] == "decks" else "")
+                     ("ON" if self.decks_proc and self.decks_proc.running() else "OFF") if what[0] == "decks" else
+                     ("ON" if self.app_procs else "OFF") if what[0] == "fm1studio" else "")
             dy = -8 if value else 0
             self.centre(img, (box[0], box[1] + dy, box[2], box[3] + dy), label,
                         t.bg if hot else (255, 112, 92) if off else t.c[4])
             if value:
                 self.centre(img, (box[0], box[1] + 18, box[2], box[3] + 18), value, t.bg if hot else t.c[3])
             self.widget(box, "tap", lambda what=what: self.open_more(what), ("more", label))
+
+    # ---- MORE > THEME: a swatch of each theme, tapped to use it
+
+    def fm1_theme(self):
+        """the theme FM-1 A shows (library.read_theme saves it), for FOLLOW FM-1 A's swatch"""
+        try:
+            return st.theme_load(json.loads(library.THEME.read_text()))
+        except (OSError, ValueError):
+            return st.Theme()
+
+    def pick_theme(self, name):
+        self.app.state["desk_theme"] = name
+        self.app.save_settings()
+        self.theme_check = 0.0
+
+    def draw_theme(self, img, d, now):
+        t = self.theme
+        self.button(img, d, (4, 3, 84, HDR_H - 5), "< MORE", lambda: self.open_tab("MORE"), key="theme-back")
+        st.text(img, (96, 9), "THEME", t.hi)
+        d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
+        pick = self.app.state.get("desk_theme", "follow")
+        items = [("follow", "FM-1 A", self.fm1_theme())] + [(n, n, st.Theme(n)) for n in st.ALL]
+        cols = 4                                   # every theme on one screen
+        rows = (len(items) + cols - 1) // cols
+        top, bottom = HDR_H + 4, H - TAB_H - 4
+        tw, th = (W - 8) // cols, (bottom - top) // rows
+        for i, (name, label, look) in enumerate(items):
+            x, y = 4 + i % cols * tw, top + i // cols * th
+            box = (x + 2, y + 2, x + tw - 3, y + th - 3)
+            chosen = name == pick
+            d.rectangle(box, fill=look.bg, outline=t.hi if chosen else look.c[1], width=3 if chosen else 1)
+            self.centre(img, (box[0], box[1] + 2, box[2], box[3] - 12), label, look.c[4])
+            sw = (box[2] - box[0] - 12) // 4       # its four track colours along the bottom
+            for k in range(4):
+                d.rectangle((box[0] + 6 + k * sw, box[3] - 12, box[0] + 6 + (k + 1) * sw - 2, box[3] - 6),
+                            fill=look.track[k])
+            self.widget(box, "tap", lambda name=name: self.pick_theme(name), ("theme", name))
 
     def pick_speaker(self):
         """HOME's SPEAKER row: the speakers and headphones to pair or connect"""
@@ -860,12 +906,8 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
     def open_more(self, what):
         a = self.app
         kind, arg = what
-        if kind == "theme":                        # FOLLOW FM-1 A, then SLOOP's five palettes, round
-            pick = a.state.get("desk_theme", "follow")
-            names = ["follow"] + st.NAMES
-            a.state["desk_theme"] = names[(names.index(pick) + 1) % len(names) if pick in names else 0]
-            a.save_settings()
-            self.theme_check = 0.0
+        if kind == "theme":                        # the theme page: a swatch of each
+            self.open_tab("THEME")
             return
         if kind == "calibrate":
             self.calibrate()
@@ -875,6 +917,9 @@ class DeskUI(DeskPages, DeskPads, DeskDecks):
             return
         if kind == "decks":
             self.open_decks()
+            return
+        if kind == "fm1studio":                    # SLOOP and X0X, and the FM-1 controls to map
+            self.open_tab("FM1")
             return
         if kind == "off":                          # the Studio has no power key: shut down, held to confirm
             a.ask("Shut down?", ["The Studio switches off.", "Recordings are finished first."], a.shutdown,

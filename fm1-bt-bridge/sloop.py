@@ -28,6 +28,11 @@ INFO, SMP_BEGIN, SMP_WRITE, SMP_END, SMP_ERASE, SMP_INFO = 1, 11, 12, 13, 14, 15
 BK_LIST, BK_GET, BK_PUT, LIVE = 34, 35, 36, 77
 PUSHES = {23, 24, 26, 32}                 # frames the device sends unasked: never replies
 FORMAT, VERSION, PROJECT_FORMAT = "sloop-backup", 1, "sloop-project"
+SONG_FORMAT = "sloop-song"                # a song: the four sections (projects A-D) and the song order
+SECTIONS = {"A": 2, "B": 3, "C": 4, "D": 5}
+ORDER = slice(48, 84)                     # the song order in the settings (SLOOP 2.5+: persist_t.arrangement, 36
+                                          # bytes: the steps' sections and bars, loop), as SLOOP's web editor's
+                                          # Song page edits it
 RESTORE = [6, 7, 8, 9, 10, 11, 2, 3, 4, 5, 0, 1]   # banks first, then projects, the working project, the settings
 SAMPLES = [32, 33, 34, 35]
 OPTIONAL = {8, 9, 10, 11}                 # objects older firmware does not know: skipped there
@@ -480,6 +485,45 @@ class Sloop:
                 else:
                     self.write_sample_slot(obj_id - 32, d[:SMP_HDR], d[SMP_DATA:], moved)
 
+    def read_song(self, progress=lambda done, total: None):
+        """the song on the FM-1: ({"A".."D": bytes, b"" for an empty section}, the song order's 36 bytes)"""
+        self.require_backup()
+        if not firmware_at_least(self.version, (2, 5)):
+            raise SloopError("old", f"{self.version} has no song mode (SLOOP 2.5+)")
+        items = [it for it in self.list_objects() if it["id"] in (1, *SECTIONS.values())]
+        total, done = sum(it["len"] for it in items) or 1, [0]
+
+        def counted(n):
+            done[0] += n
+            progress(done[0], total)
+        objects = {it["id"]: self.read_object(it, counted) for it in items}
+        settings = objects.get(1, b"")
+        if len(settings) < ORDER.stop:
+            raise SloopError("old", f"{self.version} keeps no song order")
+        return {name: objects.get(i, b"") for name, i in SECTIONS.items()}, settings[ORDER]
+
+    def put_song(self, sections, order, progress=lambda done, total: None, firmware=None):
+        """a song back: its four sections (an empty one empties that slot), then the song order into the FM-1's
+        settings (only those 36 bytes: the rest of its settings stay as they are). Stopped only, as SLOOP wants"""
+        self.require_backup()
+        same_family(self.version, firmware)
+        if not firmware_at_least(self.version, (2, 5)):
+            raise SloopError("old", f"{self.version} has no song mode (SLOOP 2.5+)")
+        if max([project_format(d) for d in sections.values() if d] or [0]) > device_format(self.info):
+            raise SloopError("newer", f"the song is newer than {self.version} reads")
+        self.check_stopped()
+        settings = self.read_objects({1}).get(1, b"")
+        if len(settings) < ORDER.stop:
+            raise SloopError("old", f"{self.version} keeps no song order")
+        total, done = sum(len(d) for d in sections.values()) + len(settings) or 1, [0]
+
+        def moved(n):
+            done[0] += n
+            progress(done[0], total)
+        for name, i in SECTIONS.items():
+            self.put_object(i, sections.get(name, b""), moved)
+        self.put_object(1, settings[:ORDER.start] + bytes(order) + settings[ORDER.stop:], moved)
+
     def put_project(self, data, target, progress=lambda done, total: None, firmware=None):
         """one project (backup object bytes, from `firmware`) into "working" or "A".."D" """
         self.require_backup()
@@ -583,6 +627,45 @@ def project_from(file, source=None):
     if not project_format(data):
         raise SloopError("bad", "not a SLOOP project")
     return data
+
+
+def song_file(sections, order, name, firmware):
+    """a sloop-song file: the four sections (empty ones as nothing) and the song order"""
+    def obj(data):
+        return {"len": len(data), "crc": crc32(data), "data": base64.b64encode(bytes(data)).decode()}
+    return {"format": SONG_FORMAT, "version": 1, "firmware": firmware, "name": name,
+            "date": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "sections": {n: obj(sections.get(n, b"")) for n in SECTIONS}, "order": obj(order)}
+
+
+def song_from(file):
+    """a sloop-song file -> ({"A".."D": bytes}, the song order's bytes), each checked"""
+    if not isinstance(file, dict) or file.get("format") != SONG_FORMAT or not isinstance(file.get("sections"), dict):
+        raise SloopError("bad", "not a SLOOP song")
+
+    def obj(o, what):
+        try:
+            data = base64.b64decode((o or {}).get("data", ""), validate=False)
+        except (ValueError, TypeError):
+            raise SloopError("bad", f"{what}: damaged")
+        if len(data) != (o or {}).get("len") or crc32(data) != ((o or {}).get("crc", 0) & 0xFFFFFFFF):
+            raise SloopError("bad", f"{what}: damaged")
+        return data
+    sections = {n: obj(file["sections"].get(n), f"section {n}") for n in SECTIONS}
+    order = obj(file.get("order"), "the song order")
+    if len(order) != ORDER.stop - ORDER.start:
+        raise SloopError("bad", "the song order: damaged")
+    if any(d and not project_format(d) for d in sections.values()):
+        raise SloopError("bad", "not a SLOOP song")
+    return sections, order
+
+
+def song_steps(order):
+    """the song order's steps: [(section "A".."D", bars)], and whether it loops"""
+    count, loop = order[0], order[1]
+    steps = [("ABCD"[order[4 + 2 * i]] if order[4 + 2 * i] < 4 else "?", order[5 + 2 * i])
+             for i in range(min(count, 16))]
+    return steps, bool(loop)
 
 
 def projects_in(file):

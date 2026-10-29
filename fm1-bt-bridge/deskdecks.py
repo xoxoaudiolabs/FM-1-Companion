@@ -9,6 +9,8 @@ in: shown; the button at the top goes between them): title, BPM, Camelot key, th
 (tap a row for it); LOAD A, LOAD B; SCAN reads the new tracks (their BPM and key; a drive's are listed before).
  < HOME back to the Companion with the decks playing on; OFF (held) stops them."""
 
+import json
+
 import sloopstyle as st
 
 W, H, HDR_H = 480, 320, 34
@@ -35,6 +37,8 @@ class DeskDecks:
         self.decks_full = None                  # the deck whose overview fills the screen
         self.decks_down = None                  # (deck, x where the finger came down, dragging)
         self.decks_noted = 0                    # the count of the decks' last note said (DeckProcess.note_n)
+        self.decks_learn = False                # LEARN: the controllers' list (then the decks' own learn pages)
+        self.decks_learn_top = 0                # a map's list: its first row shown
 
     def open_decks(self):
         """MORE > DJ DECKS: the decks started (once) and their screen shown"""
@@ -42,8 +46,10 @@ class DeskDecks:
         if self.decks_proc is None:
             self.decks_proc = decks.DeckProcess(on_change=self.decks_changed)
         self.decks_proc.start()
+        self.decks_proc.send("output", self.app.state.get("decks_out", "studio"))
         self.tab = "DECKS"
         self.decks_full = None                  # (the deck screen, not a waveform left full screen last time)
+        self.decks_learn = False
         self.shown = None
 
     def decks_changed(self):
@@ -66,7 +72,8 @@ class DeskDecks:
                       d.get("loading"), d.get("error")) for d in s.get("decks", []))
         return (rows, round(s.get("xfade", 0.5), 2), s.get("cursor"), s.get("scanning"), p.library_n,
                 s.get("source"), s.get("sources"), p.note_n,
-                self.decks_top, p.running(), len(p.overviews[0]), len(p.overviews[1]), p.note, self.decks_full)
+                self.decks_top, p.running(), len(p.overviews[0]), len(p.overviews[1]), p.note, self.decks_full,
+                json.dumps(s.get("learn")), json.dumps(s.get("ports")), self.decks_learn, self.decks_learn_top)
 
     def draw_decks(self, img, d, now):
         t, p = self.theme, self.decks_proc
@@ -75,11 +82,15 @@ class DeskDecks:
             self.draw_deck_full(img, d, self.decks_full, (s.get("decks") or [{}, {}])[self.decks_full],
                                 p.overviews.get(self.decks_full) or [])
             return
+        if p and p.running() and (self.decks_learn or s.get("learn")):
+            self.draw_learn(img, d, s, p)
+            return
         self.button(img, d, (4, 4, 84, HDR_H - 4), "< HOME", lambda: self.open_tab("HOME"), key="decks-home")
         source = s.get("source") or "STUDIO"
         label = f"USB: {source}" if s.get("usb") else "STUDIO MUSIC"
-        self.button(img, d, (90, 4, 294, HDR_H - 4), fit(label, 176) + (" >" if (s.get("sources") or 1) > 1 else ""),
+        self.button(img, d, (90, 4, 224, HDR_H - 4), fit(label, 112) + (" >" if (s.get("sources") or 1) > 1 else ""),
                     lambda: p and p.send("source"), on=bool(s.get("usb")), key="decks-source")
+        self.button(img, d, (230, 4, 294, HDR_H - 4), "LEARN", self.learn_open, key="decks-learn")
         if p and p.note and p.note_n != self.decks_noted:   # a USB drive in or out, no Hercules
             self.decks_noted = p.note_n
             self.app.say(p.note, 3)
@@ -240,6 +251,116 @@ class DeskDecks:
                     key="decks-load-a")
         self.button(img, d, (304, by, 476, H - 4), "LOAD B", lambda: p.send("load", 1), color=t.track[1],
                     key="decks-load-b")
+
+    # ---- LEARN: any MIDI controller's map (decks.Learner): pick it, then each control in turn, then the list
+
+    def learn_open(self):
+        self.decks_learn, self.decks_learn_top = True, 0
+
+    def learn_close(self):
+        self.decks_learn = False
+
+    def draw_learn(self, img, d, s, p):
+        lr = s.get("learn")
+        if not lr:
+            self.draw_learn_ports(img, d, s, p)
+        elif lr.get("action"):
+            self.draw_learn_step(img, d, lr, p)
+        else:
+            self.draw_learn_map(img, d, lr, s, p)
+
+    def learn_header(self, img, d, back, label, title):
+        t = self.theme
+        self.button(img, d, (4, 4, 84, HDR_H - 4), label, back, key="learn-back")
+        st.text(img, (94, 9), fit(title, W - 100), t.hi)
+        d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
+
+    def draw_learn_ports(self, img, d, s, p):
+        """the MIDI controllers plugged in: one tapped, its map (or learning it)"""
+        t = self.theme
+        self.learn_header(img, d, self.learn_close, "< DECKS", "MIDI LEARN: WHICH CONTROLLER?")
+        ports = s.get("ports") or []
+        if not ports:
+            self.centre(img, (0, HDR_H, W, H), "no MIDI controllers plugged in", t.c[3])
+            return
+        for r, (name, mapped, hercules) in enumerate(ports[:7]):
+            y = HDR_H + 6 + r * 34
+            box = (4, y, W - 4, y + 30)
+            d.rectangle(box, fill=t.grey[0])
+            st.text(img, (12, y + 8), fit(name.split(":")[0], 300), t.c[4])
+            tag = "LEARNT MAP" if mapped else "BUILT-IN MAP" if hercules else "NO MAP: LEARN"
+            st.text(img, (W - 12 - st.text_size(tag)[0], y + 8), tag, t.hi if mapped else t.c[2])
+            go = ((lambda name=name: p.send("learn_list", name)) if mapped or hercules else
+                  (lambda name=name: p.send("learn", name, True)))
+            self.widget(box, "tap", go, ("learn-port", name))
+
+    def draw_learn_step(self, img, d, lr, p):
+        """one control to learn: its name big, what to do, what it was on; BACK / SKIP / DONE"""
+        t = self.theme
+        guided = lr.get("guided")
+        self.learn_header(img, d, lambda: p.send("learn_done"), "< LIST", lr["port"].split(":")[0])
+        top = HDR_H + 8
+        step = f"STEP {lr['step'] + 1} OF {lr['steps']}" if guided else "ONE CONTROL"
+        st.text(img, (10, top), step, t.c[2])
+        if lr.get("shift"):
+            st.text(img, (W - 10 - st.text_size("SHIFT HELD")[0], top), "SHIFT HELD", t.hi)
+        deck = lr.get("deck")
+        if deck:
+            self.centre(img, (0, top + 18, W, top + 48), f"DECK {deck}", t.track["AB".index(deck)], 2)
+        label = lr.get("label") or ""
+        self.centre(img, (0, top + 50, W, top + 96), label, t.hi, 3 if st.text_size(label, 3)[0] < W - 20 else 2)
+        self.centre(img, (0, top + 98, W, top + 118), lr.get("hint") or "", t.c[4])
+        if lr.get("now"):
+            self.centre(img, (0, top + 122, W, top + 140), f"NOW ON: {lr['now']}", t.c[3])
+        if lr.get("heard") and guided:
+            self.centre(img, (0, top + 144, W, top + 162), f"LEARNT {lr.get('heard_what')}: {lr['heard']}", t.c[2])
+        by = H - 50
+        if guided:
+            self.button(img, d, (4, by, 156, H - 4), "BACK", lambda: p.send("learn_back"), key="learn-prev")
+            self.button(img, d, (164, by, 316, H - 4), "SKIP", lambda: p.send("learn_skip"), key="learn-skip")
+            self.button(img, d, (324, by, 476, H - 4), "DONE", lambda: p.send("learn_done"), key="learn-done")
+        else:
+            self.button(img, d, (4, by, 236, H - 4), "CANCEL", lambda: p.send("learn_done"), key="learn-cancel")
+            self.button(img, d, (244, by, 476, H - 4), "CLEAR IT", lambda a=lr["action"]: self.learn_clear(p, a),
+                        key="learn-clear")
+
+    def learn_clear(self, p, action):
+        p.send("learn_clear", action)
+        p.send("learn_done")
+
+    def draw_learn_map(self, img, d, lr, s, p):
+        """a controller's map: every control and what it's on (tap one: learn it again); LEARN ALL; FORGET"""
+        t = self.theme
+        port = lr["port"]
+        self.learn_header(img, d, lambda: p.send("learn_end"), "< BACK", port.split(":")[0])
+        self.button(img, d, (W - 120, 4, W - 4, HDR_H - 4), "LEARN ALL", lambda: p.send("learn", port, True),
+                    key="learn-all")
+        rows = lr.get("map") or []
+        if not any(r[3] for r in rows) and any(n == port and h for n, _m, h in s.get("ports") or []):
+            st.text(img, (10, HDR_H + 6), "ITS OWN MAP IS BUILT IN: LEARN TO MAKE YOURS", t.c[3])
+        shown = 9
+        self.decks_learn_top = max(0, min(self.decks_learn_top, len(rows) - shown))
+        for r in range(shown):
+            k = self.decks_learn_top + r
+            if k >= len(rows):
+                break
+            action, deck, label, bound = rows[k]
+            y = HDR_H + 24 + r * 24
+            if deck:
+                st.text(img, (10, y + 4), deck, t.track["AB".index(deck)])
+            st.text(img, (30, y + 4), label, t.c[4])
+            text = bound or "-"
+            st.text(img, (W - 12 - st.text_size(text)[0], y + 4), text, t.hi if bound else t.c[1])
+            self.widget((0, y, W, y + 23), "tap", lambda a=action: p.send("learn", port, False, a), ("learn-row", k))
+        by = H - 44
+        self.button(img, d, (4, by, 90, H - 4), "UP", lambda: self.learn_scroll(-shown), key="learn-up")
+        self.button(img, d, (96, by, 182, H - 4), "DOWN", lambda: self.learn_scroll(shown), key="learn-down")
+        d.rectangle((W - 160, by, W - 4, H - 4), outline=(255, 112, 92), width=2)
+        self.centre(img, (W - 160, by, W - 4, H - 4), "HOLD: FORGET MAP", (255, 112, 92))
+        self.widget((W - 160, by, W - 4, H - 4), "hold", lambda: p.send("learn_forget"), "learn-forget")
+
+    def learn_scroll(self, step):
+        self.decks_learn_top = max(0, self.decks_learn_top + step)
 
     def decks_page(self, step):
         p = self.decks_proc

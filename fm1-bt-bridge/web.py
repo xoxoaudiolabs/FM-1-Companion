@@ -7,6 +7,9 @@ grid, each route's settings, the four presets), Library (backups, projects, song
 firmware, software updates), Editor (the sample editor) and Recordings (listen in the browser, download, edit as
 a sample, delete). It looks like xoxoaudiolabs.com.
 
+The same page (PAGE) is XOXO Studio's web app too: its status says "box": "xoxo-studio", and the page then leaves
+out the FM-1's parts and shows a Studio tab (XO-4, kits, the DJ decks and their music) from the fields it sends.
+
 Settings go to the box as commands (library.queue_command; the box applies them like the joystick).
 Anything that writes to the FM-1's data (restore, loads, firmware) is handed to the box and waits for a
 confirmation there (hold the joystick press), never just a click on the network.
@@ -458,6 +461,9 @@ input[type=range]:disabled{opacity:.4}
 .job{border:1px solid var(--edge);padding:10px 12px}
 audio{width:100%;height:40px;margin-top:8px}
 label.file{display:inline-block}label.file input{display:none}
+.patgrid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;margin:6px 0 10px}.patgrid button{min-width:0;padding:10px 0}
+.patgrid button.on{background:var(--ink);border-color:var(--ink);color:var(--bg)}.patgrid button.queued{outline:2px solid var(--accent);outline-offset:2px}
+.patgrid button.empty{color:var(--dim);border-color:var(--line)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px}.chips button{min-height:34px;padding:6px 10px;font-size:11px}
 .chips b{color:var(--dim);font-weight:600;margin-left:6px}
 .mxwrap{overflow-x:auto;margin:0 -16px;padding:0 16px 4px}
@@ -479,7 +485,7 @@ details summary{cursor:pointer}
 @media (max-width:899px){.midi{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:420px){header h1{font-size:20px}.big{font-size:64px}nav button{letter-spacing:.06em}}
 </style></head><body>
-<header><div class="in"><h1>FM-1<i>//</i>Companion</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></div></header>
+<header><div class="in"><h1 id="title">FM-1<i>//</i>Companion</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></div></header>
 <main>
 
 <!-- ======================= STATUS ======================= -->
@@ -496,8 +502,10 @@ details summary{cursor:pointer}
 </section>
 <section><h2>Audio</h2>
   <div class="line" id="s-batline" hidden><span class="k">Battery</span><span class="v" id="s-bat">–</span></div>
-  <div class="line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
+  <div class="line" id="s-fm1line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
+  <div class="line" id="s-srcline" hidden><span class="k">Sources</span><span class="v" id="s-src-in">–</span></div>
   <div class="line"><span class="k">Speaker</span><div class="row" style="justify-content:flex-end"><span class="v" id="s-spk">–</span><button id="s-spkbtn" onclick="speaker()" hidden>Connect</button></div></div>
+  <div class="line" id="s-pocketline" hidden><span class="k">Pocket</span><span class="v" id="s-pocket">–</span></div>
   <div class="line" id="s-outline" hidden><span class="k">Output</span><div class="seg" id="s-out"><button data-v="speaker">Speaker</button><button data-v="phones">Jack</button><button data-v="both">Both</button></div></div>
   <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
     <input type="range" id="s-vol" min="0" max="100" step="2" aria-label="Volume"></div>
@@ -513,14 +521,14 @@ details summary{cursor:pointer}
 </section>
 <section><h2>Record</h2>
   <button class="recbtn" id="s-rec" onclick="toggleRec()">● Record</button>
-  <p class="dim small" style="margin:10px 0 0">Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.</p>
+  <p class="dim small" style="margin:10px 0 0" id="s-recnote">Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.</p>
 </section>
 <section><h2>Keyboard</h2>
   <div class="line"><span><span class="k">Arp</span> <span class="dim small" id="s-arpd"></span></span><label class="sw"><input type="checkbox" id="s-arp"><span></span></label></div>
   <div class="line"><span><span class="k">Chord</span> <span class="dim small" id="s-chordd"></span></span><label class="sw"><input type="checkbox" id="s-chord"><span></span></label></div>
   <div class="line"><span class="k">MIDI device</span><span class="v" id="s-midi">–</span></div>
   <div class="line"><span class="k">USB keys</span><span class="v" id="s-usbkeys">–</span></div>
-  <p class="dim small" style="margin:6px 0 0">Pattern, rate and chord type: MIDI tab, Bluetooth → FM-1.</p>
+  <p class="dim small" style="margin:6px 0 0" id="s-kbnote">Pattern, rate and chord type: MIDI tab, Bluetooth → FM-1.</p>
 </section>
 <section id="s-box" hidden><h2>Box</h2>
   <div class="line" id="s-themeline" hidden><span class="k">Screen theme</span><select id="s-theme" onchange="set('theme', this.value)"></select></div>
@@ -528,6 +536,29 @@ details summary{cursor:pointer}
     <option value="off">off</option><option value="boot">at start</option><option value="2">every 2 min</option><option value="5">every 5 min</option><option value="10">every 10 min</option><option value="30">every 30 min</option></select></div>
   <p class="dim small" style="margin:6px 0 0">Auto backups go to Library → Backups.</p>
 </section>
+</div>
+</div>
+
+<!-- ======================= STUDIO ======================= -->
+<div class="tab" id="tab-studio">
+<div class="grid">
+<section><h2>XO-4</h2>
+  <div class="line"><span class="k">Pattern</span><span class="v" id="x-state">–</span></div>
+  <div class="patgrid" id="x-pats"></div>
+  <div class="line"><span class="k">Transport</span><button class="primary" id="x-play" onclick="cmd({cmd:'xo4',action:'play'})">▶ Play</button></div>
+  <div class="line"><span><span class="k">MIDI in</span><br><span class="dim small">notes from the MIDI routes play its pads</span></span><label class="sw"><input type="checkbox" id="x-midiin"><span></span></label></div>
+  <div class="line"><span class="k">SYN 1 sound</span><select id="x-s1" onchange="xo4Sound(1, this.value)"></select></div>
+  <div class="line"><span class="k">SYN 2 sound</span><select id="x-s2" onchange="xo4Sound(2, this.value)"></select></div>
+  <p class="dim small" style="margin:6px 0 0">While it plays, a pattern starts on the next bar. Steps are made on the Studio's screen.</p>
+</section>
+<section><h2>Kit</h2>
+  <div class="line"><span class="k">Loaded</span><span class="v" id="k-cur">–</span></div>
+  <div id="k-list"></div>
+</section>
+<section><h2>DJ decks</h2><div id="d-decks"></div></section>
+<section><h2>DJ music</h2><p class="meta" style="margin:-6px 0 6px">The Studio DJ Music folder. A track added here shows on the DECKS screen; press SCAN there for its tempo and key.</p>
+<div id="music"></div>
+<div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".mp3,.flac,.wav,.aif,.aiff,.ogg,.m4a" multiple onchange="upload('music',this)"><button onclick="this.previousElementSibling.click()">Add music…</button></label></div></section>
 </div>
 </div>
 
@@ -546,12 +577,12 @@ details summary{cursor:pointer}
 <!-- ======================= LIBRARY ======================= -->
 <div class="tab" id="tab-library">
 <div class="chips" id="libnav"><button onclick="jump('lib-backups')">Backups<b id="n-backups"></b></button><button onclick="jump('lib-projects')">Projects<b id="n-projects"></b></button><button onclick="jump('lib-songs')">Songs<b id="n-songs"></b></button><button onclick="jump('lib-patches')">DX7<b id="n-patches"></b></button><button onclick="jump('lib-samples')">Samples<b id="n-samples"></b></button><button onclick="jump('lib-firmware')">Firmware<b id="n-firmware"></b></button><button onclick="jump('lib-software')">Software</button></div>
-<section><h2>Now</h2><div class="job"><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div></div>
+<section id="lib-now"><h2>Now</h2><div class="job"><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div></div>
 <div class="row" style="margin-top:12px"><button class="primary" onclick="run('backup')">Back up now</button>
 <button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('fetch-clipper')" title="isod89's synthesizer firmware, experimental">Get Clipper (exp.)</button><button onclick="run('import-sd')">Import SD card</button></div>
 <p class="meta" style="margin:12px 0 0">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. Restores, projects, songs and firmware back the FM-1 up first; a sample only replaces its slot.</p></section>
 
-<p class="label group">On the FM-1</p>
+<p class="label group" id="g-fm1">On the FM-1</p>
 <section id="lib-backups"><h2>Backups</h2><div id="backups"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".json" onchange="upload('backups',this)"><button onclick="this.previousElementSibling.click()">Upload a backup…</button></label></div></section>
 
@@ -567,13 +598,13 @@ details summary{cursor:pointer}
 <div id="patches"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
 
-<section id="lib-samples"><h2>Samples</h2><p class="meta" style="margin:0 0 6px">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
+<section id="lib-samples"><h2>Samples</h2><p class="meta" style="margin:0 0 6px" id="smp-pads" hidden>WAVs for the pads (on the box: PADS → EDIT → a pad → SAMPLE). A note in the name, e.g. <i>bass_C2.wav</i>, is its root note.</p><p class="meta" style="margin:0 0 6px" id="smp-fm1">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
 <div id="samples"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".wav" multiple onchange="upload('samples',this)"><button onclick="this.previousElementSibling.click()">Upload WAVs…</button></label>
-<input type="text" id="sname" placeholder="name (8 letters)" maxlength="8" size="12"><select id="sslot"><option value="1">USR1</option><option value="2">USR2</option><option value="3">USR3</option><option value="4">USR4</option></select>
-<button class="primary" onclick="loadSamples()">Load ticked into slot</button></div></section>
+<span class="row fm1only"><input type="text" id="sname" placeholder="name (8 letters)" maxlength="8" size="12"><select id="sslot"><option value="1">USR1</option><option value="2">USR2</option><option value="3">USR3</option><option value="4">USR4</option></select>
+<button class="primary" onclick="loadSamples()">Load ticked into slot</button></span><button id="smp-sd" onclick="run('import-sd')" hidden>Import SD card</button></div></section>
 
-<p class="label group">Firmware and software</p>
+<p class="label group" id="g-fw">Firmware and software</p>
 <section id="lib-firmware"><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
 <section id="lib-software"><h2>Software</h2><p class="meta" style="margin:0 0 6px">Updates come from the project's GitHub. Everything you've saved stays as it is: settings, pairings, backups, projects, songs, samples, recordings. The box asks you to confirm, then installs (several minutes on a Pi Zero) and restarts; if the new version doesn't start, it goes back to this one.</p>
@@ -614,6 +645,7 @@ details summary{cursor:pointer}
 
 <nav>
 <button data-tab="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Status</button>
+<button data-tab="studio" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Studio</button>
 <button data-tab="midi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14"/><path d="M8 5v8M12 5v8M16 5v8"/></svg>MIDI</button>
 <button data-tab="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v16H4zM14 4l6 2-4 14-6-2z"/></svg>Library</button>
 <button data-tab="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2"/></svg>Editor</button>
@@ -630,6 +662,27 @@ const mins = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[], songs:[], patches:[]};
 let st = null;                                     // the box's status
 let tab = "status";
+// one page for every box: the FM-1 Companion (Pocket, Studio) and XOXO Studio, which has no FM-1 ("box" in its status)
+const xoxo = () => !!st && st.box === "xoxo-studio";
+let shownBox = null;
+function applyBox() {
+  const x = xoxo(), studio = !!(st && !st.offline && (st.xo4 || st.kits || st.decks));
+  const key = `${x}${studio}`;
+  if (key === shownBox) return;
+  shownBox = key;
+  $("title").innerHTML = x ? "XOXO<i>//</i>Studio" : "FM-1<i>//</i>Companion";
+  document.title = x ? "XOXO Studio" : "FM-1 Companion";
+  document.querySelector('nav button[data-tab="studio"]').hidden = !studio;
+  for (const id of ["libnav", "lib-now", "g-fm1", "lib-backups", "lib-projects", "lib-songs", "lib-patches", "g-fw", "lib-firmware", "lib-software", "smp-fm1"]) $(id).hidden = x;
+  for (const id of ["smp-pads", "smp-sd"]) $(id).hidden = !x;
+  document.querySelectorAll(".fm1only").forEach((e) => e.hidden = x);
+  $("s-recnote").textContent = x ? "Records what the Studio plays (a WAV). Takes are in the Recordings tab."
+    : "Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.";
+  $("s-kbnote").textContent = x ? "Arp and Chord switch every keyboard route to your MIDI gear; pattern, rate and chord type: MIDI tab, on a route."
+    : "Pattern, rate and chord type: MIDI tab, Bluetooth → FM-1.";
+  if (tab === "studio" && !studio) show("status");
+  if (tab === "library") refresh();
+}
 
 // ---------------------------------------------------------------- basics
 let toastTimer;
@@ -646,7 +699,7 @@ function show(name) {
   tab = name; location.hash = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("shown", t.id === "tab-" + name));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("shown", b.dataset.tab === name));
-  if (name === "library" || name === "recordings" || name === "editor") refresh();
+  if (name === "library" || name === "recordings" || name === "editor" || name === "studio") refresh();
   if (name === "midi") { renderMatrix(); renderEditor(); renderPresets(); }
   status();
 }
@@ -668,11 +721,16 @@ function renderStatus() {
   for (const id of ["s-rec", "r-rec"]) { $(id).classList.toggle("on", rec); $(id).textContent = rec ? `■ Stop recording  ${mins(st.recording)}` : "● Record"; $(id).disabled = off; }
   if (off) return;
   const s = st.settings;
-  $("s-fm1").textContent = st.fm1 || "not found";
+  applyBox();
+  $("s-fm1line").hidden = xoxo(); $("s-fm1").textContent = st.fm1 || "not found";
+  $("s-srcline").hidden = !st.sources; $("s-src-in").textContent = (st.sources || []).join(", ") || "none";
+  $("s-pocketline").hidden = !st.pocket;
+  if (st.pocket) $("s-pocket").textContent = "linked over " + (st.pocket === "cable" ? "the cable" : "the network") + " · POCKET in the mixer";
   const bat = !st.offline && st.battery;
   $("s-batline").hidden = !bat;
   if (bat) $("s-bat").textContent = `${bat.percent}%` + (bat.plugged ? " · charging" : "");
-  $("s-spk").textContent = st.speaker || (st.connecting ? "connecting…" : (st.speaker_name ? st.speaker_name + " (off)" : "none"));
+  $("s-spk").textContent = (st.speaker || (st.connecting ? "connecting…" : (st.speaker_name ? st.speaker_name + " (off)" : "none")))
+    + (st.speaker && st.speaker_battery != null ? ` · battery ${st.speaker_battery}%` : "");
   if (Date.now() > editingUntil) { if (st.volume != null) $("s-vol").value = st.volume; $("s-tempo").value = s.bpm; }
   $("s-volv").textContent = st.volume != null ? st.volume + "%" : "–"; $("s-vol").disabled = st.volume == null;
   renderMixer(st);
@@ -728,23 +786,60 @@ $("s-tempo").onchange = (e) => { const v = Math.max(30, Math.min(300, Math.round
 function bump(d) { editingUntil = Date.now() + 2500; const el = $("s-tempo"); el.value = Math.max(30, Math.min(300, (+el.value || 120) + d)); clearTimeout(tempoTimer); tempoTimer = setTimeout(() => set("bpm", +el.value), 350); }
 function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "stop" : "start"}, false).then(() => setTimeout(refresh, 900)); }
 
+// ---------------------------------------------------------------- Studio tab (XOXO Studio)
+let shownKits = "", music = [];
+function renderStudio() {
+  const x = st && !st.offline && st.xo4;
+  if (x) {
+    $("x-state").textContent = `${x.pattern}${x.queued ? " → " + x.queued + " next bar" : ""} · ${x.playing ? "playing" : "stopped"}`;
+    $("x-pats").innerHTML = "ABCDEFGH".split("").map((p) => `<button class="${p === x.pattern ? "on" : ""} ${p === x.queued ? "queued" : ""} ${(x.used || []).includes(p) ? "" : "empty"}" onclick="cmd({cmd:'xo4',action:'pattern',value:${q(p)}})">${p}</button>`).join("");
+    $("x-play").textContent = x.playing ? "■ Stop" : "▶ Play"; $("x-play").className = x.playing ? "" : "primary";
+    $("x-midiin").checked = x.midi_in; $("x-midiin").onchange = (e) => cmd({cmd:"xo4", action:"midi_in", value:e.target.checked});
+    for (const t of [1, 2]) {
+      const el = $("x-s" + t), v = x.sounds[t - 1];
+      if (document.activeElement === el) continue;          // (not under a finger)
+      el.innerHTML = opt(v === "CUSTOM" ? ["CUSTOM", ...x.choices] : x.choices, v, (n) => n === "CUSTOM" ? "custom (from the SOUND page)" : n);
+    }
+  }
+  const k = st && !st.offline && st.kits;
+  if (k) {
+    $("k-cur").textContent = k.current;
+    const key = JSON.stringify(k);
+    if (key !== shownKits) { shownKits = key; $("k-list").innerHTML = k.list.map((n) => `<div class="item"><span class="name">${esc(n.replace(/-/g, " "))}</span><button onclick="cmd({cmd:'kit', name:${q(n)}}, false)">Load</button></div>`).join("") || `<p class="empty">No kits saved.</p>`; }
+  }
+  const d = st && !st.offline ? st.decks : null;
+  $("d-decks").innerHTML = !d ? `<p class="empty">The decks aren't running: open DECKS on the Studio.</p>` : d.map((x, i) => `<div class="item"><div><div class="name">${"AB"[i]} · ${esc(x.title || "empty")}</div>
+    <div class="meta">${x.artist ? esc(x.artist) + " · " : ""}${x.bpm ? Number(x.bpm).toFixed(1) + " BPM" : ""}${x.camelot ? " · " + esc(x.camelot) : ""}</div></div>
+    <div class="row"><span class="pill ${x.playing ? "live" : ""}">${x.playing ? "playing" : "paused"}</span>${x.fx ? `<span class="pill ${x.fx_on ? "rec" : ""}">${esc(x.fx)}${x.fx_on ? " on" : ""}</span>` : ""}</div></div>`).join("");
+}
+function renderMusic() {
+  $("music").innerHTML = music.length ? music.map((m) => `<div class="item"><div><div class="name">${esc(m.title)}</div>
+    <div class="meta">${m.artist ? esc(m.artist) + " · " : ""}${m.bpm ? Math.round(m.bpm) + " BPM · " : ""}${m.camelot ? esc(m.camelot) + " · " : ""}${(m.bytes / 1048576).toFixed(1)} MB${m.top ? "" : " · in " + esc(m.name.slice(0, m.name.lastIndexOf("/")))}</div></div>
+    ${m.top ? `<button class="danger" onclick="del('music',${q(m.name)})">Delete</button>` : ""}</div>`).join("")
+    : `<p class="empty">No music yet: add MP3, FLAC or WAV files.</p>`;
+}
+function xo4Sound(track, v) { if (v !== "CUSTOM") cmd({cmd:"xo4", action:"sound", track, value:v}); }
+
 // ---------------------------------------------------------------- MIDI tab
 // FM-1 B's row and column only while a second FM-1 is plugged in (then the first is FM-1 A)
 // NET (network MIDI: a DAW on a computer, the desk box) only while a computer is connected
-const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET", "SMP"];
+const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "XO4":"XO-4", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET", "SMP"];
 let twoFm1 = false, netOn = false, padsOn = false, SOURCES = {}, DESTS = [];
 // the Studio: each USB MIDI device its own row and column ("U:" + its name), as st.matrix lists them
 let matrixKey = "";
 const devName = (k) => k.startsWith("U:") ? k.slice(2) : null;
 function setFm1s(two, net = netOn, pads = padsOn, matrix = null) {
   twoFm1 = two; netOn = net; padsOn = pads;
-  const shown = (k) => (two || k !== "FM-1 B") && (net || k !== "NET") && (pads || k !== "SMP");
+  const shown = (k) => (two || k !== "FM-1 B") && (net || k !== "NET") && (pads || k !== "SMP") && k !== "XO4";   // (XO-4: in st.matrix)
   const label = (k) => devName(k) || (two && k === "FM-1" ? "FM-1 A" : ALL_SOURCES[k] || k);
   const srcs = matrix ? matrix.sources : Object.keys(ALL_SOURCES).filter(shown);
   SOURCES = Object.fromEntries(srcs.map((k) => [k, label(k)]));
   DESTS = matrix ? matrix.dests : ALL_DESTS.filter(shown);
   const [s, d] = sel.split(">");
-  if (!(s in SOURCES) || !DESTS.includes(d)) sel = "BT>FM-1";
+  if (!(s in SOURCES) || !DESTS.includes(d)) {
+    const first = Object.keys(SOURCES)[0];
+    sel = "BT" in SOURCES && DESTS.includes("FM-1") ? "BT>FM-1" : `${first}>${DESTS.find((x) => x !== first)}`;
+  }
 }
 const destName = (d) => devName(d) || (d === "BT" ? "Bluetooth" : d === "NET" ? "Network" : d === "SMP" ? "Sampler" : twoFm1 && d === "FM-1" ? "FM-1 A" : d);
 const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
@@ -831,6 +926,7 @@ function targetSelect(id) {
 }
 const jump = (id) => $(id).scrollIntoView({behavior:"smooth", block:"start"});   // the Library's chips
 function renderLibrary() {
+  for (const k of ["backups", "projects", "samples", "firmware", "recordings", "songs", "patches"]) lib[k] = lib[k] || [];
   for (const k of ["backups", "songs", "patches", "samples", "firmware"]) $("n-" + k).textContent = (lib[k] || []).length || "";
   $("n-projects").textContent = lib.projects.length + lib.backups.reduce((n, b) => n + (b.projects || []).length, 0) || "";
   $("backups").innerHTML = lib.backups.length ? lib.backups.map((b) => `<div class="item"><div><div class="name">${when(b.date)}</div>
@@ -858,7 +954,7 @@ function renderLibrary() {
     <div class="row">${s.damaged ? "" : `<button onclick="ask({cmd:'load-song', file:${q(s.name)}})">Load…</button>`}<a href="/files/songs/${encodeURIComponent(s.name)}" download><button>Download</button></a>
     <button class="danger" onclick="del('songs',${q(s.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No songs yet: Back up song saves the one on the FM-1.</p>`;
-  $("samples").innerHTML = lib.samples.length ? lib.samples.map((s) => `<div class="item"><label class="row"><input type="checkbox" class="pick" value="${esc(s.name)}" style="width:22px;height:22px"><span class="name">${esc(s.name)}</span></label>
+  $("samples").innerHTML = lib.samples.length ? lib.samples.map((s) => `<div class="item"><label class="row">${xoxo() ? "" : `<input type="checkbox" class="pick" value="${esc(s.name)}" style="width:22px;height:22px">`}<span class="name">${esc(s.name)}</span></label>
     <div class="row"><span class="meta">${(s.bytes / 1024).toFixed(0)} KB</span><button onclick="sedOpen('samples', ${q(s.name)})">Edit…</button><button class="danger" onclick="del('samples',${q(s.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No WAV files yet.</p>`;
   $("firmware").innerHTML = lib.firmware.length ? lib.firmware.map((f) => `<div class="item"><div><div class="name">${esc(f.name)}</div><div class="meta">${when(f.date)}</div></div>
@@ -988,6 +1084,7 @@ async function sedSave() {
 // ---------------------------------------------------------------- polling
 let last = "";
 async function update() {                          // the library job, as before
+  if (xoxo()) return false;                        // (XOXO Studio has none)
   const s = await fetch("/api/state").then((r) => r.json()).catch(() => ({}));
   const running = s.state === "running";
   $("job").innerHTML = s.waiting ? "Waiting for the confirmation on the box…"
@@ -1002,6 +1099,7 @@ let shownRoutes = "", shownPresets = "";
 async function status() {
   st = await fetch("/api/status").then((r) => r.json()).catch(() => ({offline:true}));
   renderStatus();
+  if (tab === "studio") renderStudio();
   if (st.offline) return;
   // redraw the MIDI tab only when the box's routes or presets changed: a redraw closes an open dropdown,
   // and the presets' name fields mustn't change under your fingers
@@ -1012,7 +1110,11 @@ async function status() {
   if (r !== shownRoutes && Date.now() > routesDirtyUntil) { routes = JSON.parse(r); shownRoutes = r; renderMatrix(); renderEditor(); }
   if (p !== shownPresets && !String(document.activeElement && document.activeElement.id).startsWith("pn")) { shownPresets = p; renderPresets(); }
 }
-async function refresh() { lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); renderLibrary(); if (tab === "library") software(); }
+async function refresh() {
+  lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); renderLibrary();
+  if (tab === "library" && st && !st.offline && !xoxo()) software();
+  if (tab === "studio") { music = await fetch("/api/music").then((r) => r.json()).catch(() => music); renderMusic(); }
+}
 async function software(fresh) {                   // Library > Software: the installed version, the newest, the last update
   const u = await fetch("/api/update" + (fresh ? "?fresh=1" : "")).then((r) => r.json()).catch(() => null);
   if (!u) { $("software").textContent = "Couldn't ask the box."; return; }
@@ -1027,7 +1129,7 @@ async function software(fresh) {                   // Library > Software: the in
   if (running) setTimeout(software, 3000);
 }
 async function pollJobs() { setTimeout(pollJobs, (await update()) ? 700 : 3000); }
-async function pollStatus() { if (!document.hidden && (tab === "status" || tab === "midi" || tab === "recordings")) await status(); setTimeout(pollStatus, 1000); }
+async function pollStatus() { if (!document.hidden && (tab === "status" || tab === "studio" || tab === "midi" || tab === "recordings")) await status(); setTimeout(pollStatus, 1000); }
 show((location.hash || "#status").slice(1).replace(/[^a-z]/g, "") || "status");
 pollJobs(); pollStatus();
 </script></body></html>

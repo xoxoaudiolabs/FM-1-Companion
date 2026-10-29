@@ -1,6 +1,9 @@
 """Render the bridge's OLED screens to PNG files with bridge.py's own drawing code, for the README.
 
-  python tools/render_screens.py OUTDIR [--fonts DIR]
+  python tools/render_screens.py OUTDIR [--fonts DIR] [--desk] [--lcd]
+
+--lcd adds the same screens on the Pocket's 1.44" colour LCD (lcd-*.png: pocketui.py, pocketmeters.py), the
+meters on one sheet and HOME in every theme.
 
 DIR holds DejaVuSans.ttf and DejaVuSans-Bold.ttf, the fonts the Pi uses
 (default: /usr/share/fonts/truetype/dejavu). Needs Pillow; no Pi or HAT.
@@ -226,6 +229,7 @@ def main():
     parser.add_argument("outdir")
     parser.add_argument("--fonts", default="/usr/share/fonts/truetype/dejavu")
     parser.add_argument("--desk", action="store_true", help="also the desk box's touch screens and meters (desk-*.png)")
+    parser.add_argument("--lcd", action="store_true", help="also the Pocket's 1.44\" LCD screens (lcd-*.png)")
     args = parser.parse_args()
     fonts = Path(args.fonts)
     bridge.font = lambda size, bold=False: ImageFont.truetype(
@@ -255,6 +259,8 @@ def main():
     oled(display.image).save(out / "screen-starting.png", optimize=True)
     print("wrote", out / "screen-starting.png")
     meters_sheet(state, out)
+    if args.lcd:
+        lcd_screens(state, out)
     if args.desk:
         desk_screens(state, out)
 
@@ -452,6 +458,90 @@ class Levels:
         self.block = self.make(self.frame)
         self.frame += 1
         return self.block, self.block
+
+
+class LcdCapture(Capture):
+    """the Pocket's 1.44" LCD stand-in: the app draws its screens in colour for it (pocketui)"""
+    colour = True
+
+
+LCD_SCALE = 3                                   # 128 x 128 shown at 384 x 384
+
+
+def pocket_app(display, state):
+    app = bridge.App(display, dict(state))
+    app.loop, app.midi, app.wifi = Loop(), Midi(), False
+    app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+    app.fw_label = "SLOOP 2.8"
+    app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
+    app.volume = 75
+    app.library_state = lambda now=None: None
+    return app
+
+
+def sheet_of(frames, cols, scale):
+    w = 128 * scale
+    gap = 12
+    rows = (len(frames) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * w + (cols - 1) * gap, rows * w + (rows - 1) * gap), (30, 30, 30))
+    for i, frame in enumerate(frames):
+        sheet.paste(frame.resize((w, w), Image.NEAREST), ((i % cols) * (w + gap), (i // cols) * (w + gap)))
+    return sheet
+
+
+def lcd_screens(state, out):
+    """the Pocket's screens on its LCD (lcd-NAME.png), its meters (lcd-meters.png), HOME in each theme
+    (lcd-themes.png), Settings > Theme and the splash"""
+    import pocketui
+    import sloopstyle as st
+    for name, setup in scenes(pocket_app(LcdCapture(), state)):
+        display = LcdCapture()
+        app = pocket_app(display, state)
+        dict(scenes(app))[name]()
+        app.render()
+        display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(out / f"lcd-{name}.png", optimize=True)
+        print("wrote", out / f"lcd-{name}.png")
+    display = LcdCapture()
+    app = pocket_app(display, dict(state, desk_theme="KAWAII"))
+    app.screen, app.settings_menu = "settings", None
+    app.setting = [r[0] for r in app.settings_rows()].index("theme")
+    app.change_setting()
+    app.pick["cursor"] = [item[2] for item in app.pick["items"]].index("KAWAII")
+    app.render()
+    display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(out / "lcd-theme-pick.png", optimize=True)
+    print("wrote", out / "lcd-theme-pick.png")
+    homes = []
+    for theme in st.ALL:
+        display = LcdCapture()
+        app = pocket_app(display, dict(state, desk_theme=theme))
+        app.battery = {"percent": 78, "mv": 3818, "plugged": False}
+        app.render()
+        homes.append(display.image)
+    sheet_of(homes, 5, 2).save(out / "lcd-themes.png", optimize=True)
+    print("wrote", out / "lcd-themes.png")
+    display = LcdCapture()
+    bridge.splash(display, state)
+    display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(out / "lcd-starting.png", optimize=True)
+    frames = []
+    for i, name in enumerate(meters.METERS):
+        display = LcdCapture()
+        app = pocket_app(display, dict(state, meter=i))
+        app.levels = Levels()
+        if name == "Tape":
+            app.recorder, app.tape_done = Recording(), 0.35
+        app.open_meters()
+        if name == "History":
+            app.m_hist = [-6 - 18 * abs(((k % 32) - 16) / 16) - (8 if k % 7 == 0 else 0) for k in range(128)]
+            app.m_hnext = time.monotonic() + 60
+        for _ in range(pocketui.FOOT - 22 if name == "Waterfall" else 4):
+            app.render(force=True)
+            if name != "Waterfall":
+                time.sleep(0.1)
+        frames.append(display.image)
+        display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(
+            out / f"lcd-meter-{name.lower()}.png", optimize=True)
+    sheet_of(frames, 4, 2).save(out / "lcd-meters.png", optimize=True)
+    print("wrote", out / "lcd-meters.png")
 
 
 def meters_sheet(state, out):

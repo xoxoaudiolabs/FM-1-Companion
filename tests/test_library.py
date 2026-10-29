@@ -347,6 +347,11 @@ def test_timed_backups_skip_unchanged():
         "objects": sloop.load_json(library.newest_auto())["objects"]})
     library.job_backup()                                   # a manual backup is always saved
     assert library.read_state()["result"].get("unchanged") is None
+    library.THEME.unlink(missing_ok=True)                  # the Pocket's LCD: the boot backup reads FM-1 A's colours
+    library.SETTINGS.write_text(json.dumps({"screen": "lcd", "build": "pocket"}))
+    library.job_backup(auto=True)
+    assert json.loads(library.THEME.read_text())["c"]
+    library.SETTINGS.unlink()
 
 
 def test_sloop_and_clipper_dont_mix():

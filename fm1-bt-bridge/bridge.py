@@ -34,6 +34,9 @@ from libui import LIBRARY_KEYS, LibraryScreens
 import meters
 from meters import MeterScreens
 from midiui import MidiScreens
+import pocketui
+from pocketui import PocketScreens
+from pocketmeters import PocketMeters
 from sampleui import SampleEditor
 from weblink import WebLink
 
@@ -41,6 +44,7 @@ STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
     "fw_label": None,       # what the FM-1 last said it runs ("SLOOP 2.8"): shown until it's asked again
     "rotate": 0,            # 180 if the screen is upside down
+    "screen": "oled",       # the Pocket's HAT: "oled" (1.3" 128x64) or "lcd" (1.44" 128x128 colour, lcd.py)
     "contrast": 128,
     "last_mac": None,
     "last_name": None,
@@ -802,7 +806,7 @@ def short_label(label):
     return label
 
 
-class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
+class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, PocketScreens, PocketMeters):
     fit = staticmethod(fit)
 
     def __init__(self, display, state):
@@ -1383,8 +1387,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›"),
                     ("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
+        theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
         return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
-                ("recording", "Recordings", "›"), ("editor", "Sample editor", "›"), ("wifi", "Wi-Fi", wifi),
+                ("recording", "Recordings", "›"), ("editor", "Sample editor", "›")] + theme + [
+                ("wifi", "Wi-Fi", wifi),
                 ("g_sloop", "Sloop", "›"),
                 ("g_fm1", "FM-1", "›")]
 
@@ -1394,6 +1400,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.settings_menu, self.setting = GROUPS[key][0], 0
         elif key in LIBRARY_KEYS:
             self.library_choose(key)
+        elif key == "theme":                  # the LCD's colours (pocketui)
+            self.open_theme_pick()
         elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
@@ -1674,6 +1682,15 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if view == self.shown and not force:
             return
         self.shown = view
+        colour = getattr(self.display, "colour", False)              # the Pocket's LCD (pocketui)
+        saver = self.mode == "saver" and not force
+        if colour and (saver or self.screen in pocketui.SCREENS):
+            img = self.colour_saver(now) if saver else self.colour_frame(now)
+            data = img.tobytes()
+            if force or data != self.frame:
+                self.frame = data
+                self.display.show(img)
+            return
         img = self.meter_image(now) if self.screen == "meter" and self.mode != "saver" else Image.new("1", (128, 64))
         d = ImageDraw.Draw(img)
         if self.mode == "saver" and not force:
@@ -1692,24 +1709,16 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.draw_box(d, self.busy + dots)
             elif self.message and now < self.message_until:
                 self.draw_box(d, self.message)
+        if colour:                            # a screen the LCD doesn't draw itself: this one in the theme's colours
+            img = pocketui.band(img, self.pocket_theme(now))
         data = img.tobytes()
         if force or data != self.frame:
             self.frame = data
             self.display.show(img)
 
-    def draw_status(self, d):
-        live = self.live()
-        d.text((0, 0), "FM-1 > BT", font=self.f_title, fill=1)
-        tag = "LIVE" if live else "idle"
-        if self.recorder.recording():
-            tag, live = "REC " + meters.clock(self.recorder.seconds()), True
-        w = d.textlength(tag, font=self.f_small)
-        if live:
-            d.rectangle((124 - w, 0, 127, 11), fill=1)
-        d.text((126 - w, 1), tag, font=self.f_small, fill=0 if live else 1)
-        if self.battery:
-            self.draw_battery(d, 122 - w)
-        d.line((0, 14, 127, 14), fill=1)
+    def home(self):
+        """what HOME shows, for the OLED (draw_status) and the LCD (pocketui.draw_home)"""
+        rec = self.recorder.recording() and "REC " + meters.clock(self.recorder.seconds())
         if self.sink:
             out = short_label(self.sink["label"])
         elif self.connecting:
@@ -1718,24 +1727,44 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             out = self.state["last_name"] + (" (off)" if self.auto else " (paused)")
         else:
             out = "none: press KEY1"
-        fm1 = (self.fw_label or short_label(self.source["label"])) if self.source else "FM-1 not found"
-        rows = (("IN", fm1 + (" + B" if self.source and self.source_b else "")),
-                ("OUT", out),
-                ("MIDI", self.midi_text()))
-        for i, (name, value) in enumerate(rows):
-            y = 17 + i * 12
-            d.text((0, y + 1), name, font=self.f_small, fill=1)
-            d.text((26, y), fit(d, value, self.f_body, 94), font=self.f_body, fill=1)
-        if self.midi and time.monotonic() - self.midi.activity() < 0.4:
-            d.ellipse((123, 44, 127, 48), fill=1)                     # MIDI traffic
-        vol = f"VOL {self.volume}%" if self.volume is not None else "VOL --"
-        d.text((0, 53), vol, font=self.f_small, fill=1)
         running = self.job_busy()
         if running:                           # a library job (the boot backup, say) and how far it is
             percent = running.get("percent")
             hint = running.get("job", "job") + (f" {int(percent)}%" if percent is not None else "…")
         else:
             hint = self.clock_text() or "settings >"
+        return {"live": self.live(), "rec": rec, "battery": self.battery,
+                "fm1": (self.fw_label or short_label(self.source["label"])) if self.source else "FM-1 not found",
+                "b": bool(self.source and self.source_b), "out": out, "sink": bool(self.sink),
+                "midi": self.midi_text(), "traffic": bool(self.midi and time.monotonic() - self.midi.activity() < 0.4),
+                "volume": self.volume, "hint": hint}
+
+    def draw_status(self, d):
+        home = self.home()
+        live = home["live"]
+        d.text((0, 0), "FM-1 > BT", font=self.f_title, fill=1)
+        tag = "LIVE" if live else "idle"
+        if home["rec"]:
+            tag, live = home["rec"], True
+        w = d.textlength(tag, font=self.f_small)
+        if live:
+            d.rectangle((124 - w, 0, 127, 11), fill=1)
+        d.text((126 - w, 1), tag, font=self.f_small, fill=0 if live else 1)
+        if self.battery:
+            self.draw_battery(d, 122 - w)
+        d.line((0, 14, 127, 14), fill=1)
+        rows = (("IN", home["fm1"] + (" + B" if home["b"] else "")),
+                ("OUT", home["out"]),
+                ("MIDI", home["midi"]))
+        for i, (name, value) in enumerate(rows):
+            y = 17 + i * 12
+            d.text((0, y + 1), name, font=self.f_small, fill=1)
+            d.text((26, y), fit(d, value, self.f_body, 94), font=self.f_body, fill=1)
+        if home["traffic"]:
+            d.ellipse((123, 44, 127, 48), fill=1)                     # MIDI traffic
+        vol = f"VOL {self.volume}%" if self.volume is not None else "VOL --"
+        d.text((0, 53), vol, font=self.f_small, fill=1)
+        hint = home["hint"]
         d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
 
     def draw_battery(self, d, right):
@@ -1792,9 +1821,16 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if self.volume:
             d.rectangle((14, 36, 14 + round(99 * self.volume / 100), 44), fill=1)
 
+    def settings_title(self):
+        return next((t for name, t in GROUPS.values() if name == self.settings_menu), "Settings")
+
+    def settings_hint(self):
+        return ("up/down = tempo  < done" if self.editing == "tempo" else
+                "up/down = level  < done" if self.editing else "press = change   < back")
+
     def draw_settings(self, d):
         rows = self.settings_rows()
-        title = next((t for name, t in GROUPS.values() if name == self.settings_menu), "Settings")
+        title = self.settings_title()
         d.text((0, 0), title, font=self.f_title, fill=1)
         where = f"{self.setting + 1}/{len(rows)}"
         d.text((127 - d.textlength(where, font=self.f_small), 2), where, font=self.f_small, fill=1)
@@ -1808,9 +1844,15 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             value = fit(d, value, self.f_body, 70)
             w = d.textlength(value, font=self.f_body)
             d.text((125 - w, y), value, font=self.f_body, fill=0 if selected else 1)
-        hint = ("up/down = tempo  < done" if self.editing == "tempo" else
-                "up/down = level  < done" if self.editing else "press = change   < back")
-        d.text((0, 53), hint, font=self.f_small, fill=1)
+        d.text((0, 53), self.settings_hint(), font=self.f_small, fill=1)
+
+    def scan_hint(self, rows):
+        if self.scan_running():
+            return "searching…"
+        if self.scan_kind == "midi":
+            saved = rows[min(self.cursor, len(rows) - 1)].get("saved")
+            return ("press = forget" if saved else "press = connect") + "  K1 = scan"
+        return "press = pair   K1 = rescan"
 
     def draw_scan(self, d):
         midi, rows = self.scan_kind == "midi", self.scan_rows()
@@ -1836,14 +1878,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                        fill=0 if selected else 1)
                 if tag:
                     d.text((126 - w + 4, y + 1), tag, font=self.f_small, fill=0 if selected else 1)
-            if self.scan_running():
-                hint = "searching…"
-            elif midi:
-                saved = rows[min(self.cursor, len(rows) - 1)].get("saved")
-                hint = ("press = forget" if saved else "press = connect") + "  K1 = scan"
-            else:
-                hint = "press = pair   K1 = rescan"
-            d.text((0, 53), hint, font=self.f_small, fill=1)
+            d.text((0, 53), self.scan_hint(rows), font=self.f_small, fill=1)
 
     def draw_box(self, d, text):
         words, lines, line = text.split(), [], ""
@@ -1922,8 +1957,13 @@ def test_screen(display):
     display.show(img)
 
 
-def splash(display):
+def splash(display, state=None):
     """Drawn as soon as the OLED is open: at boot the rest of start-up takes a while on a Zero W."""
+    if getattr(display, "colour", False):    # the LCD: in the theme fixed in the settings (FM-1 A's isn't known yet)
+        import sloopstyle as st
+        pick = (state or {}).get("desk_theme", "follow")
+        display.show(pocketui.draw_splash(st.Theme(pick) if pick != "follow" else st.Theme()))
+        return
     img = Image.new("1", (128, 64))
     d = ImageDraw.Draw(img)
     for y, text, f in ((16, "FM-1 Companion", font(12, True)), (38, "Starting...", font(11))):
@@ -1940,6 +1980,9 @@ def main():
     elif box["build"] == "desk":              # Pi 3/4 + 3.5" touchscreen: the same screens, larger, in colour
         import desk
         display = desk.TftDisplay(box["screen"][0] if box["screen"] else "/dev/fb1")
+    elif state.get("screen") == "lcd":        # the 1.44" LCD HAT (no way to ask the HAT which it is: a setting)
+        import lcd
+        display = lcd.ST7735(state["rotate"], state["contrast"])
     else:
         display = SH1106(state["rotate"], state["contrast"])
     if test:
@@ -1952,7 +1995,7 @@ def main():
         boot = deskboot.theme(state)
         deskboot.show(display, boot, 0)
     else:
-        splash(display)
+        splash(display, state)
     midi = None
     if not sim:
         # MIDI gets its own process, forked before any thread exists (App.run lowers the drawing

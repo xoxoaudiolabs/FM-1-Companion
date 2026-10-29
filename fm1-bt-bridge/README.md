@@ -26,7 +26,8 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 
 ## What you need
 
-- Pi Zero W with the Waveshare 1.3" OLED HAT (SH1106, KEY1–3 and a joystick)
+- Pi Zero W with the Waveshare 1.3" OLED HAT (SH1106, KEY1–3 and a joystick), or the Waveshare 1.44" LCD HAT
+  (ST7735S, 128×128 colour, the same keys and joystick; v2.10)
 - microSD card (8 GB or more)
 - A **micro-USB OTG adapter** and a cable to the FM-1, plugged into the Zero's port labelled **USB**
 - A good **5 V 2.5 A** supply into the port labelled **PWR**. The Zero powers the FM-1 too.
@@ -55,6 +56,15 @@ FM-1 ──USB──▶ Pi Zero W ─┤
    after reboots until you turn it back on the same way, for example to SSH in for an update.
 
 The screen shows the Companion about 30–40 seconds after power-on.
+
+**With the 1.44" LCD HAT:** the Pi can't ask a HAT which one it is, so tell the Companion once, over SSH, and
+restart it. Every screen is then drawn in colour, and Settings › Theme picks the colours (FM-1 A's, SLOOP's five
+or the Studio's eight):
+```
+python3 -c "import json,pathlib as p;f=p.Path.home()/'.config/fm1-bridge/fm1-bridge.json';d=json.loads(f.read_text()) if f.exists() else {};d['screen']='lcd';f.parent.mkdir(parents=True,exist_ok=True);f.write_text(json.dumps(d))"
+systemctl --user restart fm1-bridge
+```
+Set `'oled'` the same way to go back to the OLED HAT.
 
 ## Using it
 
@@ -528,6 +538,9 @@ The main files; the [main README](../README.md) lists every one, the Studio's in
 | `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service, its link to the FM-1's USB MIDI and to USB keyboards, the clock and the MIDI matrix |
 | `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
 | `meters.py` | `~/.local/share/fm1-bridge/` | The eleven meters, recording and playback, pitch detection |
+| `lcd.py` | `~/.local/share/fm1-bridge/` | The 1.44" LCD HAT (ST7735S) |
+| `pocketui.py` | `~/.local/share/fm1-bridge/` | The screens on the LCD, in colour, and Settings › Theme |
+| `pocketmeters.py` | `~/.local/share/fm1-bridge/` | The eleven meters on the LCD |
 | `midiui.py` | `~/.local/share/fm1-bridge/` | The MIDI matrix screens, Arp/Chord switches and route presets |
 | `metronome.py` | `~/.local/share/fm1-bridge/` | The metronome's click stream (run by the MIDI process) |
 | `library.py` | `~/.local/share/fm1-bridge/` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |

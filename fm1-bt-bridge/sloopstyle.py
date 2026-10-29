@@ -35,6 +35,36 @@ PALETTES = {
 }
 NAMES = list(PALETTES)                      # SLOOP's palette numbers: 0 GREEN ... 4 MONO
 TRACKS = [rgb(40, 124, 255), rgb(30, 204, 112), rgb(255, 198, 24), rgb(255, 98, 26)]   # blue, green, yellow, orange
+
+# the Studio's own themes, after SLOOP's five (FM-1 A can't show these): the five steps, the four track colours,
+# the background and the highlight
+EXTRA = {
+    "NEON NOIR": ([rgb(46, 14, 64), rgb(92, 26, 120), rgb(186, 40, 190), rgb(255, 56, 170), rgb(60, 236, 255)],
+                  [rgb(255, 40, 160), rgb(0, 224, 255), rgb(156, 84, 255), rgb(196, 255, 40)],
+                  rgb(8, 4, 16), rgb(230, 250, 255)),
+    "KAWAII": ([rgb(110, 84, 150), rgb(146, 116, 190), rgb(216, 174, 255), rgb(255, 168, 214), rgb(255, 252, 176)],
+               [rgb(255, 168, 214), rgb(176, 208, 255), rgb(174, 255, 246), rgb(255, 252, 176)],
+               rgb(74, 52, 110), rgb(255, 255, 255)),
+    "BUBBLEGUM": ([rgb(176, 52, 124), rgb(214, 92, 162), rgb(255, 150, 204), rgb(255, 204, 230), rgb(255, 255, 255)],
+                  [rgb(255, 255, 255), rgb(255, 172, 216), rgb(255, 84, 176), rgb(236, 150, 255)],
+                  rgb(130, 22, 88), rgb(255, 255, 255)),
+    "SYNTHWAVE": ([rgb(56, 20, 84), rgb(110, 32, 128), rgb(196, 52, 150), rgb(255, 92, 132), rgb(255, 192, 88)],
+                  [rgb(255, 64, 150), rgb(255, 140, 40), rgb(40, 210, 255), rgb(170, 90, 255)],
+                  rgb(16, 6, 34), rgb(255, 236, 200)),
+    "8-BIT": ([rgb(36, 70, 36), rgb(56, 104, 48), rgb(100, 140, 24), rgb(139, 172, 15), rgb(196, 220, 90)],
+              [rgb(196, 220, 90), rgb(90, 150, 70), rgb(236, 240, 180), rgb(130, 170, 30)],
+              rgb(15, 40, 15), rgb(224, 240, 170)),
+    "INFERNO": ([rgb(60, 10, 4), rgb(120, 24, 8), rgb(200, 56, 10), rgb(255, 130, 20), rgb(255, 222, 90)],
+                [rgb(255, 60, 30), rgb(255, 150, 20), rgb(255, 230, 80), rgb(200, 40, 120)],
+                rgb(14, 2, 0), rgb(255, 246, 220)),
+    "TOXIC": ([rgb(30, 50, 10), rgb(60, 100, 14), rgb(110, 180, 20), rgb(170, 245, 30), rgb(220, 255, 120)],
+              [rgb(170, 245, 30), rgb(190, 70, 255), rgb(255, 230, 40), rgb(40, 230, 190)],
+              rgb(6, 10, 4), rgb(240, 255, 220)),
+    "DEEP SEA": ([rgb(4, 40, 56), rgb(8, 74, 100), rgb(16, 130, 150), rgb(40, 200, 200), rgb(160, 250, 236)],
+                 [rgb(40, 150, 255), rgb(40, 230, 180), rgb(255, 210, 120), rgb(255, 110, 140)],
+                 rgb(2, 10, 22), rgb(230, 255, 252)),
+}
+ALL = NAMES + list(EXTRA)                   # MORE > THEME's list
 GREYS = [rgb(26, 26, 30), rgb(54, 54, 60), rgb(118, 118, 126), rgb(196, 196, 204)]     # tiles, empty, labels, text
 
 THEME_MAGIC = 0x324D4854                    # "THM2": SLOOP 2.7's theme record (gfx.c theme_t, 40 bytes)
@@ -45,17 +75,29 @@ def scale(c, num, den):
     return tuple(v * num // den for v in c)
 
 
+def mix(c, bg, num, den):
+    """num/den of c, the rest bg"""
+    return tuple((v * num + b * (den - num)) // den for v, b in zip(c, bg))
+
+
 class Theme:
     """the colours to draw with: c[0..4] (the screen's steps), bg, hi (white unless a custom theme says),
     track[k] (full), mid[k] (2/3), dim[k] (1/3), grey[0..3] (adjusted for a non-black background, as SLOOP)"""
 
-    def __init__(self, name="GREEN", c=None, tracks=None, bg=(0, 0, 0), hi=(255, 255, 255)):
+    def __init__(self, name="GREEN", c=None, tracks=None, bg=None, hi=None):
+        own = EXTRA.get(name) if c is None else None    # one of the Studio's own, by name
+        if own:
+            c, tracks, bg, hi = own[0], tracks or own[1], bg or own[2], hi or own[3]
         self.name = name                      # (colours as tuples: a theme read back from JSON has lists, which
         self.c = [tuple(x) for x in (c or PALETTES.get(name, PALETTES["GREEN"]))]   # Pillow 11 refuses)
-        self.bg, self.hi = tuple(bg), tuple(hi)
+        self.bg, self.hi = tuple(bg or (0, 0, 0)), tuple(hi or (255, 255, 255))
         self.track = [tuple(t) for t in (tracks or TRACKS)]
-        self.mid = [scale(t, 2, 3) for t in self.track]
-        self.dim = [scale(t, 1, 3) for t in self.track]
+        if name in EXTRA:                     # the Studio's own: dimmed toward their background, not black
+            self.mid = [mix(t, self.bg, 2, 3) for t in self.track]
+            self.dim = [mix(t, self.bg, 1, 3) for t in self.track]
+        else:
+            self.mid = [scale(t, 2, 3) for t in self.track]
+            self.dim = [scale(t, 1, 3) for t in self.track]
         self.grey = [self.toward(g) for g in GREYS]
 
     def toward(self, grey):
@@ -113,11 +155,11 @@ def theme_load(d):
 _fonts = {}
 
 
-def font(bold=True):
-    """Terminus 16 px (8 x 16 cells), SLOOP's font, as a Pillow font"""
-    key = "b" if bold else "n"
+def font(bold=True, size=16):
+    """Terminus 16 px (8 x 16 cells), SLOOP's font, as a Pillow font; size 12 (6 x 12, the Pocket's LCD: no bold)"""
+    key = f"{size}{'n' if size == 12 or not bold else 'b'}"
     if key not in _fonts:
-        name = f"ter-u16{key}"
+        name = f"ter-u{key}"
         pil = CACHE / f"{name}.pil"
         if not pil.exists():
             from PIL import BdfFontFile

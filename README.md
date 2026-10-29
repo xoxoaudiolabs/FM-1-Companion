@@ -25,10 +25,10 @@ your phone.
 | | **The Pocket** | **The Studio** |
 |---|---|---|
 | Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
-| Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
+| Screen and controls | 1.3" OLED, or the 1.44" colour LCD (v2.10); joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
 | Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, played from an FM-1; DJ decks played from a Hercules DJ controller; an MPC-style sampler with SLOOP's sequencer, punch-in FX and an 808 kit, a recorder, a headphone jack with DJ-style cue, every USB MIDI device routed on its own, a DAW control surface (Kraken; Ableton Live untested), four USB ports, Ethernet, HDMI out |
-| Software | v2.9 | Studio v1.6, and newer work on main (running on the real hardware since October 2026) |
+| Software | v2.10 | Studio v1.6, and newer work on main (running on the real hardware since October 2026) |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do.
@@ -155,6 +155,49 @@ X0X's screen (X0X's own picture).
 </details>
 
 ## What's new
+
+### Pocket v2.10: a colour screen
+
+| HOME | Settings › Theme | A meter |
+|---|---|---|
+| ![The Pocket's HOME on the 1.44" LCD](docs/images/lcd-status.png) | ![Settings, Theme: KAWAII under the cursor](docs/images/lcd-theme-pick.png) | ![The Spectrum meter on the LCD](docs/images/lcd-meter-spectrum.png) |
+
+*Drawn by the Companion's own code on a computer (`tools/render_screens.py --lcd`). Seen on the real Pocket's LCD
+with an FM-1 plugged in.*
+
+- **The Waveshare 1.44" LCD HAT** (128×128 colour, ST7735S) as well as the 1.3" OLED, with the same keys and
+  joystick. The Pi can't ask a HAT which one it is, so it's a setting:
+  [the setup guide](fm1-bt-bridge/README.md#set-up) has the one line that switches it.
+- **Every screen redrawn for it, with the Studio's look:** SLOOP's colours and its Terminus font. HOME has FM-1 A,
+  the speaker and MIDI as rows like the Studio's. Lists show six rows where the OLED shows three. The MIDI routes,
+  the sample editor (its selection, markers and fades in colour), the screensaver and the start-up screen are
+  redrawn too.
+- **The eleven meters redrawn** in colour: levels green, yellow from −12 dBFS, red from −6.
+- **Settings › Theme:** FM-1 A's colours (as SLOOP's MENU › COLOR shows them, a theme made in SLOOP's editor
+  included), SLOOP's five palettes, or the Studio's eight themes (NEON NOIR, KAWAII, BUBBLEGUM, SYNTHWAVE, 8-BIT,
+  INFERNO, TOXIC, DEEP SEA). The screen shows each one as you scroll to it.
+- **The OLED's screens are unchanged:** every one, the meters included, draws the same as in v2.9, pixel for pixel
+  (compared on a computer).
+
+<details><summary>Every screen on the LCD, the meters, and HOME in each theme</summary>
+
+| | | |
+|---|---|---|
+| ![Settings: Playing](docs/images/lcd-settings-play.png) | ![The MIDI routes with two FM-1s](docs/images/lcd-matrix-two.png) | ![The mixer](docs/images/lcd-settings-mixer.png) |
+| Settings: Playing | MIDI routes, two FM-1s | The mixer |
+| ![The sample editor](docs/images/lcd-editor.png) | ![A recording](docs/images/lcd-recordings.png) | ![Speakers found by a scan](docs/images/lcd-speakers.png) |
+| The sample editor | A recording | Speakers found by a scan |
+| ![Recording](docs/images/lcd-status-rec.png) | ![A route](docs/images/lcd-route.png) | ![A SLOOP update running](docs/images/lcd-job.png) |
+| Recording: REC and the time | A route's options | A SLOOP update running |
+
+**The eleven meters** (joystick left from HOME; up/down changes meter, press records)
+
+![The Pocket's eleven meters on the LCD](docs/images/lcd-meters.png)
+
+**HOME in each theme:** SLOOP's five, then the Studio's eight
+
+![HOME in each of the thirteen themes](docs/images/lcd-themes.png)
+</details>
 
 ### Since Studio v1.6 (on main, not a numbered release yet): MIDI recording, an 808 kit, a speaker that comes back
 
@@ -419,8 +462,8 @@ automated tests, but hasn't been tried on the real box yet: it's in the second l
 
 ### The Pocket
 
-A Pi Zero W on Raspberry Pi OS Lite (Trixie) with the Waveshare OLED HAT and a PiSugar 3; FM-1s on SLOOP 2.7 and
-2.8; a JBL Go 3; an M-VAVE SMK-37 (over Bluetooth MIDI, and over USB through an ASMedia ASM1074 hub, running Baud
+A Pi Zero W on Raspberry Pi OS Lite (Trixie) with the Waveshare OLED HAT, later the Waveshare 1.44" LCD HAT on the
+Waveshare Ethernet/USB HUB HAT, and a PiSugar 3; FM-1s on SLOOP 2.7 and 2.8; a JBL Go 3; an M-VAVE SMK-37 (over Bluetooth MIDI, and over USB through an ASMedia ASM1074 hub, running Baud
 Girl next to two FM-1s).
 
 **Tested**
@@ -439,10 +482,18 @@ Girl next to two FM-1s).
   playing to a speaker).
 - Start-up: about 54 s from power-on to the Companion (measured on Trixie).
 - The Bars, VU, Spectrum and Scope meters: about a quarter of the CPU while shown, no audio dropouts.
+- The 1.44" LCD HAT (v2.10): every screen, the meters and Settings › Theme, with an FM-1 plugged in. A meter frame
+  takes 15–31 ms to draw on the Zero W.
+- Reading FM-1 A's theme at start-up for the LCD (a theme made in SLOOP's editor).
+- The HUB HAT under it: the Zero W finds its USB hub and Ethernet adapter, with no under-voltage.
 
 **Not tested on the real Pocket yet**
-- Anything new in v2.9: v2.9 hasn't been on the Pocket yet. That's connecting to Bluetooth MIDI keyboards (BT keys)
-  and several Bluetooth MIDI devices at once.
+- From v2.9: connecting to Bluetooth MIDI keyboards (BT keys) and several Bluetooth MIDI devices at once. v2.9 runs
+  on the Pocket, but no such keyboard has been tried.
+- v2.10 on the OLED HAT: its screens are compared as pictures on a computer only.
+- Following FM-1 A's colours on the LCD as they change: the theme is read, but the screen hasn't been watched
+  following a change.
+- The HUB HAT's Ethernet (no cable tried) and its extra USB ports.
 - The web app (tried only in a browser with sample data, [on the website](https://xoxoaudiolabs.com/app/)).
 - The safe shutdown at 5% battery.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
@@ -587,6 +638,8 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
   - They need FM-1 A running SLOOP with REMOTE OUT (a build of our own, not isod89's release); the official SLOOP
     sends only its keys, not its buttons or knobs.
   - FM-1 A's own SLOOP plays too. Turn FM-1 A down in the MIXER to hear only the Studio's app.
+- **Moving the card to another Pi:** Bluetooth pairings belong to the Pi's own Bluetooth chip, so speakers,
+  keyboards and phones need pairing again (seen when the Pocket moved to another Zero W).
 - **With two FM-1s (or a keyboard's synth), plain recordings need the speaker connected** to hear the whole mix;
   with Record parts on, the mix is made from the parts and needs none. Firmware installs wait until only one FM-1
   is plugged in.
@@ -601,6 +654,9 @@ they aren't filmed. Their audio is real: played on the FM-1s and recorded by the
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens |
 | `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the Pocket |
+| `fm1-bt-bridge/lcd.py` | The Pocket's 1.44" LCD HAT (ST7735S) |
+| `fm1-bt-bridge/pocketui.py` | The Pocket's screens on the LCD, in colour, and Settings › Theme |
+| `fm1-bt-bridge/pocketmeters.py` | The eleven meters on the LCD |
 | `fm1-bt-bridge/battery.py` | The PiSugar battery's charge, read over I2C |
 | `fm1-bt-bridge/device.py` | Which build a box is and what its hardware can do |
 | `fm1-bt-bridge/deskui.py` | The Studio's touch screens and tabs; starting SLOOP or X0X on the Studio and their margins |

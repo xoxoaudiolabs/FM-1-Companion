@@ -348,6 +348,190 @@ def test_pack_pages():
     assert bridge.pack_pages(img) == slow
 
 
+def test_lcd():
+    """the 1.44" LCD (lcd.py): a 128x64 screen in its ink in the middle of the 128x128 panel, turned round for the
+    LCD's place on the HAT; dimmed, a third of the ink; RGB pictures whole; the "screen" setting picks it"""
+    import random
+    import lcd
+    from PIL import Image
+    img = Image.frombytes("1", (128, 64), bytes(random.getrandbits(8) for _ in range(1024)))
+    two = Image.merge("RGB", [img.convert("L").point(lambda v, c=c: c if v else 0) for c in (255, 128, 0)])
+    assert lcd.mono565(img, (255, 128, 0)) == lcd.rgb565(two)
+    sent = []
+
+    class Spi:
+        def writebytes(self, data):
+            sent.append(("cmd", list(data)))
+
+        def writebytes2(self, data):
+            sent.append(("pixels", bytes(data)))
+
+    class Pins:
+        def set_value(self, pin, value):
+            pass
+    screen = lcd.ST7735.__new__(lcd.ST7735)
+    screen.spi, screen.pins, screen.on, screen.off = Spi(), Pins(), 1, 0
+    screen.rotate, screen.ink, screen.dim = 0, (255, 255, 255), False
+    screen.show(img)
+    rows = sent[-3][1]                                     # RASET: rows 32 .. 95 of the panel
+    assert sent[-4][1] == [0x2B] and rows == [0, lcd.Y0 + 32, 0, lcd.Y0 + 95]
+    assert sent[-1][1] == lcd.mono565(img.rotate(lcd.TURN), (255, 255, 255))
+    screen.contrast(1)
+    screen.show(img)
+    assert sent[-1][1] == lcd.mono565(img.rotate(lcd.TURN), (85, 85, 85))
+    screen.show(two.resize((128, 128)))
+    assert len(sent[-1][1]) == 128 * 128 * 2
+    assert bridge.DEFAULTS["screen"] == "oled"
+
+
+def test_colour_home():
+    """the LCD gets HOME in colour (pocketui), 128x128, in FM-1 A's theme (or one fixed in the settings), with its
+    volume box; the OLED keeps its own HOME; the library reads FM-1 A's theme for the LCD too"""
+    import json
+    import library
+    import sloopstyle as st
+
+    class Lcd(Capture):
+        colour = True
+    app = bridge.App(Lcd(), dict(bridge.DEFAULTS, last_name="JBL Go 3"))
+    app.screen = "status"
+    library.THEME.parent.mkdir(parents=True, exist_ok=True)
+    library.THEME.write_text(json.dumps(st.theme_dict(st.Theme("AMBER"))))
+    app.render(force=True)
+    img = app.display.image
+    assert img.mode == "RGB" and img.size == (128, 128)
+    assert img.getpixel((60, 18)) == st.Theme("AMBER").c[0]          # the header's rule, in FM-1 A's colour
+    assert app.home()["out"] == "JBL Go 3 (off)" and app.home()["fm1"] == "FM-1 not found"
+    app.state["desk_theme"], app.theme_check = "KAWAII", 0.0
+    app.volume, app.volume_shown = 40, time.monotonic() + 5
+    app.render(force=True)
+    assert app.display.image.getpixel((1, 1)) == st.Theme("KAWAII").bg
+    assert app.display.image.getpixel((4, 60)) == st.Theme("KAWAII").c[3]       # the volume box's edge
+    oled = bridge.App(Capture(), dict(bridge.DEFAULTS))
+    oled.screen = "status"
+    oled.render(force=True)
+    assert oled.display.image.size == (128, 64) and oled.display.image.mode == "1"
+    was, library.SETTINGS = library.SETTINGS, TMP / "settings.json"     # (not the PC's own settings)
+    try:
+        library.SETTINGS.write_text(json.dumps({"screen": "lcd"}))
+        assert library.colour_screen()
+        library.SETTINGS.write_text(json.dumps({"screen": "oled", "build": "pocket"}))
+        assert not library.colour_screen()
+    finally:
+        library.SETTINGS = was
+
+
+def test_colour_screens():
+    from PIL import Image, ImageDraw
+    """every screen on the LCD in colour (a list's cursor row lit, six rows to a page; the sample editor's
+    selection and markers; the screen saver), a screen not drawn there the OLED's picture in the theme's colours;
+    a hint too long for 21 characters still fits; the OLED keeps its own pictures"""
+    import pocketui
+    import sloopstyle as st
+
+    class Lcd(Capture):
+        colour = True
+    app = bridge.App(Lcd(), dict(bridge.DEFAULTS, desk_theme="CYAN"))
+    t = st.Theme("CYAN")
+    app.pick = {"title": "Load project", "cursor": 7, "items": [(f"project {i}", "1 MB") for i in range(9)]}
+    app.confirm = {"title": "Restore", "lines": ["Replaces FM-1 A's projects"]}
+    app.job_title = "Backing up"
+    app.scan_kind = "audio"
+    app.route_key = next(iter(app.routes()))             # (route and channels open on one route, with its own
+    app.set_route(channels=list(range(16)))              # channel map for channels)
+    wave = [(-abs(math.sin(i / 7)), abs(math.sin(i / 7))) for i in range(128)]
+    app.ed = {"loading": False, "error": None, "field": 1, "seconds": 4.0, "start": 1.0, "end": 3.0, "fade_in": 0.2,
+              "fade_out": 0.0, "normalize": False, "reverse": False, "note": None, "found": None, "wave": wave,
+              "out_name": "take"}
+    for screen in pocketui.SCREENS:
+        app.screen = screen
+        app.render(force=True)
+        assert app.display.image.size == (128, 128) and app.display.image.mode == "RGB", screen
+    app.screen = "pick"
+    app.render(force=True)
+    y = pocketui.TOP + 4 * pocketui.ROW_H + 5            # project 7 of 9: the page shows 3-8, its fifth row lit
+    assert app.display.image.getpixel((0, y)) == t.track[0] and app.display.image.getpixel((0, y - 15)) == t.bg
+    app.screen, app.message = "editor", None              # (no message box over it)
+    app.render(force=True)
+    img = app.display.image                              # the selection (blue), the End marker moving (yellow)
+    assert img.getpixel((64, pocketui.WAVE_TOP + 32)) == t.track[0] and img.getpixel((95, 60)) == t.track[2]
+    app.mode = "saver"
+    app.render()
+    assert set(app.display.image.getdata()) <= {(0, 0, 0), t.c[3]}
+    app.mode = "on"
+    mono = Image.new("1", (128, 64))
+    ImageDraw.Draw(mono).rectangle((10, 10, 20, 20), fill=1)
+    banded = pocketui.band(mono, t)
+    assert banded.getpixel((15, 47)) == t.c[4] and banded.getpixel((15, 10)) == t.bg
+    oled = bridge.App(Capture(), dict(bridge.DEFAULTS))
+    oled.ed, oled.screen = app.ed, "editor"
+    oled.render(force=True)
+    assert oled.display.image.size == (128, 64) and oled.display.image.mode == "1"
+    img = Image.new("RGB", (128, 128))
+    pocketui.footer(ImageDraw.Draw(img), t, "press = pair   K1 = rescan")
+    assert img.getbbox()[2] <= 128
+
+
+def test_colour_meters():
+    """every meter on the LCD (pocketmeters), from the same state as the OLED's: a loud tone lights the bars red
+    and turns the Tape's reels; each meter draws more than its header and hint; REC shows in the header"""
+    import pocketui
+    t = np.arange(meters.RECENT_N) / meters.RATE
+    loud = np.stack([np.sin(2 * math.pi * 440 * t)] * 2, axis=1) * 32000
+    app, display = make_app(loud.astype(np.int16))
+    app.display = display
+    display.colour = True
+    app.midi = FakeMidi()
+    app.midi.clock = {"bpm": 120, "source": "box", "playing": True, "bar": time.monotonic() - 0.6}
+    for index, name in enumerate(meters.METERS):
+        app.state["meter"] = index
+        app.open_meters()
+        for _ in range(3):
+            app.render(force=True)
+            time.sleep(0.05)
+        img = display.image
+        assert img.size == (128, 128) and img.mode == "RGB", name
+        room = img.crop((0, 22, 128, pocketui.FOOT - 2))
+        assert room.getbbox() and len(set(room.getdata())) > 2, name                # the meter itself drawn
+        if name == "Bars":
+            assert pocketui.REC in set(img.crop((100, 30, 124, 52)).getdata())       # 0 dBFS: the red segments
+            assert app.m_hold[0][0] > -1
+        if name == "Tape":
+            assert app.m_reels[0] > 0                                                 # sound turns the reels
+    app.recorder.recording, app.recorder.seconds = lambda: True, lambda now=None: 75
+    app.render(force=True)
+    assert pocketui.REC in set(display.image.crop((70, 2, 127, 15)).getdata())       # REC 1:15 in the header
+
+
+def test_colour_themes():
+    """Settings > Theme, on the LCD only: FOLLOW FM-1 A, SLOOP's five and the Studio's own, the screen showing the
+    one under the cursor; press uses it; the OLED's Settings has no such row"""
+    import sloopstyle as st
+
+    class Lcd(Capture):
+        colour = True
+    app = bridge.App(Lcd(), dict(bridge.DEFAULTS, desk_theme="AMBER"))
+    app.save_settings = lambda: None
+    app.screen, app.settings_menu = "settings", None
+    keys = [r[0] for r in app.settings_rows()]
+    assert "theme" in keys and dict((k, v) for k, _, v in app.settings_rows())["theme"] == "AMBER"
+    app.setting = keys.index("theme")
+    app.change_setting()
+    assert app.screen == "pick" and [i[2] for i in app.pick["items"]] == ["follow"] + st.ALL
+    assert app.pick["items"][app.pick["cursor"]][2] == "AMBER"          # the cursor on the one in use
+    app.library_key("down", False)                                      # CYAN, shown before it's chosen
+    app.render(force=True)
+    assert app.display.image.getpixel((60, 18)) == st.Theme("CYAN").c[0]
+    assert app.state["desk_theme"] == "AMBER"
+    app.library_key("press", False)
+    assert app.state["desk_theme"] == "CYAN" and app.screen == "settings"
+    app.render(force=True)
+    assert app.display.image.getpixel((60, 18)) == st.Theme("CYAN").c[0]
+    oled = bridge.App(Capture(), dict(bridge.DEFAULTS))
+    oled.settings_menu = None
+    assert "theme" not in [r[0] for r in oled.settings_rows()]
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

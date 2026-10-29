@@ -520,6 +520,7 @@ class MeterScreens:
         self.m_tune = None                              # Tuner: [note, octave, cents, Hz, when last heard]
         self.m_base = 48                                # MIDI: the keyboard's lowest C (C3)
         self.m_wf = None                                # Waterfall: the picture so far (rows x 128, bool)
+        self.m_wfl = None                               # ... on the LCD: its levels so far (pocketmeters)
         self.m_corr = 0.0                               # Stereo: correlation, smoothed
         self.m_hist, self.m_hacc, self.m_hnext = [], FLOOR, 0.0   # History: dB per column, this column, its end
 
@@ -710,19 +711,11 @@ class MeterScreens:
         if style == "Beat":
             self.draw_beat(d, now)
             return img
-        problem = ("FM-1 not found" if not self.source else None if numpy() else
-                   "Needs python3-numpy" if _np_state == "missing" else "Loading meters...")
+        problem = self.meter_problem()
         if problem:
             d.text(((128 - d.textlength(problem, font=self.f_body)) / 2, 30), problem, font=self.f_body, fill=1)
             return img
-        pending, recent = self.levels.take()
-        peak, rms = levels(pending)
-        dt = min(0.5, now - self.m_time) if self.m_time else 0.1
-        self.m_time = now
-        if max(peak) > 100:                   # sound (above -50 dBFS): keep the screen on while it plays
-            self.last_activity = now
-            if self.mode == "dim":
-                self.wake()
+        dt, peak, rms, recent = self.meter_sound(now)
         {"Bars": self.draw_bars, "VU": self.draw_vu, "Spectrum": self.draw_spectrum,
          "Scope": self.draw_scope, "Tape": self.draw_tape, "Tuner": self.draw_tuner,
          "Waterfall": self.draw_waterfall, "Stereo": self.draw_stereo, "History": self.draw_history}[style](
@@ -735,6 +728,110 @@ class MeterScreens:
                 d.ellipse((1, 2, 6, 7), fill=1)
             d.text((9, 0), text, font=self.f_small, fill=1)
         return img
+
+    def meter_problem(self):
+        """why a meter that listens can't (None: it can)"""
+        return ("FM-1 not found" if not self.source else None if numpy() else
+                "Needs python3-numpy" if _np_state == "missing" else "Loading meters...")
+
+    def meter_sound(self, now):
+        """the sound since the last frame: (seconds since it, peak and RMS per channel, the recent frames); sound
+        keeps the screen on"""
+        pending, recent = self.levels.take()
+        peak, rms = levels(pending)
+        dt = min(0.5, now - self.m_time) if self.m_time else 0.1
+        self.m_time = now
+        if max(peak) > 100:                   # sound (above -50 dBFS): keep the screen on while it plays
+            self.last_activity = now
+            if self.mode == "dim":
+                self.wake()
+        return dt, peak, rms, recent
+
+    # ---- each meter's state, a frame on (step_), then the OLED's drawing of it (draw_)
+
+    def step_bars(self, now, dt, peak):
+        """the bars' levels in dB; their peak holds (m_hold) held 1.5 s, then falling"""
+        out = []
+        for ch in (0, 1):
+            level = max(FLOOR, db(peak[ch]))
+            hold = self.m_hold[ch]
+            if level >= hold[0] or now - hold[1] > 1.5:  # peak hold for 1.5 s, then it falls
+                hold[:] = [level, now] if level >= hold[0] else [max(level, hold[0] - 30 * dt), hold[1]]
+            out.append(level)
+        return out
+
+    def step_vu(self, now, dt, peak, rms):
+        """the needles (m_vu: 1.0 = 0 VU) with VU ballistics; m_clip: when each channel last came near 0 dBFS"""
+        k = 1 - math.exp(-dt / 0.3)           # VU ballistics: ~300 ms to rise and fall
+        for ch in (0, 1):
+            target = rms[ch] / (FULL * 10 ** (VU_REF / 20))           # 1.0 = 0 VU
+            self.m_vu[ch] += (target - self.m_vu[ch]) * k
+            if peak[ch] > FULL * 0.89:        # within 1 dB of full scale
+                self.m_clip[ch] = now
+
+    def step_spectrum(self, dt, recent):
+        """the 16 bands (m_bands, falling 45 dB/s) and their caps (m_caps, 20 dB/s)"""
+        if len(recent):
+            fresh = spectrum(recent)
+            self.m_bands = [max(f, b - 45 * dt) for f, b in zip(fresh, self.m_bands)]   # falls 45 dB/s
+        self.m_caps = [max(level, cap - 20 * dt) for level, cap in zip(self.m_bands, self.m_caps)]
+
+    def step_tape(self, dt, peak):
+        """the tape packs' radii (left, right: wound over TAPE_SECONDS while recording); the reels turn (m_reels)
+        whenever sound plays, the smaller pack faster"""
+        moving = self.recorder.recording() or max(peak) > 100
+        done = self.tape_done
+        packs = (math.sqrt(HUB_R ** 2 + (1 - done) * ((REEL_R - 1) ** 2 - HUB_R ** 2)),
+                 math.sqrt(HUB_R ** 2 + done * ((REEL_R - 1) ** 2 - HUB_R ** 2)))
+        if moving:                            # constant tape speed: the smaller pack turns faster
+            for i, pack in enumerate(packs):
+                self.m_reels[i] += 40 * dt / max(pack, HUB_R + 1)
+        return packs
+
+    def step_tuner(self, now, dt, peak, recent):
+        """the note heard: [name, octave, cents (steadied), Hz, when], or None after 1.5 s of nothing"""
+        if len(recent) >= 256 and max(peak) > FULL * 0.01:                 # above -40 dBFS
+            x = recent[-1024:].astype(_np.float32).mean(axis=1)              # 64 ms: E1 and up
+            freq, _ = pitch(x, RATE, hi=2500.0)
+            if freq:
+                name, octave, cents, _ = note_of(freq)
+                if self.m_tune and self.m_tune[:2] == [name, octave]:
+                    cents = self.m_tune[2] + (cents - self.m_tune[2]) * min(1.0, dt * 6)   # steady pointer
+                self.m_tune = [name, octave, cents, freq, now]
+        if not self.m_tune or now - self.m_tune[4] > 1.5:                   # nothing heard for a moment
+            return None
+        return self.m_tune
+
+    def step_midi(self, now):
+        """the notes held and the channels busy (a bit each); playing keeps the screen on; the keyboard (m_base)
+        follows the hands an octave at a time"""
+        midi = self.midi
+        notes = sorted(getattr(midi, "notes", ()) or ())
+        chans = getattr(midi, "chans", 0) if midi else 0
+        if notes or chans:
+            self.last_activity = now          # playing keeps the screen on, as sound does
+            if self.mode == "dim":
+                self.wake()
+        if notes and not (self.m_base <= notes[0] and notes[-1] < self.m_base + 36):
+            self.m_base = max(0, min(84, 12 * (notes[0] // 12)))          # follow the hands, an octave at a time
+        return notes, chans
+
+    def step_waterfall(self, recent):
+        """the newest row: 64 bands' levels 0..1 (None without enough sound for one)"""
+        if len(recent) < SPECTRUM_N:
+            return None
+        return _np.clip((spectrum_bins(recent, waterfall_bins()) - FLOOR) / -FLOOR, 0, 1)
+
+    def step_stereo(self, dt, recent):
+        """the correlation, smoothed (m_corr: -1 .. +1)"""
+        self.m_corr += (correlation(recent) - self.m_corr) * min(1.0, dt * 4)
+
+    def step_history(self, now, peak):
+        """the loudest peak of each 0.4 s, the last 128 (m_hist)"""
+        self.m_hacc = max(self.m_hacc, db(max(peak)))
+        if now >= self.m_hnext:
+            self.m_hist = (self.m_hist + [self.m_hacc])[-128:]
+            self.m_hacc, self.m_hnext = FLOOR, now + HISTORY_STEP
 
     def meter_background(self, style):
         if style in self.meter_bg:
@@ -790,11 +887,8 @@ class MeterScreens:
         return img
 
     def draw_bars(self, d, now, dt, peak, rms, recent):
-        for ch, y in ((0, 14), (1, 30)):
-            level = max(FLOOR, db(peak[ch]))
+        for (ch, y), level in zip(((0, 14), (1, 30)), self.step_bars(now, dt, peak)):
             hold = self.m_hold[ch]
-            if level >= hold[0] or now - hold[1] > 1.5:  # peak hold for 1.5 s, then it falls
-                hold[:] = [level, now] if level >= hold[0] else [max(level, hold[0] - 30 * dt), hold[1]]
             for x in range(12, bar_x(level), 4):            # LED-style segments
                 d.rectangle((x, y, x + 2, y + 10), fill=1)
             if hold[0] > -48:
@@ -804,25 +898,18 @@ class MeterScreens:
                 d.text((58, 0), "CLIP", font=self.f_small, fill=1)
 
     def draw_vu(self, d, now, dt, peak, rms, recent):
-        k = 1 - math.exp(-dt / 0.3)           # VU ballistics: ~300 ms to rise and fall
+        self.step_vu(now, dt, peak, rms)
         for ch, cx in ((0, 31), (1, 96)):
-            target = rms[ch] / (FULL * 10 ** (VU_REF / 20))           # 1.0 = 0 VU
-            self.m_vu[ch] += (target - self.m_vu[ch]) * k
             angle = vu_angle(self.m_vu[ch])
             d.line((cx + 16 * math.sin(angle), 80 - 16 * math.cos(angle),
                     cx + 60 * math.sin(angle), 80 - 60 * math.cos(angle)), fill=1, width=2)
-            if peak[ch] > FULL * 0.89:        # within 1 dB of full scale
-                self.m_clip[ch] = now
             if now - self.m_clip[ch] < 0.6:
                 d.ellipse((cx + 24, 2, cx + 29, 7), fill=1)
 
     def draw_spectrum(self, d, now, dt, peak, rms, recent):
-        if len(recent):
-            fresh = spectrum(recent)
-            self.m_bands = [max(f, b - 45 * dt) for f, b in zip(fresh, self.m_bands)]   # falls 45 dB/s
+        self.step_spectrum(dt, recent)
         for i, level in enumerate(self.m_bands):
             h = spectrum_height(level)
-            self.m_caps[i] = max(level, self.m_caps[i] - 20 * dt)
             x = i * 8
             if h:
                 d.rectangle((x, 63 - h, x + 6, 63), fill=1)
@@ -831,27 +918,16 @@ class MeterScreens:
                 d.line((x, 63 - cap, x + 6, 63 - cap), fill=1)
 
     def draw_scope(self, d, now, dt, peak, rms, recent):
-        if len(recent) < 4:
-            return
-        np = numpy()
-        mono = recent.astype(np.float32).mean(axis=1)
-        rising = np.nonzero((mono[:-1] < 0) & (mono[1:] >= 0))[0]     # start on a rising zero: a steady trace
-        start = int(rising[0]) + 1 if len(rising) and rising[0] < len(mono) // 2 else 0
-        ys = (37 - mono[start:start + 256:2] * 26 / FULL).tolist()
-        if len(ys) > 1:
-            d.line(list(enumerate(ys)), fill=1)
+        trace = scope_trace(recent)
+        if trace is not None and len(trace) > 1:
+            d.line(list(enumerate((37 - trace * 26).tolist())), fill=1)
 
 
     def draw_tape(self, d, now, dt, peak, rms, recent):
         """Two reels: the tape winds from left to right while recording (the reels empty and fill over
         TAPE_SECONDS), and the reels turn whenever sound plays; the head's level bars between them."""
-        moving = self.recorder.recording() or max(peak) > 100
-        done = self.tape_done
-        packs = (math.sqrt(HUB_R ** 2 + (1 - done) * ((REEL_R - 1) ** 2 - HUB_R ** 2)),
-                 math.sqrt(HUB_R ** 2 + done * ((REEL_R - 1) ** 2 - HUB_R ** 2)))
+        packs = self.step_tape(dt, peak)
         for i, (cx, pack) in enumerate(zip(REELS, packs)):
-            if moving:                        # constant tape speed: the smaller pack turns faster
-                self.m_reels[i] += 40 * dt / max(pack, HUB_R + 1)
             a = self.m_reels[i]
             d.ellipse((cx - pack, REEL_Y - pack, cx + pack, REEL_Y + pack), fill=1)          # wound tape
             d.ellipse((cx - HUB_R, REEL_Y - HUB_R, cx + HUB_R, REEL_Y + HUB_R), fill=0, outline=1)
@@ -872,18 +948,11 @@ class MeterScreens:
 
     def draw_tuner(self, d, now, dt, peak, rms, recent):
         """The note being played, big, its frequency, and how far off in cents (a pointer over -50..+50)."""
-        if len(recent) >= 256 and max(peak) > FULL * 0.01:                 # above -40 dBFS
-            x = recent[-1024:].astype(_np.float32).mean(axis=1)              # 64 ms: E1 and up
-            freq, _ = pitch(x, RATE, hi=2500.0)
-            if freq:
-                name, octave, cents, _ = note_of(freq)
-                if self.m_tune and self.m_tune[:2] == [name, octave]:
-                    cents = self.m_tune[2] + (cents - self.m_tune[2]) * min(1.0, dt * 6)   # steady pointer
-                self.m_tune = [name, octave, cents, freq, now]
-        if not self.m_tune or now - self.m_tune[4] > 1.5:                   # nothing heard for a moment
+        tune = self.step_tuner(now, dt, peak, recent)
+        if not tune:                          # nothing heard for a moment
             d.text((52, 20), "- -", font=self.f_big, fill=1)
             return
-        name, octave, cents, freq = self.m_tune[:4]
+        name, octave, cents, freq = tune[:4]
         text = f"{name}{octave}"
         w = d.textlength(text, font=self.f_big)
         in_tune = abs(cents) < 5
@@ -901,14 +970,7 @@ class MeterScreens:
         """A three-octave keyboard lighting the notes played (to and from the FM-1), the chord's name, and
         which of the 16 channels have traffic."""
         midi = self.midi
-        notes = sorted(getattr(midi, "notes", ()) or ())
-        chans = getattr(midi, "chans", 0) if midi else 0
-        if notes or chans:
-            self.last_activity = now          # playing keeps the screen on, as sound does
-            if self.mode == "dim":
-                self.wake()
-        if notes and not (self.m_base <= notes[0] and notes[-1] < self.m_base + 36):
-            self.m_base = max(0, min(84, 12 * (notes[0] // 12)))          # follow the hands, an octave at a time
+        notes, chans = self.step_midi(now)
         chord = chord_name(notes)
         line = "  ".join(x for x in (chord, " ".join(note_name(n) for n in notes[:4])) if x) if notes else \
             ("no MIDI" if not midi else "")
@@ -945,8 +1007,8 @@ class MeterScreens:
         rows = 53
         if self.m_wf is None:
             self.m_wf = np.zeros((rows, 128), dtype=bool)
-        if len(recent) >= SPECTRUM_N:
-            level = np.clip((spectrum_bins(recent, waterfall_bins()) - FLOOR) / -FLOOR, 0, 1)
+        level = self.step_waterfall(recent)
+        if level is not None:
             self.m_wf = np.roll(self.m_wf, 1, axis=0)
             row = np.repeat(level, 2) * 16
             self.m_wf[0] = row > np.array(BAYER[int(now * 10) % 4] * 32)
@@ -955,24 +1017,17 @@ class MeterScreens:
     def draw_stereo(self, d, now, dt, peak, rms, recent):
         """A goniometer: mono is a vertical line, wide stereo a cloud, out of phase a horizontal line; the
         correlation below, -1 .. +1."""
-        np = _np
         if len(recent) < 8:
             return
-        x = recent[-512::2].astype(np.float32)
-        mid, side = (x[:, 0] + x[:, 1]) / 2, (x[:, 0] - x[:, 1]) / 2
-        gain = 21 / max(float(np.abs(mid).max()), float(np.abs(side).max()), 300.0)      # fills the circle
-        xs, ys = (64 + side * gain).tolist(), (32 - mid * gain).tolist()
-        d.point(list(zip(xs, ys)), fill=1)
-        self.m_corr += (correlation(recent) - self.m_corr) * min(1.0, dt * 4)
+        for x, y in goniometer(recent, 21):
+            d.point((64 + x, 32 - y), fill=1)
+        self.step_stereo(dt, recent)
         cx = 64 + int(round(40 * max(-1.0, min(1.0, self.m_corr))))
         d.polygon(((cx - 3, 51), (cx + 3, 51), (cx, 56)), fill=1)
 
     def draw_history(self, d, now, dt, peak, rms, recent):
         """The peak level over the last ~51 s, one column per 0.4 s, newest on the right."""
-        self.m_hacc = max(self.m_hacc, db(max(peak)))
-        if now >= self.m_hnext:
-            self.m_hist = (self.m_hist + [self.m_hacc])[-128:]
-            self.m_hacc, self.m_hnext = FLOOR, now + HISTORY_STEP
+        self.step_history(now, peak)
         x0 = 128 - len(self.m_hist)
         for i, level in enumerate(self.m_hist):
             if level > -48:
@@ -1014,6 +1069,27 @@ class MeterScreens:
                 d.rectangle((x, top, x + 22, 62), outline=1)
         if clock.get("playing"):
             d.text((0, 10), "▶", font=self.f_small, fill=1)
+
+
+def scope_trace(recent, points=128):
+    """the scope's trace: points values (-1 .. +1 of full scale, every other frame of the mono mix) from a rising
+    zero crossing in the first half, so a steady tone stands still; None without enough sound"""
+    if len(recent) < 4:
+        return None
+    np = numpy()
+    mono = recent.astype(np.float32).mean(axis=1)
+    rising = np.nonzero((mono[:-1] < 0) & (mono[1:] >= 0))[0]     # start on a rising zero: a steady trace
+    start = int(rising[0]) + 1 if len(rising) and rising[0] < len(mono) // 2 else 0
+    return mono[start:start + 2 * points:2] / FULL
+
+
+def goniometer(recent, radius):
+    """the Stereo meter's points: (side, mid) of the last 256 frames, scaled so the louder fills radius"""
+    np = _np
+    x = recent[-512::2].astype(np.float32)
+    mid, side = (x[:, 0] + x[:, 1]) / 2, (x[:, 0] - x[:, 1]) / 2
+    gain = radius / max(float(np.abs(mid).max()), float(np.abs(side).max()), 300.0)      # fills the circle
+    return list(zip((side * gain).tolist(), (mid * gain).tolist()))
 
 
 def beat_position(clock, now):

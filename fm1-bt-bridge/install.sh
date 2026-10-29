@@ -118,6 +118,9 @@ install -D -m 644 "$DIR/meters.py"                              ~/.local/share/f
 install -D -m 644 "$DIR/midiui.py"                              ~/.local/share/fm1-bridge/midiui.py
 install -D -m 644 "$DIR/metronome.py"                           ~/.local/share/fm1-bridge/metronome.py
 install -D -m 644 "$DIR/battery.py"                             ~/.local/share/fm1-bridge/battery.py
+install -D -m 644 "$DIR/lcd.py"                                 ~/.local/share/fm1-bridge/lcd.py
+install -D -m 644 "$DIR/pocketui.py"                            ~/.local/share/fm1-bridge/pocketui.py
+install -D -m 644 "$DIR/pocketmeters.py"                        ~/.local/share/fm1-bridge/pocketmeters.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
 install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py

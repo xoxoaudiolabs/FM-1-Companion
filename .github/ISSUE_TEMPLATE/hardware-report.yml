@@ -1,0 +1,77 @@
+name: Hardware report
+description: Built an FM-1 Companion on a board, screen or OS we haven't listed, or had trouble with one? Tell us.
+title: "Hardware: <board> + <screen>"
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for building one. What you tell us goes into the Compatibility tables (the "Reported by builders"
+        list), so others know what works. The quickest way to fill this in: run `fm1-report` on the box over SSH
+        and paste what it prints at the bottom.
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      options:
+        - Pi Zero W
+        - Pi Zero WH
+        - Pi Zero 2 W / 2 WH
+        - Pi 3 B+ (Studio)
+        - Pi 4 (Studio)
+        - Other (say in the notes)
+    validations:
+      required: true
+  - type: dropdown
+    id: screen
+    attributes:
+      label: Screen
+      options:
+        - Waveshare 1.3" OLED HAT (SPI)
+        - Waveshare 1.3" OLED HAT (switched to I2C)
+        - Waveshare 1.44" LCD HAT
+        - Waveshare 1.3" LCD HAT
+        - 3.5" touchscreen (Studio)
+        - Other (say in the notes)
+    validations:
+      required: true
+  - type: input
+    id: battery
+    attributes:
+      label: Battery
+      placeholder: "PiSugar 3, PiSugar 3 Plus, none..."
+  - type: input
+    id: os
+    attributes:
+      label: OS, and 32- or 64-bit
+      placeholder: "Raspberry Pi OS Lite Trixie, 32-bit"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Companion version
+      placeholder: "Pocket 2.10 (fm1-report says)"
+    validations:
+      required: true
+  - type: dropdown
+    id: works
+    attributes:
+      label: Does it work?
+      options:
+        - Works
+        - Partly
+        - Doesn't
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What works, what doesn't, what you changed. Speakers, keyboards or FM-1 firmware are useful too.
+  - type: textarea
+    id: report
+    attributes:
+      label: fm1-report output
+      description: Run `fm1-report` on the box and paste everything it prints.
+      render: text

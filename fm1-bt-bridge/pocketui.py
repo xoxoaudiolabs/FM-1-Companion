@@ -1,6 +1,7 @@
-"""The Pocket's screens on its 1.44" colour LCD (lcd.py), 128x128, with the Studio's feel: SLOOP's colours
-(sloopstyle.Theme, following FM-1 A as the Studio does) and its Terminus font, 12 px for the text (21 characters a
-line) and 16 px bold for titles. The keys and joystick work these screens as they do the OLED's; what each screen
+"""The Pocket's screens on a colour LCD (lcd.py), with the Studio's feel: SLOOP's colours (sloopstyle.Theme,
+following FM-1 A as the Studio does) and its Terminus font, 12 px for the text and 16 px bold for titles. Drawn at
+128x128 for the 1.44" LCD (21 characters a line, six rows to a list) or 120x120 for the 1.3" LCD, which shows
+them at twice the size on its 240x240 (19 characters, five rows): use_size() picks one (GEOMETRY). The keys and joystick work these screens as they do the OLED's; what each screen
 shows comes from the same methods the OLED's screens use.
 
 PocketScreens (a part of the app, as LibraryScreens and MidiScreens are) draws HOME, Settings, the Bluetooth
@@ -17,13 +18,27 @@ from PIL import Image, ImageDraw
 import library
 import sloopstyle as st
 
-W = H = 128
 REC = st.rgb(226, 64, 48)                       # REC, as the Studio's STOP REC button
-ROWS, ROW_H, TOP, FOOT = 6, 15, 22, 112         # a list: six rows of 15 px under the header, the hint at the foot
+ROW_H, TOP = 15, 22                             # a list's rows under the header
+GEOMETRY = {                                    # each size's layout: the screen, rows to a list, where the hint goes,
+    128: {"W": 128, "ROWS": 6, "FOOT": 112, "CHARS": 21, "HOME": (23, 52, 81), "WAVE": (32, 96), "FIELD": 15},
+    120: {"W": 120, "ROWS": 5, "FOOT": 104, "CHARS": 19, "HOME": (23, 50, 77), "WAVE": (32, 88), "FIELD": 14},
+}                                               # characters a line, HOME's rows, the editor's waveform and field strip
+W = H = 128
+ROWS, FOOT, CHARS, HOME_ROWS, FIELD_STEP = 6, 112, 21, (23, 52, 81), 15
 SCREENS = ("status", "settings", "scan", "pick", "confirm", "job", "player", "matrix", "route", "presets",
            "chanmap", "meter", "editor")        # drawn here (the meters: pocketmeters); any other: the OLED's
                                                 # picture in the theme's colours (band)
 WAVE_TOP, WAVE_BOTTOM = 32, 96                  # the sample editor's waveform (its times under it)
+
+
+def use_size(size):
+    """draw at size (128 or 120) from now on: every screen here and in pocketmeters reads these"""
+    global W, H, ROWS, FOOT, CHARS, HOME_ROWS, FIELD_STEP, WAVE_TOP, WAVE_BOTTOM
+    g = GEOMETRY.get(size, GEOMETRY[128])
+    W = H = g["W"]
+    ROWS, FOOT, CHARS, HOME_ROWS, FIELD_STEP = g["ROWS"], g["FOOT"], g["CHARS"], g["HOME"], g["FIELD"]
+    WAVE_TOP, WAVE_BOTTOM = g["WAVE"]
 
 
 def small():
@@ -105,16 +120,16 @@ def header(img, d, t, title, home=None, sub="", right=""):
 
 def footer(d, t, hint):
     """the hint under the rule: its parts (the OLED's hints space them apart) at the left and the right, "x = y"
-    as "x=y" where 21 characters aren't enough"""
+    as "x=y" where a line's characters aren't enough"""
     d.line((0, FOOT, W, FOOT), fill=t.c[0], width=1)
     parts = [p.strip() for p in re.split(r"\s{2,}", st.plain(hint)) if p.strip()]
-    if sum(map(len, parts)) + 2 * (len(parts) - 1) > 21:
+    if sum(map(len, parts)) + 2 * (len(parts) - 1) > CHARS:
         parts = [p.replace(" = ", "=") for p in parts]
-    if len(parts) == 2 and len(parts[0]) + len(parts[1]) + 1 <= 21:
+    if len(parts) == 2 and len(parts[0]) + len(parts[1]) + 1 <= CHARS:
         text(d, (2, FOOT + 3), parts[0], t.c[2])
         text(d, (W - 2 - width(parts[1]), FOOT + 3), parts[1], t.c[2])
     else:
-        text(d, (2, FOOT + 3), cut(" ".join(parts), 21), t.c[2])
+        text(d, (2, FOOT + 3), cut(" ".join(parts), CHARS), t.c[2])
 
 
 def row(img, d, t, y, k, letter, name, value, fill, lit):
@@ -122,8 +137,8 @@ def row(img, d, t, y, k, letter, name, value, fill, lit):
     bar (fill: 0..1 of it bright; lit: all of it bright)"""
     d.rectangle((2, y, 21, y + 25), fill=t.dim[k])
     text(d, (8, y + 5), letter, t.track[k], big=True)
-    text(d, (26, y + 1), cut(name, 17), t.hi)
-    text(d, (26, y + 13), cut(value, 17), t.track[k] if lit or fill else t.mid[k])
+    text(d, (26, y + 1), cut(name, CHARS - 4), t.hi)
+    text(d, (26, y + 13), cut(value, CHARS - 4), t.track[k] if lit or fill else t.mid[k])
     d.rectangle((26, y + 24, W - 3, y + 25), fill=t.dim[k])
     end = 26 + round((W - 29) * (1 if lit else fill))
     if end > 26:
@@ -135,20 +150,21 @@ def draw_home(home, t, img=None):
     lit while it plays), then VOL and the clock or the way to settings"""
     img = img or Image.new("RGB", (W, H), t.bg)
     d = ImageDraw.Draw(img)
-    header(img, d, t, "FM-1", home, sub="> BT")
+    header(img, d, t, "FM-1", home, sub="> BT" if W == 128 else "")   # (no room for it beside LIVE at 120)
     vol = home["volume"]
-    row(img, d, t, 23, 0, "A", "FM-1 A" + (" + B" if home["b"] else ""), home["fm1"], 0, home["live"])
-    row(img, d, t, 52, 3, ">", "SPEAKER", home["out"], (vol or 0) / 100 if home["sink"] else 0, False)
-    row(img, d, t, 81, 2, "M", "MIDI", home["midi"], 0, home["traffic"])
+    a, out, midi = HOME_ROWS
+    row(img, d, t, a, 0, "A", "FM-1 A" + (" + B" if home["b"] else ""), home["fm1"], 0, home["live"])
+    row(img, d, t, out, 3, ">", "SPEAKER", home["out"], (vol or 0) / 100 if home["sink"] else 0, False)
+    row(img, d, t, midi, 2, "M", "MIDI", home["midi"], 0, home["traffic"])
     d.line((0, FOOT, W, FOOT), fill=t.c[0], width=1)
     text(d, (2, FOOT + 3), f"VOL {vol}%" if vol is not None else "VOL --", t.c[3])
-    hint = cut(home["hint"], 11)
+    hint = cut(home["hint"], CHARS - 10 if W == 128 else CHARS - 8)   # (beside VOL: 11 characters either way)
     text(d, (W - 2 - width(hint), FOOT + 3), hint, t.c[2])
     return img
 
 
 def draw_list(img, d, t, title, rows, cursor, hint, editing=False):
-    """a list of (label, value) rows, six to a page, scrolling with the cursor: its row lit (the theme's second
+    """a list of (label, value) rows, ROWS to a page, scrolling with the cursor: its row lit (the theme's second
     shade, a blue edge); a value being changed marked with +-, in yellow"""
     header(img, d, t, title, right=f"{cursor + 1}/{len(rows)}" if rows else "")
     top = min(max(0, cursor - 2), max(0, len(rows) - ROWS))
@@ -160,7 +176,7 @@ def draw_list(img, d, t, title, rows, cursor, hint, editing=False):
         value = st.plain(value or "")
         if selected and editing and value:
             value = "+-" + value
-        value = cut(value, 19 - min(len(st.plain(label)), 13))   # (a long name keeps 13 characters)
+        value = cut(value, CHARS - 2 - min(len(st.plain(label)), CHARS - 8))   # (a long name keeps 13 or 11)
         text(d, (5, y), cut(label, (W - 10 - width(value)) // 6), t.hi if selected else t.c[3])
         text(d, (W - 3 - width(value), y), value,
              t.track[2] if selected and editing else t.hi if selected else t.c[4])
@@ -173,7 +189,7 @@ def draw_list(img, d, t, title, rows, cursor, hint, editing=False):
 
 def draw_lines(d, t, lines, y=TOP + 2, colour=None):
     for i, line in enumerate(lines):
-        text(d, (2, y + i * 13), cut(line, 21), colour or t.hi)
+        text(d, (2, y + i * 13), cut(line, CHARS), colour or t.hi)
 
 
 def progress(d, t, y, part, colour):
@@ -189,7 +205,7 @@ def draw_box(img, t, lines, bar=None):
     top = (H - h) // 2
     d.rectangle((4, top, W - 5, top + h), fill=t.bg, outline=t.c[3], width=2)
     for i, line in enumerate(lines):
-        line = cut(line, 18)
+        line = cut(line, CHARS - 3)
         text(d, ((W - width(line)) // 2, top + 5 + 13 * i), line, t.hi)
     if bar is not None:
         y = top + h - 15
@@ -199,14 +215,16 @@ def draw_box(img, t, lines, bar=None):
     return img
 
 
-def draw_splash(t):
+def draw_splash(t, size=128):
     """the LCD at start-up, as soon as it's open (the rest takes a while on a Zero W)"""
+    use_size(size)
+    up = (128 - H) // 2                           # (the 120 one a little higher)
     img = Image.new("RGB", (W, H), t.bg)
     d = ImageDraw.Draw(img)
-    st.text(img, (64 - 32, 34), "FM-1", t.hi, size=2)
-    text(d, ((W - width("Companion")) // 2, 70), "Companion", t.c[4])
-    d.line((24, 88, W - 24, 88), fill=t.c[1])
-    text(d, ((W - width("Starting...")) // 2, 94), "Starting...", t.c[2])
+    st.text(img, (W // 2 - 32, 34 - up), "FM-1", t.hi, size=2)
+    text(d, ((W - width("Companion")) // 2, 70 - up), "Companion", t.c[4])
+    d.line((24, 88 - up, W - 24, 88 - up), fill=t.c[1])
+    text(d, ((W - width("Starting...")) // 2, 94 - up), "Starting...", t.c[2])
     return img
 
 
@@ -242,6 +260,7 @@ class PocketScreens:
 
     def colour_frame(self, now):
         """this screen in colour, with the volume (HOME), busy and message boxes over it"""
+        use_size(getattr(self.display, "size", 128))
         t = self.pocket_theme(now)
         if self.screen == "pick" and self.pick.get("theme"):    # choosing a theme: the one under the cursor
             t = self.theme_named(self.pick["items"][self.pick["cursor"]][2])
@@ -333,7 +352,7 @@ class PocketScreens:
     def colour_confirm(self, img, d, t):
         c = self.confirm
         header(img, d, t, c["title"])
-        lines = [w for line in c["lines"] for w in wrap(line, 21, 2)][:6]
+        lines = [w for line in c["lines"] for w in wrap(line, CHARS, 2)][:6]
         draw_lines(d, t, lines)
         d.rectangle((0, FOOT, W - 1, H - 1), fill=REC)
         text(d, (2, FOOT + 3), "HOLD press 2s", t.hi)
@@ -345,7 +364,7 @@ class PocketScreens:
         state = s.get("state")
         if state == "running" or state is None:
             percent = s.get("percent")
-            draw_lines(d, t, wrap(s.get("step") or "Starting", 21, 2))
+            draw_lines(d, t, wrap(s.get("step") or "Starting", CHARS, 2))
             if percent is not None:
                 label = f"{int(percent)}%"
                 text(d, ((W - width(label, big=True)) // 2, TOP + 32), label, t.c[4], big=True)
@@ -356,14 +375,14 @@ class PocketScreens:
         else:
             done = state == "done"
             text(d, (2, TOP + 2), "Done" if done else "Failed", t.track[1] if done else REC, big=True)
-            draw_lines(d, t, wrap(s.get("message") or "", 21, 5), TOP + 24, t.c[4])
+            draw_lines(d, t, wrap(s.get("message") or "", CHARS, (FOOT - TOP - 24) // 13), TOP + 24, t.c[4])
             footer(d, t, "press = OK")
 
     def colour_player(self, img, d, t):
         from libui import short_date
         from meters import clock
         header(img, d, t, "Playing")
-        draw_lines(d, t, wrap(short_date(self.player_name or ""), 21, 2))
+        draw_lines(d, t, wrap(short_date(self.player_name or ""), CHARS, 2))
         now, length = self.player.seconds(), self.player.length
         label = f"{clock(now)} / {clock(length)}"
         text(d, ((W - width(label, big=True)) // 2, TOP + 34), label, t.c[4], big=True)
@@ -433,7 +452,7 @@ class PocketScreens:
         ed = self.ed
         if ed["loading"] or ed["error"]:
             header(img, d, t, "Sample editor")
-            lines = ["Loading the take..."] if ed["loading"] else ["Can't open it:"] + wrap(ed["error"], 21, 4)
+            lines = ["Loading the take..."] if ed["loading"] else ["Can't open it:"] + wrap(ed["error"], CHARS, 4)
             draw_lines(d, t, lines)
             footer(d, t, "< back")
             return
@@ -450,15 +469,17 @@ class PocketScreens:
         else:
             text(d, (W - 2 - w, 3), tag, t.c[2])
         for k in range(len(FIELDS)):              # where this field is among the eight
-            x = 4 + k * 15
+            x = 4 + k * FIELD_STEP
             d.rectangle((x, 23, x + 11, 26), fill=t.track[2] if k == ed["field"] else t.c[1])
         mid, half = (WAVE_TOP + WAVE_BOTTOM) // 2, (WAVE_BOTTOM - WAVE_TOP) // 2 - 4
-        sx = round(ed["start"] / ed["seconds"] * 127)
-        ex = round(ed["end"] / ed["seconds"] * 127)
-        for i, (lo, hi) in enumerate(ed["wave"]):
+        sx = round(ed["start"] / ed["seconds"] * (W - 1))
+        ex = round(ed["end"] / ed["seconds"] * (W - 1))
+        wave = ed["wave"]                         # (128 columns: on the 120 screen, 120 of them)
+        for i in range(W):
+            lo, hi = wave[i * len(wave) // W]
             inside = sx <= i <= ex
             d.line((i, mid - round(hi * half), i, mid - round(lo * half)), fill=t.track[0] if inside else t.c[1])
-        per = 127 / ed["seconds"]                 # pixels a second
+        per = (W - 1) / ed["seconds"]             # pixels a second
         if ed["fade_in"]:
             d.line((sx, mid + half, min(ex, sx + round(ed["fade_in"] * per)), mid - half), fill=t.track[2])
         if ed["fade_out"]:
@@ -468,18 +489,19 @@ class PocketScreens:
             if active:
                 d.polygon([(x - 4, WAVE_TOP - 2), (x + 4, WAVE_TOP - 2), (x, WAVE_TOP + 3)], fill=t.track[2])
         if field == "save":                       # the name it'll be saved as
-            text(d, (2, WAVE_BOTTOM + 3), cut(value, 21), t.hi)
+            text(d, (2, WAVE_BOTTOM + 3), cut(value, CHARS), t.hi)
             footer(d, t, "press = save  < back")
         else:
             text(d, (2, WAVE_BOTTOM + 3), f"{ed['start']:.2f}", t.c[2])
             end = f"{ed['end']:.2f}"
             text(d, (W - 2 - width(end), WAVE_BOTTOM + 3), end, t.c[2])
-            value = cut(value, 11)                # the field's value between the times
+            value = cut(value, CHARS - 10)        # the field's value between the times
             text(d, ((W - width(value)) // 2, WAVE_BOTTOM + 3), value, t.track[2])
             footer(d, t, ("playing" if self.player.playing() else "press = play") + "  <> field")
 
     def colour_saver(self, now):
         """after OFF_AFTER without a key: FM-1 LIVE (or idle), small, moving every 20 s, on black"""
+        use_size(getattr(self.display, "size", 128))
         img = Image.new("RGB", (W, H), (0, 0, 0))
         d = ImageDraw.Draw(img)
         line = "FM-1 " + ("LIVE" if self.live() else "idle")

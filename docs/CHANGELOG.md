@@ -2,6 +2,36 @@
 
 Every release of both boxes, newest first. [Back to the main page](../README.md)
 
+## Pocket v2.11: more boards and screens, a tidier Settings
+
+| Settings | Mixer | Bluetooth |
+|---|---|---|
+| ![Settings opening with Mixer, MIDI routes, Sample editor, Sloop, FM-1, Bluetooth](images/lcd-settings.png) | ![The Mixer page: FM-1 A, FM-1 B, SMK-37+VA levels and Record parts](images/lcd-settings-mixer.png) | ![Bluetooth: Speaker, BT audio, BLE MIDI, Pairing, BT keys](images/lcd-settings-bt.png) |
+| **The 1.3" LCD's HOME** (drawn at 120, shown at 240; not tried on a real one yet) | **The screen picker** | **On the OLED** |
+| ![HOME on the 1.3" LCD](images/lcd13-status.png) | ![Press KEY1 if you can read this; Keep this screen? KEY1 again](images/lcd-picker.png) | ![The OLED's Settings, opening with Mixer](images/screen-settings.png) |
+
+*Drawn by the Companion's own code on a computer (`tools/render_screens.py --lcd`).*
+
+- **Any Pi Zero with wireless:** the Zero W, Zero WH or Zero 2 W (the Zero 2 W not tried yet). A Pi Zero without
+  wireless has no Bluetooth: the installer stops and says so, and the box says so on its screen.
+- **Three screen HATs:** the 1.3" OLED (and, found by itself, the same OLED switched to I2C: not tried yet), the
+  1.44" LCD, and the 1.3" LCD (ST7789, 240×240): every colour screen drawn at 120 and shown at twice the size.
+  *The 1.3" LCD hasn't been tried on a real one yet:* its colours, orientation and edges may need adjusting.
+- **Picking the screen:** `install.sh` asks which HAT is fitted. *Not sure* starts the screen picker on the first
+  boot: each screen in turn says "Press KEY1 if you can read this", then asks to keep it (a second press), so a
+  press that lands a moment late can't pick a screen you can't read. Holding KEY1 and KEY3 at power-on opens it
+  again; `fm1-screen oled|lcd144|lcd13|ask` sets it over SSH. A box set to the 1.44" with v2.10 keeps it.
+- **`fm1-report`:** the board, OS, version, screen, SPI / I2C / Bluetooth, the speaker and the log in one block, to
+  paste into an email or [a hardware report](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml).
+- **The installer checks first:** Bluetooth, Raspberry Pi OS Bookworm or Trixie, 1 GB free; it prints the board, OS
+  and screen at the end.
+- **Settings tidied:** it opens with **Mixer** (each source's level by name, and Record parts: moved from Audio),
+  **MIDI routes**, **Sample editor**, **Sloop**, **FM-1** and **Bluetooth** (the speaker, BT audio, BLE MIDI,
+  Pairing and BT keys, moved from Audio and MIDI); then Playing, Audio, MIDI, Recordings, Theme and Wi-Fi.
+- **Docs:** a Compatibility section (tested, should work, won't), a Bluetooth section (what it does and doesn't,
+  delays, the shared radio; the Pi offers SBC, aptX, aptX HD, LDAC and Opus, and the headphones pick),
+  [HARDWARE.md](../HARDWARE.md) and a GitHub hardware-report form.
+
 ## Pocket v2.10: a colour screen
 
 | HOME | Settings › Theme | A meter |

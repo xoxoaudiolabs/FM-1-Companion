@@ -120,6 +120,9 @@ def scenes(app):
     def settings_sloop():
         app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
 
+    def settings_bt():                        # the Pocket's Bluetooth: the speaker and Bluetooth MIDI together
+        app.screen, app.setting, app.settings_menu = "settings", 0, "bt"
+
     def settings_midi():
         app.screen, app.setting, app.settings_menu = "settings", 2, "midi"
 
@@ -144,7 +147,7 @@ def scenes(app):
         app.source_b = dict(app.source, id=3, name="alsa_input.usb-Felucca-00.2")
         app.others = [{"id": 4, "name": "alsa_input.usb-SMK-37", "label": "SMK-37+VA"}]
         app.state["mix"] = {"a": 100, "b": 80, "usb": 175}
-        app.screen, app.settings_menu, app.setting = "settings", "audio", 5
+        app.screen, app.settings_menu, app.setting = "settings", "mixer", 2
 
     def route():
         import blemidi
@@ -194,7 +197,7 @@ def scenes(app):
         app.screen, app.scan_kind, app.cursor = "scan", "midi", 0
 
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
-            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("status-volume", volume),
+            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("settings-bt", settings_bt), ("status-volume", volume),
             ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings), ("bt-keys", bt_keys),
             ("editor", editor), ("editor-note", editor_note),
@@ -468,6 +471,11 @@ class LcdCapture(Capture):
 LCD_SCALE = 3                                   # 128 x 128 shown at 384 x 384
 
 
+class Lcd13Capture(Capture):
+    """the 1.3" LCD stand-in: the screens drawn at 120 (shown at twice the size on its 240x240)"""
+    colour, size = True, 120
+
+
 def pocket_app(display, state):
     app = bridge.App(display, dict(state))
     app.loop, app.midi, app.wifi = Loop(), Midi(), False
@@ -522,6 +530,21 @@ def lcd_screens(state, out):
     display = LcdCapture()
     bridge.splash(display, state)
     display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(out / "lcd-starting.png", optimize=True)
+    for name, setup in scenes(pocket_app(Lcd13Capture(), state)):    # the 1.3" LCD: drawn at 120, shown at 240
+        if name not in ("status", "settings", "settings-mixer", "matrix-two", "editor"):
+            continue
+        display = Lcd13Capture()
+        app = pocket_app(display, state)
+        dict(scenes(app))[name]()
+        app.render()
+        display.image.resize((240, 240), Image.NEAREST).save(out / f"lcd13-{name}.png", optimize=True)
+        print("wrote", out / f"lcd13-{name}.png")
+    import pocketui
+    pocketui.use_size(128)
+    import screenpick
+    picks = [screenpick.prompt("lcd144", LcdCapture()), screenpick.prompt("lcd144", LcdCapture(), again=True)]
+    sheet_of(picks, 2, 2).save(out / "lcd-picker.png", optimize=True)
+    print("wrote", out / "lcd-picker.png")
     frames = []
     for i, name in enumerate(meters.METERS):
         display = LcdCapture()

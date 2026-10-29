@@ -1,6 +1,7 @@
 # Setting up the FM-1 Companion
 
-This guide is written for **the Pocket**: a Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT. **The Studio**
+This guide is written for **the Pocket**: a Raspberry Pi Zero W (or Zero 2 W) with a Waveshare Zero screen HAT
+([which ones](#compatibility)). **The Studio**
 (a Pi 3 B+ with a 3.5" touchscreen) installs the same way, and `install.sh` works out which build it's on; its
 touch screens, the sampler, SLOOP and X0X on the Studio and the DJ decks are in the
 [main README](../README.md).
@@ -24,10 +25,41 @@ FM-1 ──USB──▶ Pi Zero W ─┤
  (audio + MIDI)          └◀─Bluetooth LE MIDI─▶ iPad / phone / Mac
 ```
 
+## Compatibility
+
+**Tested by us** (on the real Pocket), and what should work but hasn't been tried yet:
+
+| Board | |
+|---|---|
+| Pi Zero W (v1.1) | Tested |
+| Pi Zero WH | Should work: the same board as the Zero W with its header soldered on |
+| Pi Zero 2 W / 2 WH | Should work: not tried by us yet. It's quad-core; the Companion keeps the Zero W's settings on it |
+| Pi Zero, Zero 1.3, Zero H | **Won't work:** no wireless, so no Bluetooth. The installer stops and says so |
+
+| Screen HAT (Waveshare, Zero size, with the joystick and three keys) | |
+|---|---|
+| 1.3" OLED HAT (SH1106, 128×64), on SPI | Tested |
+| 1.3" OLED HAT switched to I2C (its resistor jumpers) | Should work: found by itself at 0x3C / 0x3D; not tried yet |
+| 1.44" LCD HAT (ST7735S, 128×128 colour) | Tested (v2.10) |
+| 1.3" LCD HAT (ST7789, 240×240 colour) | Should work: not tried on one yet (its colours, orientation and edges may need adjusting) |
+
+All three use the same pins for the keys and joystick (KEY1 21, KEY2 20, KEY3 16, up 6, down 19, left 5, right
+26, press 13), so they work whichever screen is fitted.
+
+| Raspberry Pi OS Lite | |
+|---|---|
+| Trixie, 32-bit | Tested (Zero W) |
+| Trixie, 64-bit (Zero 2 W only) | Should work: everything comes from Raspberry Pi OS's own packages; not tried |
+| Bookworm, 32- or 64-bit | Should work: the installer handles its older WirePlumber; not tried for this release |
+
+**Reported by builders:** none yet. Built one on different hardware, or had trouble? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml) (it asks
+for what `fm1-report` prints). What a replacement part needs, and how to add a screen:
+[HARDWARE.md](../HARDWARE.md).
+
 ## What you need
 
-- Pi Zero W with the Waveshare 1.3" OLED HAT (SH1106, KEY1–3 and a joystick), or the Waveshare 1.44" LCD HAT
-  (ST7735S, 128×128 colour, the same keys and joystick; v2.10)
+- A **Pi Zero W** (or Zero WH, or Zero 2 W: [Compatibility](#compatibility)): one with wireless, for Bluetooth
+- A **Waveshare Zero screen HAT** with the joystick and three keys: the 1.3" OLED, the 1.44" LCD or the 1.3" LCD
 - microSD card (8 GB or more)
 - A **micro-USB OTG adapter** and a cable to the FM-1, plugged into the Zero's port labelled **USB**
 - A good **5 V 2.5 A** supply into the port labelled **PWR**. The Zero powers the FM-1 too.
@@ -37,8 +69,8 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 
 ## Set up
 
-1. **Flash the card** with Raspberry Pi Imager: choose *Raspberry Pi Zero W*, then
-   *Raspberry Pi OS Lite (32-bit)*. In the settings, set a hostname (for example `fm1bridge`),
+1. **Flash the card** with Raspberry Pi Imager: choose your board (*Raspberry Pi Zero W*, or *Raspberry Pi Zero 2 W*),
+   then *Raspberry Pi OS Lite (32-bit)* (on a Zero 2 W, the 64-bit one works too, but isn't tried yet). In the settings, set a hostname (for example `fm1bridge`),
    a user name and password, your Wi-Fi, and **enable SSH**. Wi-Fi is only needed for setup.
 2. **Boot the Zero** (give it a few minutes the first time). On your computer, copy this folder over:
    ```
@@ -50,21 +82,76 @@ FM-1 ──USB──▶ Pi Zero W ─┤
    bash fm1-bt-bridge/install.sh
    sudo reboot
    ```
-   The install takes 10–20 minutes on a Zero W.
+   It first checks the Pi can run the Companion (Bluetooth, Raspberry Pi OS Bookworm or Trixie, 1 GB free) and
+   asks which screen HAT is fitted (*Not sure* is fine: the box then asks on its first start, each screen in turn
+   saying "Press KEY1 if you can read this"). The install takes 10–20 minutes on a Zero W.
 4. **Pair your headphones** and check MIDI (below), then **turn Wi-Fi off** on the device:
    joystick right → *Wi-Fi* → press. That frees the shared radio chip for Bluetooth. Wi-Fi stays off
    after reboots until you turn it back on the same way, for example to SSH in for an update.
 
 The screen shows the Companion about 30–40 seconds after power-on.
 
-**With the 1.44" LCD HAT:** the Pi can't ask a HAT which one it is, so tell the Companion once, over SSH, and
-restart it. Every screen is then drawn in colour, and Settings › Theme picks the colours (FM-1 A's, SLOOP's five
-or the Studio's eight):
+**Changing the screen HAT later:** the Pi can't ask a HAT which one it is, so tell the Companion over SSH (it
+restarts on the new one), or hold **KEY1 and KEY3** while it starts to get the screen picker:
 ```
-python3 -c "import json,pathlib as p;f=p.Path.home()/'.config/fm1-bridge/fm1-bridge.json';d=json.loads(f.read_text()) if f.exists() else {};d['screen']='lcd';f.parent.mkdir(parents=True,exist_ok=True);f.write_text(json.dumps(d))"
-systemctl --user restart fm1-bridge
+fm1-screen lcd144
 ```
-Set `'oled'` the same way to go back to the OLED HAT.
+`oled`, `lcd144` (1.44" LCD), `lcd13` (1.3" LCD) or `ask` (the picker on the next start); `fm1-screen` alone says
+which it's set to. On a colour LCD every screen is in colour, and Settings › Theme picks the colours (FM-1 A's,
+SLOOP's five or the Studio's eight).
+
+## Bluetooth: what the Pocket can and can't do
+
+The Pocket uses the Pi's built-in Bluetooth (4.1 on a Zero W, 4.2 on a Zero 2 W). It does three jobs at once:
+
+| Job | What it does | How | How many |
+|---|---|---|---|
+| **Audio out** | Sends the FM-1's sound (and the mixer's other sources) to headphones or a speaker | Bluetooth audio (A2DP). The codec is whichever the headphones and the Pi agree on: the Pi offers SBC, aptX, aptX HD, LDAC and Opus, and every Bluetooth speaker has SBC | One speaker or pair of headphones at a time |
+| **MIDI device** | Shows up as **"FM-1 Companion"** in MIDI apps. MIDI flows both ways between your device and the FM-1 | Bluetooth LE MIDI | Several phones, iPads or computers at once (v2.9; not yet tried with two) |
+| **MIDI keyboards** | Connects to Bluetooth MIDI keyboards that wait to be connected to (Korg microKEY Air, CME WIDI) | Bluetooth LE MIDI | Up to four saved (v2.9; not yet tried with a real keyboard) |
+
+### What it doesn't do
+
+- **No Bluetooth audio in.** It can't play music from your phone, or record a Bluetooth source. Audio only goes out.
+- **No microphone or calls.** Headset mics aren't used.
+- **Bluetooth MIDI isn't sound.** A phone connected over MIDI plays the FM-1's notes; the sound still comes from the
+  FM-1 through the speaker.
+- **Needs a Pi with wireless.** A Pi Zero or Zero 1.3 without the W has no Bluetooth and won't work.
+
+### Delays
+
+| What | Delay |
+|---|---|
+| Audio to headphones or speaker | About 150–250 ms with SBC (other codecs differ). Fine for listening and practising; noticeable when playing tightly in time |
+| A MIDI note over Bluetooth | About 10–20 ms |
+| Chords from keyboards that send each note separately | Can arrive rolled by up to about 50 ms |
+| MIDI clock ticks | About ±3 ms on a Zero W streaming audio; the tempo is exact on average |
+
+For tight live playing, use a wired MIDI keyboard through a USB hub.
+
+### One radio, shared
+
+Wi-Fi and Bluetooth share one radio chip. **Turn Wi-Fi off when playing** (joystick right → Wi-Fi). Use Wi-Fi only
+for setup, updates and the web app. If audio drops out while MIDI is busy, it's the headphones and MIDI sharing
+airtime.
+
+### Connecting
+
+- **Headphones or speaker:** put them in pairing mode, press KEY1, pick them, press. They reconnect by themselves
+  on later boots.
+- **Phone, iPad or Mac:** connect from your music app's Bluetooth MIDI page (or Audio MIDI Setup on a Mac), **not**
+  the system Bluetooth settings. See [Bluetooth MIDI](#bluetooth-midi) below.
+- **Windows:** Settings → Bluetooth › Pairing on the box, then pair "FM-1 Companion" in Windows' Bluetooth settings
+  within 2 minutes.
+- **A keyboard that waits to be connected:** Settings → Bluetooth › BT keys, pick it from the scan.
+- **A Pi that's been swapped:** pairings belong to the Pi's own Bluetooth chip, so after moving the card to another
+  Pi, pair the headphones (and keyboards, phones) again.
+
+### Quick answers
+
+- **"FM-1 Companion" isn't in my phone's Bluetooth list.** That's normal: connect from the music app instead.
+- **The speaker connects but there's no sound.** Settings → Audio › Audio rate, press (twice to keep the rate).
+- **Audio crackles or drops.** Turn Wi-Fi off first. Then see Troubleshooting.
 
 ## Using it
 
@@ -109,15 +196,28 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right) is a short list of sections: **Playing**, **Audio** and **MIDI** work whatever
-you plug in; **Recordings** opens your takes; **Wi-Fi** switches the radio; **Sloop** is what needs SLOOP's
-editor protocol and **FM-1** what needs the FM-1 itself. Press opens a section, left goes back. Holding up
-or down repeats, faster after a second and a half.
+**Settings** (joystick right) opens with what's used most: the **Mixer**, the **MIDI routes**, the **Sample
+editor**, **Sloop** (what needs SLOOP's editor protocol), **FM-1** (what needs the FM-1 itself) and **Bluetooth**
+(the speaker and Bluetooth MIDI together). Then **Playing**, **Audio** and **MIDI**, **Recordings** (your takes),
+**Theme** (on a colour LCD) and **Wi-Fi**. Press opens a section, left goes back. Holding up or down repeats,
+faster after a second and a half.
 
 ![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|
+| **Mixer ›** | A level for each sound source, by name (FM-1 A, FM-1 B, each USB audio device): press, then up/down in 5% steps, 0–200% (below). With one source it says *only source*: there's nothing to mix. |
+| · **Record parts** on/off | With more than one sound source: takes also keep each source as a file of its own (see Recording). Off at first. |
+| **MIDI routes ›** | The MIDI matrix (below). Also in MIDI ›. |
+| **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
+| **Sloop ›** | Backups, projects, samples and the sample level: SLOOP 2.3+ (below). |
+| **FM-1 ›** | What the FM-1 runs, and installing firmware (below). |
+| **Bluetooth ›** | |
+| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
+| · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
+| · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
+| · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
+| · **BT keys** | Bluetooth MIDI keyboards the Companion connects to itself (v2.9, not tried with a real keyboard yet): how many are connected of those saved; press to scan and pick (below). |
 | **Playing ›** | |
 | · **Metronome** on/off | A click on the speaker in time with the clock (MIDI clock, below). |
 | · **Tempo** | The box's tempo: press, then up/down (hold to go faster); left when done. Tap tempo on the status screen sets it too. |
@@ -126,23 +226,14 @@ or down repeats, faster after a second and a half.
 | · **Chord** on/off | The keyboard's chord memory: each key plays a chord (below). |
 | · **Click level** | The metronome's volume: low, mid, high. |
 | **Audio ›** | |
-| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
-| · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
-| · **FM-1 A / FM-1 B / *device* level** | The mixer, with more than one sound source: a row for each FM-1 and each USB audio device, by its name ("SMK-37+VA level"); press, then up/down in 5% steps, 0–200% (below). |
-| · **Record parts** on/off | With more than one sound source: takes also keep each source as a file of its own (see Recording). Off at first. |
 | **MIDI ›** | |
-| · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
-| · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
-| · **BT keys** | Bluetooth MIDI keyboards the Companion connects to itself (v2.9, not tried with a real keyboard yet): how many are connected of those saved; press to scan and pick (below). |
 | · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
 | **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
-| **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
+| **Theme ›** | On a colour LCD: the screens' colours, FM-1 A's or one picked (it shows each as you scroll). |
 | **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
-| **Sloop ›** | Backups, projects, samples and the sample level: SLOOP 2.3+ (below). |
-| **FM-1 ›** | What the FM-1 runs, and installing firmware (below). |
 
 ### Headphones
 
@@ -160,7 +251,7 @@ Connect from your device's MIDI app; you don't pair through the system Bluetooth
   **FM-1 Companion** → *Connect*.
 - **Android:** use an app that supports Bluetooth MIDI (for example *MIDI BLE Connect*), then your
   music app.
-- **Windows:** open Settings → MIDI › **Pairing** on the Companion, then pair "FM-1 Companion" in Windows'
+- **Windows:** open Settings → Bluetooth › **Pairing** on the Companion, then pair "FM-1 Companion" in Windows'
   Bluetooth settings within 2 minutes. Whether a Windows music app can use Bluetooth MIDI depends on
   the app.
 
@@ -176,13 +267,13 @@ Bluetooth row and column, and what goes to Bluetooth reaches each of them. *Not 
 
 **Keyboards that wait to be connected to** (v2.9; *not tried with a real keyboard yet*). Some Bluetooth MIDI
 keyboards (a Korg microKEY Air, a CME WIDI) never connect to anything themselves: something has to connect to
-them. Turn the keyboard on, open Settings → MIDI › **BT keys** (on the Studio, MORE › MIDI SETTINGS › BT KEYS),
+them. Turn the keyboard on, open Settings → Bluetooth › **BT keys** (on the Studio, MORE › MIDI SETTINGS › BT KEYS),
 and the Companion scans for about 8 seconds for anything that advertises Bluetooth MIDI. Press one to connect;
 it's saved (up to four) and connected again by itself whenever it's on, trying less often while it's off (from
 every 5 seconds to once a minute) so the headphones keep their share of the radio. Press a saved one to forget it.
 Saved keyboards show *on* while connected. BLE MIDI off lets them go until it's on again.
 
-![Settings › MIDI › BT keys: two keyboards found by a scan](../docs/images/screen-bt-keys.png)
+![Settings › Bluetooth › BT keys: two keyboards found by a scan](../docs/images/screen-bt-keys.png)
 
 ### Recording
 
@@ -207,7 +298,7 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   recorded, a track a source (FM-1 A, FM-1 B, each USB keyboard, Bluetooth MIDI, Network MIDI), lined up with
   the WAV. Clock, SysEx and an FM-1's channel 16 (its REMOTE OUT) are left out. Tried on the Studio; not yet on
   the Pocket.
-- **Record parts** (Settings → Audio, with two FM-1s or a keyboard's synth plugged in): each take also
+- **Record parts** (Settings → Mixer, with two FM-1s or a keyboard's synth plugged in): each take also
   keeps every source as a file of its own, at full level: `…_fm1-a.wav`, `…_fm1-b.wav`, `…_fm1-usb0.wav`
   next to the mix `…_fm1.wav`. They're recorded as one many-channel take (one recorder costs the Pi far less
   than one a source) and split after Stop, when the mix is also added up at the mixer's levels; a long take
@@ -306,7 +397,7 @@ play together; switch routes off to split them. What one FM-1 plays goes nowhere
 ![Two FM-1s in the matrix](../docs/images/screen-matrix-two.png)
 
 With more than one sound source (two FM-1s, or a USB keyboard with a synth of its own, such as an SMK-37
-running Baud Girl), Settings → **Audio** gets a level for each, 0–200% in 5% steps; 0% takes it out. The web
+running Baud Girl), Settings → **Mixer** has a level for each, 0–200% in 5% steps; 0% takes it out. The web
 app has the same as Mixer sliders. Over 100% boosts a quiet source: if loud passages distort with everything
 playing, bring it back a little. PipeWire adds the sources together at the speaker, before Bluetooth, and
 recordings and the meters hear the whole mix (with no speaker connected, FM-1 A alone).
@@ -320,7 +411,7 @@ firmware installs ask you to unplug the other one, since the FM-1 restarts as an
 
 ### MIDI matrix
 
-Settings → MIDI › **MIDI routes**:
+Settings → **MIDI routes** (also in MIDI ›):
 
 ![MIDI routes](../docs/images/screen-matrix.png)
 
@@ -435,14 +526,10 @@ python3 ~/.local/share/fm1-bridge/library.py --help
   the Pi: the Zero's USB port has no current limit, so the FM-1's surge (it also charges its
   battery) briefly drops the supply voltage. A strong 5 V 2.5 A supply with a short cable helps. A
   powered USB hub between the OTG adapter and the FM-1 avoids it completely.
-- **Latency:** headphone audio (Bluetooth SBC) adds roughly 150–250 ms. That's fine for listening
-  and practising, and noticeable when you play tightly in time. Bluetooth MIDI adds about 10–20 ms
-  a note; chords from keyboards that send each note in its own packet can arrive rolled by up to
-  about 50 ms.
+- **Latency and the shared radio:** see [Bluetooth](#bluetooth-what-the-pocket-can-and-cant-do) (delays, and
+  why Wi-Fi goes off while playing).
 - **MIDI clock over Bluetooth** jitters slightly with the Bluetooth connection timing. That's usable,
   but a cable is tighter if Sloop has to follow a DAW's tempo exactly.
-- **Audio and MIDI share one radio.** With Wi-Fi off it copes well. If the headphones drop out
-  while MIDI is busy (dense clock plus notes), it's the radio sharing airtime.
 - The FM-1's USB rate (Sloop: GLO → SYSTEM → USB RATE) can be 44.1 or 48 kHz. Both work.
 - **Start-up takes about a minute** on a Zero W ("Starting..." shows first). Raspberry Pi OS Trixie
   took nearly 3 minutes; the installer turns off cloud-init, keeps swap in RAM, and lets the Companion
@@ -453,6 +540,10 @@ python3 ~/.local/share/fm1-bridge/library.py --help
   may drop while Wi-Fi switches; if the new profile doesn't connect, the script switches back.
 
 ## Troubleshooting
+
+**First: `fm1-report`.** Over SSH, it prints the board, the OS, the Companion's version, the screen setting,
+whether SPI, I2C and Bluetooth are up, the speaker and the last 50 lines of the Companion's log, in one block to
+paste into an email or [a GitHub issue](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml).
 
 **My Bluetooth keyboard stopped playing the FM-1** (it still shows as connected). When the Companion starts,
 it disconnects MIDI devices left over from before (after a restart, or a keyboard that connected first at
@@ -538,7 +629,11 @@ The main files; the [main README](../README.md) lists every one, the Studio's in
 | `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service, its link to the FM-1's USB MIDI and to USB keyboards, the clock and the MIDI matrix |
 | `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
 | `meters.py` | `~/.local/share/fm1-bridge/` | The eleven meters, recording and playback, pitch detection |
-| `lcd.py` | `~/.local/share/fm1-bridge/` | The 1.44" LCD HAT (ST7735S) |
+| `screenpick.py` | `~/.local/share/fm1-bridge/` | The screen setting and the screen picker |
+| `oledi2c.py` | `~/.local/share/fm1-bridge/` | The OLED HAT switched to I2C |
+| `config/fm1-screen` | `/usr/local/bin/` | Sets the screen HAT over SSH |
+| `config/fm1-report` | `/usr/local/bin/` | A report of the box to paste into an email or issue |
+| `lcd.py` | `~/.local/share/fm1-bridge/` | The 1.44" (ST7735S) and 1.3" (ST7789) LCD HATs |
 | `pocketui.py` | `~/.local/share/fm1-bridge/` | The screens on the LCD, in colour, and Settings › Theme |
 | `pocketmeters.py` | `~/.local/share/fm1-bridge/` | The eleven meters on the LCD |
 | `midiui.py` | `~/.local/share/fm1-bridge/` | The MIDI matrix screens, Arp/Chord switches and route presets |

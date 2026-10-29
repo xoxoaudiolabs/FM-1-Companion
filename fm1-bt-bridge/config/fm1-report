@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# What this FM-1 Companion is and how it's doing, in one block to paste into an email or a GitHub issue:
+# the board, the OS, the Companion's version, the screen, SPI / I2C / Bluetooth, the speaker, its log.
+# Run it as the user the Companion runs as:  fm1-report
+SETTINGS="$HOME/.config/fm1-bridge/fm1-bridge.json"
+APP="$HOME/.local/share/fm1-bridge"
+setting() { python3 -c "import json;v=json.load(open('$SETTINGS')).get('$1');print('' if v is None else v)" 2>/dev/null; }
+yes_no() { if eval "$1" >/dev/null 2>&1; then echo yes; else echo no; fi; }
+
+echo "=== FM-1 Companion report ($(date '+%Y-%m-%d %H:%M'))"
+echo "Board:       $(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo unknown) ($(nproc) cores)"
+. /etc/os-release 2>/dev/null
+echo "OS:          ${PRETTY_NAME:-unknown}, $(dpkg --print-architecture 2>/dev/null) ($(uname -m)), kernel $(uname -r)"
+BUILD=$(cd "$APP" 2>/dev/null && python3 -c 'import device,json;print(device.detect(json.load(open("'"$SETTINGS"'")).get("build","auto"))["build"])' 2>/dev/null || echo '?')
+if [ "$BUILD" = desk ]; then
+    VERSION=$(cd "$APP" 2>/dev/null && python3 -c 'import deskboot;print(deskboot.VERSION.title())' 2>/dev/null || echo 'Studio ?')
+else
+    VERSION="Pocket $(cd "$APP" 2>/dev/null && python3 -c 'import device;print(device.POCKET_VERSION)' 2>/dev/null || echo '?')"
+fi
+echo "Companion:   $VERSION (build: $BUILD)"
+SCREEN=$(setting screen)
+echo "Screen:      ${SCREEN:-oled}$([ "$SCREEN" = lcd ] && echo ' (the 1.44" LCD)') (rotate $(setting rotate))"
+echo "SPI:         $(yes_no 'ls /dev/spidev0.0')"
+echo "I2C:         $(yes_no 'ls /dev/i2c-1')$(command -v i2cdetect >/dev/null && echo ", answering: $(i2cdetect -y 1 2>/dev/null | tail -n +2 | cut -c5- | tr -s ' -' ' ' | tr '\n' ' ')")"
+echo "Bluetooth:   adapter $(yes_no 'ls /sys/class/bluetooth/hci0'), $(bluetoothctl show 2>/dev/null | grep -m1 Powered | xargs || echo 'bluetoothctl not answering')"
+echo "Speaker:     $(setting last_name || true) $(setting last_mac || true), connected: $(mac=$(setting last_mac); [ -n "$mac" ] && bluetoothctl info "$mac" 2>/dev/null | grep -m1 Connected | awk '{print $2}' || echo '-')"
+echo "Services:    fm1-bridge $(systemctl --user is-active fm1-bridge 2>/dev/null), fm1-web $(systemctl --user is-active fm1-web 2>/dev/null), pipewire $(systemctl --user is-active pipewire 2>/dev/null), bluetooth $(systemctl is-active bluetooth 2>/dev/null)"
+echo "Power:       $(vcgencmd get_throttled 2>/dev/null || echo '?') $(vcgencmd measure_temp 2>/dev/null)"
+echo "Free space:  $(df -h --output=avail / 2>/dev/null | tail -1 | xargs)"
+echo "--- the Companion's last 50 log lines"
+LOG=$(journalctl --user -u fm1-bridge -n 50 --no-pager 2>/dev/null | grep -v '^-- No entries')
+if [ -n "$LOG" ]; then echo "$LOG"; else echo "(no log kept for it: Raspberry Pi OS keeps none for user services unless the journal is persistent)"; fi
+systemctl --user status fm1-bridge --no-pager -n 0 2>/dev/null | head -3
+echo "=== end"

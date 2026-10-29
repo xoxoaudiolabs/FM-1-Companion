@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# FM-1 Companion installer for Raspberry Pi OS Lite: the Pocket (Pi Zero W + OLED HAT) or the Studio
-# (Pi 3/4 + 3.5" SPI touchscreen), told apart by the board.
+# FM-1 Companion installer for Raspberry Pi OS Lite (Bookworm or Trixie, 32- or 64-bit): the Pocket (a Pi Zero W
+# or Zero 2 W with a Waveshare Zero screen HAT) or the Studio (Pi 3/4 + 3.5" SPI touchscreen), told apart by the
+# board.
 # Run as your normal user (not with sudo):  bash install.sh
+# The Pocket's screen is asked for; to answer it ahead:  FM1_SCREEN=oled|lcd144|lcd13|ask bash install.sh
 set -euo pipefail
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -15,6 +17,39 @@ case "$MODEL" in
     *)      BUILD=desk ;;
 esac
 echo "== $MODEL: the $([ "$BUILD" = desk ] && echo Studio || echo Pocket)"
+
+# Before anything is installed: what the Companion can't run without, said plainly
+stop() { echo; echo "Can't install: $*" >&2; exit 1; }
+if [ "$BUILD" = pocket ] && ! ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
+    stop "this Pi has no Bluetooth. A Pi Zero, Zero 1.3 or Zero H has no wireless: the Pocket needs a Pi Zero W, \
+Zero WH or Zero 2 W. (On one of those, check Bluetooth isn't switched off with dtoverlay=disable-bt in config.txt.)"
+fi
+command -v raspi-config >/dev/null || stop "this isn't Raspberry Pi OS (no raspi-config). Flash Raspberry Pi OS Lite \
+with Raspberry Pi Imager."
+. /etc/os-release
+case "${VERSION_CODENAME:-}" in
+    bookworm|trixie) ;;
+    *) [ -n "${FM1_ANY_OS:-}" ] || stop "Raspberry Pi OS ${VERSION_CODENAME:-unknown} isn't one it's made for: use Bookworm \
+or Trixie (Raspberry Pi Imager's current Raspberry Pi OS Lite). To try anyway: FM1_ANY_OS=1 bash install.sh" ;;
+esac
+FREE_KB=$(df --output=avail -k / | tail -1)
+[ "$FREE_KB" -ge 1000000 ] || stop "under 1 GB free on the card ($((FREE_KB / 1024)) MB). Use a card of 8 GB or more."
+
+SCREEN_CHOICE=""
+if [ "$BUILD" = pocket ]; then            # the HAT can't be asked which it is (SPI only talks one way)
+    SCREEN_CHOICE="${FM1_SCREEN:-}"
+    if [ -z "$SCREEN_CHOICE" ] && [ -t 0 ]; then
+        echo
+        echo "Which screen HAT is on the Pi?"
+        echo "  1) 1.3\" OLED (black and white, 128x64)"
+        echo "  2) 1.44\" LCD (colour, 128x128)"
+        echo "  3) 1.3\" LCD (colour, 240x240)"
+        echo "  4) Not sure: the box asks on its first start (press KEY1 when you can read it)"
+        read -r -p "1-4 [4]: " answer
+        case "$answer" in 1) SCREEN_CHOICE=oled ;; 2) SCREEN_CHOICE=lcd144 ;; 3) SCREEN_CHOICE=lcd13 ;; *) SCREEN_CHOICE=ask ;; esac
+    fi
+    case "$SCREEN_CHOICE" in oled|lcd144|lcd13|ask|"") ;; *) stop "FM1_SCREEN must be oled, lcd144, lcd13 or ask" ;; esac
+fi
 
 echo "== Your password is needed once, for sudo"
 sudo -v
@@ -92,6 +127,8 @@ fi
 
 echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
 sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync
+sudo install -m 755 "$DIR/config/fm1-screen" /usr/local/bin/fm1-screen    # which screen HAT, over SSH
+sudo install -m 755 "$DIR/config/fm1-report" /usr/local/bin/fm1-report    # a report to paste into an email or issue
 SUDOERS=/etc/sudoers.d/fm1-bridge
 printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off, /usr/local/sbin/fm1-sd-sync\n' \
     "$USER" | sudo tee "$SUDOERS" >/dev/null
@@ -121,6 +158,8 @@ install -D -m 644 "$DIR/battery.py"                             ~/.local/share/f
 install -D -m 644 "$DIR/lcd.py"                                 ~/.local/share/fm1-bridge/lcd.py
 install -D -m 644 "$DIR/pocketui.py"                            ~/.local/share/fm1-bridge/pocketui.py
 install -D -m 644 "$DIR/pocketmeters.py"                        ~/.local/share/fm1-bridge/pocketmeters.py
+install -D -m 644 "$DIR/oledi2c.py"                             ~/.local/share/fm1-bridge/oledi2c.py
+install -D -m 644 "$DIR/screenpick.py"                          ~/.local/share/fm1-bridge/screenpick.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
 install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
@@ -174,6 +213,21 @@ sudo install -m 644 "$DIR/config/systemd-user-sessions.service" /etc/systemd/sys
 sudo install -D -m 644 "$DIR/config/rpi-swap-50-fm1-bridge.conf" /etc/rpi/swap.conf.d/50-fm1-bridge.conf
 sudo systemctl daemon-reload
 
+if [ -n "$SCREEN_CHOICE" ]; then             # the Pocket's screen, as answered above (kept with its settings)
+    python3 - "$SCREEN_CHOICE" <<'PY'
+import json, sys
+from pathlib import Path
+f = Path.home() / ".config/fm1-bridge/fm1-bridge.json"
+try:
+    d = json.loads(f.read_text())
+except (OSError, ValueError):
+    d = {}
+d["screen"] = sys.argv[1]
+f.parent.mkdir(parents=True, exist_ok=True)
+f.write_text(json.dumps(d, indent=2))
+PY
+fi
+
 echo "== Starting at boot without a login"
 sudo loginctl enable-linger "$USER"
 systemctl --user daemon-reload
@@ -181,10 +235,16 @@ systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service f
 sync                                    # on the card before anyone pulls the power
 
 echo
+echo "Installed on:  $MODEL ($(nproc) cores), ${PRETTY_NAME:-Raspberry Pi OS} $(dpkg --print-architecture)"
+if [ "$BUILD" = pocket ]; then
+    echo "Screen:        $(fm1-screen 2>/dev/null | sed 's/^screen: //') (change it with: fm1-screen oled|lcd144|lcd13|ask)"
+fi
+echo
 echo "Done. Reboot now:  sudo reboot"
 if [ "$BUILD" = desk ]; then
     echo "After the reboot: the boot screen, then HOME (on the first install, the touch setup first: four targets)."
 else
-    echo "After the reboot the OLED shows the bridge. If it is upside down, see README.md."
+    echo "After the reboot the screen shows the Companion. If it is upside down, see README.md."
     echo "Once everything works, turn Wi-Fi off on the device: joystick right > Wi-Fi."
+    echo "Trouble? Run fm1-report and send what it prints."
 fi

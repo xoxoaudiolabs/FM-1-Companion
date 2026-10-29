@@ -44,7 +44,8 @@ STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
     "fw_label": None,       # what the FM-1 last said it runs ("SLOOP 2.8"): shown until it's asked again
     "rotate": 0,            # 180 if the screen is upside down
-    "screen": "oled",       # the Pocket's HAT: "oled" (1.3" 128x64) or "lcd" (1.44" 128x128 colour, lcd.py)
+    "screen": "oled",       # the Pocket's HAT: "oled" (1.3" 128x64, SPI or I2C), "lcd144" (1.44" colour; "lcd" too),
+                            # "lcd13" (1.3" colour, 240x240) or "ask" (the screen picker: screenpick.py)
     "contrast": 128,
     "last_mac": None,
     "last_name": None,
@@ -92,9 +93,11 @@ REFRESH_AFTER = 3           # s: a speaker that connected by itself, left to set
 REFRESH_GAP = 2             # s: between its disconnect and its connect
 GROUPS = {"g_play": ("play", "Playing"),   # Settings' sections: (row key) -> (settings_menu, title). The first
           "g_audio": ("audio", "Audio"),    # three work whatever you plug in; Sloop is what needs SLOOP's
-          "g_midi": ("midi", "MIDI"),       # editor protocol, FM-1 what needs the FM-1 itself (its firmware)
-          "g_sloop": ("sloop", "Sloop"),
-          "g_fm1": ("fm1", "FM-1")}
+          "g_midi": ("midi", "MIDI"),       # editor protocol, FM-1 what needs the FM-1 itself (its firmware).
+          "g_sloop": ("sloop", "Sloop"),    # The Pocket's Mixer: its sources' levels, at the top of Settings
+          "g_fm1": ("fm1", "FM-1"),
+          "g_mixer": ("mixer", "Mixer"),
+          "g_bt": ("bt", "Bluetooth")}      # (the Pocket's Bluetooth settings together)
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
 UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 
@@ -659,6 +662,11 @@ class SH1106:
 
     def power(self, on):
         self.cmd(0xAF if on else 0xAE)
+
+    def close(self):
+        """the pins and SPI let go (the screen picker tries another HAT's driver on them)"""
+        self.pins.release()
+        self.spi.close()
 
 
 class SimDisplay:
@@ -1368,31 +1376,49 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                     ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo),
                     ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
                     ("chord_on", "Chord", onoff(keys["chord_on"])), ("click", "Click level", self.state["click"])]
-        if self.settings_menu == "audio":
+        if self.settings_menu in ("audio", "mixer"):
             channels = self.mix_channels()
             names = {k: self.channel_name(k, n) for k, n in channels}   # a long device name: no room for "level"
             mix = [(f"mix_{k}", names[k] if len(names[k]) > 6 else f"{names[k]} level",
                     ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
                    for k, n in channels] if len(channels) > 1 else []
             parts = [("rec_parts", "Record parts", onoff(self.state["rec_parts"]))] if mix else []
+            if self.settings_menu == "mixer":    # the Pocket's Mixer page: the levels by name, Record parts
+                if not mix:                   # (one source: nothing to mix, its level not used)
+                    name = self.channel_name(*channels[0]) if channels else "FM-1"
+                    return [("one_source", name, "only source")]   # (pressed: nothing)
+                return [(f"mix_{k}", names[k], ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
+                        for k, _ in channels] + parts
+            if not self.desk:                 # (the Pocket's levels are on its Mixer page)
+                mix, parts = [], []
             jack = ([("output", "Output", self.state["output"]), ("cue", "Click to phones", onoff(self.state["cue"]))]
                     if self.jack else [])           # the Studio's 3.5 mm jack
-            return ([("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] + jack
+            bt = [("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] if self.desk else []   # (the
+            return (bt + jack                 # Pocket's are in Bluetooth)
                     + [("rate", "Audio rate", rate)] + mix + parts)
-        if self.settings_menu == "midi":
+        if self.settings_menu in ("midi", "bt"):
             keys = getattr(self.midi, "controllers", None) or []
             bt_keys = getattr(self.midi, "ble_keys", None) or []
             linked = sum(1 for k in bt_keys if k[2])
-            return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
-                    ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›"),
-                    ("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
-                    ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
+            bt_midi = [("midi", "BLE MIDI", midi),
+                       ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                       ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›")]
+            if self.settings_menu == "bt":    # the Pocket's Bluetooth: the speaker, then Bluetooth MIDI
+                return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] + bt_midi
+            return ((bt_midi if self.desk else []) + [("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
+                    ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")])
         theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
-        return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
-                ("recording", "Recordings", "›"), ("editor", "Sample editor", "›")] + theme + [
-                ("wifi", "Wi-Fi", wifi),
-                ("g_sloop", "Sloop", "›"),
-                ("g_fm1", "FM-1", "›")]
+        editor = [("editor", "Sample editor", "›")]
+        fm1 = [("g_sloop", "Sloop", "›"), ("g_fm1", "FM-1", "›")]
+        if not self.desk:                     # (the Pocket's Bluetooth, under FM-1)
+            fm1 += [("g_bt", "Bluetooth", "›")]
+        if self.desk:
+            return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
+                    ("recording", "Recordings", "›")] + editor + theme + [("wifi", "Wi-Fi", wifi)] + fm1
+        # the Pocket's list opens with what's used most: Mixer, MIDI routes, Sample editor, Sloop, FM-1, Bluetooth
+        return ([("g_mixer", "Mixer", "›"), ("routes", "MIDI routes", "›")] + editor + fm1
+                + [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
+                   ("recording", "Recordings", "›")] + theme + [("wifi", "Wi-Fi", wifi)])
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
@@ -1962,13 +1988,51 @@ def splash(display, state=None):
     if getattr(display, "colour", False):    # the LCD: in the theme fixed in the settings (FM-1 A's isn't known yet)
         import sloopstyle as st
         pick = (state or {}).get("desk_theme", "follow")
-        display.show(pocketui.draw_splash(st.Theme(pick) if pick != "follow" else st.Theme()))
+        display.show(pocketui.draw_splash(st.Theme(pick) if pick != "follow" else st.Theme(),
+                                          getattr(display, "size", 128)))
         return
     img = Image.new("1", (128, 64))
     d = ImageDraw.Draw(img)
     for y, text, f in ((16, "FM-1 Companion", font(12, True)), (38, "Starting...", font(11))):
         d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
     display.show(img)
+
+
+def pocket_display(name, state):
+    """the Pocket's screen driver for name ("oled", "lcd144", "lcd13"): the OLED over I2C when one answers there"""
+    import lcd
+    if name in lcd.PANELS:
+        return lcd.PANELS[name](state["rotate"], state["contrast"])
+    import oledi2c
+    addr = oledi2c.find()
+    if addr:
+        return oledi2c.SH1106I2C(state["rotate"], state["contrast"], addr)
+    return SH1106(state["rotate"], state["contrast"])
+
+
+def pocket_screen(state):
+    """the screen the settings name, or the screen picker's choice (kept in the settings) when they say "ask" or
+    KEY1 and KEY3 are held as it starts"""
+    import screenpick
+    name = screenpick.setting(state.get("screen"))
+    if name is None or screenpick.held_at_start():
+        name, display = screenpick.pick(lambda n: pocket_display(n, state))
+        state["screen"] = name
+        save_state(state)
+        return display
+    return pocket_display(name, state)
+
+
+def no_bluetooth(display, lines):
+    """a Pi Zero without Bluetooth: say so on the screen, and stay (a restart wouldn't change it)"""
+    img = Image.new("1", (128, 64))
+    d = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        d.text((4, 2 + i * 15), line, font=font(11, i == 0), fill=1)
+    display.show(img)
+    print(" ".join(lines), file=sys.stderr)
+    while True:
+        time.sleep(3600)
 
 
 def main():
@@ -1980,11 +2044,10 @@ def main():
     elif box["build"] == "desk":              # Pi 3/4 + 3.5" touchscreen: the same screens, larger, in colour
         import desk
         display = desk.TftDisplay(box["screen"][0] if box["screen"] else "/dev/fb1")
-    elif state.get("screen") == "lcd":        # the 1.44" LCD HAT (no way to ask the HAT which it is: a setting)
-        import lcd
-        display = lcd.ST7735(state["rotate"], state["contrast"])
-    else:
-        display = SH1106(state["rotate"], state["contrast"])
+    else:                                     # the Pocket: its HAT is a setting (no way to ask a HAT which it is)
+        display = pocket_screen(state)
+    if not sim and device.no_bluetooth_text(box):
+        no_bluetooth(display, device.no_bluetooth_text(box))
     if test:
         test_screen(display)
         time.sleep(15)

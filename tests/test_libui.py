@@ -155,20 +155,27 @@ def test_flows():
     app = make_app()
     keys(app, "right")
     top = [r[0] for r in app.settings_rows()]
-    assert app.screen == "settings" and top == ["g_play", "g_audio", "g_midi", "recording", "editor", "wifi",
-                                                "g_sloop", "g_fm1"]
-    keys(app, "press")                                     # Playing ›
+    assert app.screen == "settings" and top == ["g_mixer", "routes", "editor", "g_sloop", "g_fm1", "g_bt",
+                                                "g_play", "g_audio", "g_midi", "recording", "wifi"]   # most used first
+    keys(app, "down", "press")                             # MIDI routes: the matrix, and back on its row
+    assert app.screen == "matrix"
+    keys(app, "left")
+    assert app.screen == "settings" and app.settings_menu is None and app.settings_rows()[app.setting][0] == "routes"
+    keys(app, "down", "down", "down", "down", "down", "press")   # Playing › (under Sample editor ... Bluetooth)
     assert app.settings_menu == "play" and [r[0] for r in app.settings_rows()] == [
         "metronome", "tempo", "clock", "arp_on", "chord_on", "click"]
     snap(app, "settings-play")
-    keys(app, "left", "down", "press")                     # Audio ›
-    assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]
-    keys(app, "left", "down", "press")                     # MIDI ›
-    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "btkeys", "usbkeys", "routes", "presets"]
-    keys(app, "left", "up", "up")                          # back on Playing, the top
-    assert app.settings_menu is None and app.setting == 0
+    keys(app, "left", "down", "press")                     # Audio › (its Bluetooth rows: in Bluetooth)
+    assert [r[0] for r in app.settings_rows()] == ["rate"]
+    keys(app, "left", "down", "press")                     # MIDI › (the same)
+    assert [r[0] for r in app.settings_rows()] == ["usbkeys", "routes", "presets"]
+    keys(app, "left", "up", "up", "up", "press")           # Bluetooth ›: the speaker, Bluetooth MIDI
+    assert app.settings_menu == "bt" and [r[0] for r in app.settings_rows()] == [
+        "speaker", "audio", "midi", "pairing", "btkeys"]
+    keys(app, "left", "down")                              # back on Playing
+    assert app.settings_menu is None and app.settings_rows()[app.setting][0] == "g_play"
     snap(app, "settings")
-    keys(app, "up", "up", "press")                         # Sloop › (up from the top wraps to the end)
+    keys(app, "up", "up", "up", "press")                   # Sloop › (up past Bluetooth, FM-1)
     assert app.settings_menu == "sloop" and [r[0] for r in app.settings_rows()] == [
         "backup", "restore", "project", "sample", "sample_level", "auto", "sd"]
     snap(app, "settings-sloop")
@@ -708,20 +715,25 @@ def test_mixer():
     assert bridge.pick_nodes([smk, spk], match)[0] is None          # no FM-1: the keyboard's sound isn't taken
     app = make_app()
     app.source, app.source_b, app.others = source, None, []
-    app.screen, app.settings_menu, app.setting = "settings", "audio", 0
-    assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]      # one source: no mixer
+    app.screen, app.settings_menu, app.setting = "settings", "mixer", 0       # the Pocket's Mixer page
+    assert [r[:3] for r in app.settings_rows()] == [("one_source", "FM-1", "only source")]   # nothing to mix
+    keys(app, "press")
+    assert app.editing is None
     app.others = others
     rows = app.settings_rows()
-    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_u-smk37va", "SMK-37+VA"),
-                                         ("rec_parts", "Record parts")]
-    app.source_b = source_b
-    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_u-smk37va", "rec_parts"]
-    app.setting = 4                                                  # FM-1 B: down 4 steps of 5%
+    assert [r[:2] for r in rows] == [("mix_a", "FM-1"), ("mix_u-smk37va", "SMK-37+VA"), ("rec_parts", "Record parts")]
+    app.settings_menu = "audio"                                      # (not in Audio too, on the Pocket)
+    assert [r[0] for r in app.settings_rows()] == ["rate"]
+    app.settings_menu, app.source_b = "mixer", source_b
+    assert [r[0] for r in app.settings_rows()] == ["mix_a", "mix_b", "mix_u-smk37va", "rec_parts"]
+    app.setting = 1                                                  # FM-1 B: down 4 steps of 5%
     keys(app, "press", "down", "down", "down", "down")
-    assert app.mix_level("b") == 80 and app.settings_rows()[4][2] == "± 80%"
+    assert app.mix_level("b") == 80 and app.settings_rows()[1][2] == "± 80%"
     snap(app, "settings-mixer")
     keys(app, "left")
     assert app.editing is None and app.mix_level("u-smk37va") == 100
+    keys(app, "left")                                                # back up: the top list, on Mixer
+    assert app.settings_menu is None and app.settings_rows()[app.setting][0] == "g_mixer"
 
 
 def port(i, node_id, name, n):
@@ -947,7 +959,7 @@ def test_bt_keyboards():
 
     app = make_app()
     app.midi = Midi()
-    app.screen, app.settings_menu = "settings", "midi"
+    app.screen, app.settings_menu = "settings", "bt"                 # (the Pocket's Bluetooth section)
     rows = [r[0] for r in app.settings_rows()]
     assert app.settings_rows()[rows.index("btkeys")][2] == "1 of 1"
     app.setting = rows.index("btkeys")

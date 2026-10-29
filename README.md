@@ -27,15 +27,25 @@ your phone.
 
 | | **The Pocket** | **The Studio** |
 |---|---|---|
-| Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
-| Screen and controls | 1.3" OLED, or the 1.44" colour LCD; joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
+| Computer | Raspberry Pi Zero W (Zero 2 W: should work, not tried yet) | Raspberry Pi 3 B+ |
+| Screen and controls | A Waveshare Zero HAT: the 1.3" OLED, the 1.44" colour LCD or the 1.3" colour LCD (not tried yet); joystick and three keys | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
 | Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, DJ decks, a sampler with SLOOP's sequencer and punch-in FX, a headphone jack with cue, a DAW control surface, four USB ports, Ethernet, HDMI out |
-| Software | v2.10 | Studio v1.6, and newer work on main |
+| Software | v2.11 | Studio v1.6, and newer work on main |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do. What's been
 tried on the real boxes, and what hasn't yet: [Tested on the real hardware](#tested-on-the-real-hardware).
+
+## Compatibility
+
+The Pocket needs a **Pi Zero with wireless** (Zero W, Zero WH, Zero 2 W) for its Bluetooth, and a **Waveshare
+Zero screen HAT** with the joystick and three keys. Which boards, screens and OS versions are tested, which should
+work, and which won't: [the setup guide's Compatibility](fm1-bt-bridge/README.md#compatibility). What Bluetooth
+does and doesn't do: [Bluetooth](fm1-bt-bridge/README.md#bluetooth-what-the-pocket-can-and-cant-do).
+
+Built one on different hardware, or had trouble? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml): run `fm1-report` on the box and paste what
+it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
 
 ## What it does
 
@@ -134,6 +144,10 @@ Drawn by the Companion's own code on a computer (`tools/render_screens.py`).
 
 The latest of each box; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+- **Pocket v2.11: more boards and screens, a tidier Settings.** Any Pi Zero with wireless, the 1.3" LCD HAT (not
+  tried yet) and the OLED over I2C; a screen picker, `fm1-screen` and `fm1-report`; an installer that checks the
+  Pi first; Settings opening with Mixer, MIDI routes, Sample editor, Sloop, FM-1 and Bluetooth.
+  ([More](docs/CHANGELOG.md#pocket-v211-more-boards-and-screens-a-tidier-settings))
 - **Pocket v2.10: a colour screen.** The Waveshare 1.44" LCD HAT as well as the OLED, every screen and meter
   redrawn in colour with the Studio's look, and Settings › Theme. The OLED's screens are unchanged.
   ([More](docs/CHANGELOG.md#pocket-v210-a-colour-screen))
@@ -174,6 +188,8 @@ Girl next to two FM-1s).
   takes 15–31 ms to draw on the Zero W.
 - Reading FM-1 A's theme at start-up for the LCD (a theme made in SLOOP's editor).
 - The HUB HAT under it: the Zero W finds its USB hub and Ethernet adapter, with no under-voltage.
+- The screen picker on the 1.44" LCD (v2.11): KEY1 on its prompt, KEY1 again to keep it, remembered after a
+  restart; `fm1-screen` and `fm1-report` on the real Pocket.
 
 **Not tested on the real Pocket yet**
 - From v2.9: connecting to Bluetooth MIDI keyboards (BT keys) and several Bluetooth MIDI devices at once. v2.9 runs
@@ -182,6 +198,8 @@ Girl next to two FM-1s).
 - Following FM-1 A's colours on the LCD as they change: the theme is read, but the screen hasn't been watched
   following a change.
 - The HUB HAT's Ethernet (no cable tried) and its extra USB ports.
+- A Pi Zero 2 W, 64-bit Raspberry Pi OS, and Bookworm (for this release).
+- The 1.3" LCD HAT (ST7789), and the OLED HAT switched to I2C.
 - The web app (tried only in a browser with sample data, [on the website](https://xoxoaudiolabs.com/app/)).
 - The safe shutdown at 5% battery.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
@@ -289,7 +307,8 @@ DJ: its tags in them).
 
 ## Known limits
 
-- **Bluetooth audio delay:** about 150–250 ms (SBC). Fine for listening and practising; you'll notice it when
+- **Bluetooth audio delay:** about 150–250 ms with SBC (the codec is whichever the headphones pick; others
+  differ). Fine for listening and practising; you'll notice it when
   playing tightly in time.
 - **Recordings clip if the FM-1 sends USB at full level** with several tracks playing (inside the FM-1, before the
   box hears it). The box warns you; set the FM-1's USB audio to master with the knob around half.

@@ -1,4 +1,4 @@
-"""The Studio's MPC-style sampler: 16 pads in a kit, played from MIDI (notes 36-51, as an MPC: pad 1 is C1) and
+"""The Studio's 4x4 sampler: 16 pads in a kit, played from MIDI (notes 36-51, as an MPC: pad 1 is C1) and
 from the PADS tab. Or laid out as SLOOP's drum track (map "sloop"): pad 1 is SLOOP's drum key 1 (KICK), pad 3 its
 SNARE ... pad 16 its COWBELL, played by the GM notes SLOOP sends on channel 10 (GLO > MIDI 2 > OUT = SEQ sends
 what its sequencer plays), so a SLOOP drum pattern plays the kit's samples.

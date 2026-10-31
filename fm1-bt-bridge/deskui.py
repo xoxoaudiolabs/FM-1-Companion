@@ -1,7 +1,7 @@
 """The desk box's touch screens (480x320), in SLOOP's style and FM-1 A's colours (sloopstyle.py).
 
 A tab bar along the bottom: HOME (the sources, tempo, record / start / tap), MIXER (tab "MIX": a slider a
-source, and the speaker; METERS opens the meters, larger), SAMPLER (tab "PADS": the MPC-style sampler, its
+source, and the speaker; METERS opens the meters, larger), SAMPLER (tab "PADS": the 4x4 sampler, its
 sequencer, punch-in FX and sample editor: deskpads.py, pads.py, padfx.py), RECORDER (tab "REC": the reel-to-reel
 meter, REC / STOP, Record parts, the takes), MIDI (the routes: tap to switch one; DAW opens a Mackie Control
 surface for a DAW on a computer, such as Kraken, over network MIDI: netmidi.py) and MORE (Sloop, FM-1, settings,

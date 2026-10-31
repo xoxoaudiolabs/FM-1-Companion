@@ -1,4 +1,4 @@
-"""The Studio's PADS tab: the MPC-style sampler (pads.py) by touch. Mixed into deskui.DeskUI.
+"""The Studio's PADS tab: the 4x4 sampler (pads.py) by touch. Mixed into deskui.DeskUI.
 
 The 16 pads in four rows of SLOOP's track colours, lit while they sound (from a tap or from MIDI: notes 36-51,
 or SLOOP's drum track's notes with the SLOOP layout: its sequencer plays the pads).

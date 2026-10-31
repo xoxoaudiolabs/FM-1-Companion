@@ -1,4 +1,4 @@
-"""The Studio's MPC-style sampler: pads, voices, chokes, envelopes, kits. No audio device needed (numpy)."""
+"""The Studio's 4x4 sampler: pads, voices, chokes, envelopes, kits. No audio device needed (numpy)."""
 
 import os
 import sys

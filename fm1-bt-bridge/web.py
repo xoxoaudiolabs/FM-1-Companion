@@ -784,7 +784,7 @@ function renderLink(l) {                           // the Pocket's Studio link (
   if (!l) return;
   $("s-lon").checked = l.on; $("s-lon").onchange = (e) => set("studio_link", e.target.checked);
   $("s-laudio").checked = l.audio; $("s-laudio").onchange = (e) => set("link_audio", e.target.checked);
-  $("s-lstudio").textContent = !l.on ? "off" : l.studio ? `${l.studio} · ${l.cable ? "cable" : "Wi-Fi"}` : (l.error || "looking…");
+  $("s-lstudio").textContent = !l.on ? "off" : l.studio ? `${l.studio} · ${l.cable ? "cable" : "Wi-Fi"}` : (l.error && l.error !== "no Studio found" ? l.error : "looking…");
   $("s-lsend").textContent = !l.on || !l.audio ? "off" : l.sending ? "going to the Studio" : "not going yet";
 }
 // the mixer: a level for each sound source while there's more than one (FM-1 A and B, a USB keyboard's synth)

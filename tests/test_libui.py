@@ -78,6 +78,24 @@ def setup_library():
 
 
 
+def test_studio_link_on_out_of_the_box():
+    """the Studio link is on out of the box; a box from before (its settings saved with the link off, unasked)
+    gets it on once, and a link turned off after that stays off"""
+    import json
+    real = bridge.STATE_FILE
+    try:
+        bridge.STATE_FILE = Path(tempfile.mkdtemp(prefix="fm1-state-")) / "state.json"
+        assert bridge.load_state()["studio_link"]                       # nothing saved yet
+        bridge.STATE_FILE.write_text(json.dumps({"studio_link": False, "bpm": 97}))   # saved by v2.13 or older
+        state = bridge.load_state()
+        assert state["studio_link"] and state["bpm"] == 97
+        state["studio_link"] = False                                    # turned off after that: stays off
+        bridge.save_state(state)
+        assert not bridge.load_state()["studio_link"]
+    finally:
+        bridge.STATE_FILE = real
+
+
 def test_quality_of_life():
     """The firmware name from last time until the FM-1 is asked; the big volume bar; faster repeat when held."""
     class Midi:                                            # the FM-1's MIDI is there
@@ -169,7 +187,7 @@ def test_flows():
     assert [r[0] for r in app.settings_rows()] == ["rate"]
     keys(app, "left", "down", "press")                     # MIDI › (the same), and the Studio link
     assert [r[0] for r in app.settings_rows()] == ["link", "link_audio", "usbkeys", "routes", "presets"]
-    assert app.settings_rows()[0][2] == "off"
+    assert app.settings_rows()[0][2] == "looking"                  # (on out of the box, no Studio here)
     keys(app, "left", "up", "up", "up", "press")           # Bluetooth ›: the speaker, Bluetooth MIDI
     assert app.settings_menu == "bt" and [r[0] for r in app.settings_rows()] == [
         "speaker", "audio", "midi", "pairing", "btkeys"]
@@ -1010,6 +1028,7 @@ def test_web_link():
     # the Pocket's Studio link: its state for the page, and the page switching it and its audio
     links = []
     app.midi.set_link = lambda on, host=None: links.append(on)
+    app.state["studio_link"] = False                                    # (on out of the box: off here first)
     assert app.web_status()["link"] == {"on": False, "audio": True, "studio": None, "address": None,
                                         "cable": False, "sending": False, "fm1s": [], "error": None}
     library.queue_command({"cmd": "set", "key": "studio_link", "value": True})

@@ -228,7 +228,7 @@ faster after a second and a half.
 | **Audio ›** | |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
 | **MIDI ›** | |
-| · **Studio link** off / on | Links the Pocket to a Studio over Wi-Fi or an Ethernet cable: MIDI both ways and the Studio's clock (the Studio's side of the link comes out on 30 October). Shows the Studio while linked. |
+| · **Studio link** off / on | Links the Pocket to a Studio over Wi-Fi or an Ethernet cable: MIDI both ways and the Studio's clock (the Studio's side of the link comes out on 30 October). On out of the box: the Pocket looks for a Studio by itself and links to the first one it finds (a cable first), and again whenever one shows up; off, it never links. Shows the Studio while linked. |
 | · **Link audio** on/off | While linked, the Pocket's sound plays on the Studio too, and the Studio's speaker takes over from the Pocket's. |
 | · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |

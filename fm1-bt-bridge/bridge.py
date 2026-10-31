@@ -52,7 +52,9 @@ DEFAULTS = {
     "last_name": None,
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
-    "studio_link": False,   # the Pocket: network MIDI to a Studio (Ethernet or Wi-Fi), the Studio leading the clock
+    "studio_link": True,    # the Pocket: network MIDI to a Studio (Ethernet or Wi-Fi), the Studio leading the clock;
+                            # on out of the box: it links by itself to a Studio that shows up
+    "studio_link_auto": True,   # (a box from before that had the link off unasked: turned on once, load_state)
     "studio_host": None,    # the Studio to link to (a name or address); None: the one found on the network
     "link_audio": True,     # the Pocket's sound to the Studio too while linked (netaudio.py)
     "ble_keys": [],         # Bluetooth MIDI keyboards the box connects to whenever they're on: [[address, name]]
@@ -112,7 +114,10 @@ UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 def load_state():
     state = dict(DEFAULTS)
     try:
-        state.update(json.loads(STATE_FILE.read_text()))
+        saved = json.loads(STATE_FILE.read_text())
+        if isinstance(saved, dict) and "studio_link_auto" not in saved:
+            saved["studio_link"] = True       # saved before the link was on out of the box: on, once (turned off
+        state.update(saved)                   # after that, it stays off)
     except (OSError, ValueError):
         pass
     return state

@@ -1257,6 +1257,9 @@ class MidiBridge:
         self.lock = threading.Lock()
         self.usb = UsbMidi(source_match, self.from_usb)
         self.usb_b = UsbMidi(source_match, lambda message: self.from_fm1("FM-1 B", message), slot=1)
+        # a third FM-1: only for the Studio link (a Studio's FM-1 G), not the Pocket's own routes
+        self.usb_c = UsbMidi(source_match, lambda message: self.to_link_fm1("C", message), slot=2)
+        self.fm1_net, self.link_host = {}, None   # the Pocket's FM-1s each on a session of its own (set_link_fm1s)
         self.controllers = UsbControllers(self.usb, self.from_controllers, self.from_extra)
         self.fm1map = fm1map.Mapper()           # controls of theirs learnt onto the FM-1's (the Studio's apps)
         self.split = bool(net)                # the Studio: each USB MIDI device its own row and column
@@ -1306,6 +1309,8 @@ class MidiBridge:
         elif dest == "NET":
             if self.link:                     # (linked, the Studio leads: no clock or start / stop back to it)
                 messages = [m for m in messages if m[0] not in TRANSPORT]
+            if {"FM-1": "A", "FM-1 B": "B"}.get(key.split(">")[0]) in self.fm1_net:
+                messages = []                 # an FM-1 on a session of its own: there, not on NET as well
             if self.net and messages:
                 self.net.send(messages)
         elif dest == "SMP":
@@ -1474,6 +1479,7 @@ class MidiBridge:
 
     def from_fm1(self, source, message):
         """from FM-1 A or B (source), on rtmidi's thread"""
+        self.to_link_fm1("A" if source == "FM-1" else "B", message)
         if source == "FM-1" and self.tap_path and message and message[0] < 0xF8:
             self.tap(message)                 # (not FM-1 A's clock: the apps follow each other's, never its)
         if is_library_sysex(message) or not self.passes(source, message):
@@ -1527,9 +1533,40 @@ class MidiBridge:
         if self.link and self.net:
             self.net.stop()
         self.net, self.link = None, False
+        self.set_link_fm1s(())
+        self.link_host = host or None
         if on:
             self.net = netmidi.Invitation(netmidi.LINK_NAME, self.from_net, host=host or None)
             self.link = self.net.start()
+
+    def set_link_fm1s(self, letters):
+        """the Pocket's FM-1s (letters: A-C, by USB port) each on a session of its own to the linked Studio, which
+        names them FM-1 E-G: a straight wire to that FM-1 and back, past the routes. Only to a Studio that takes
+        them (the bridge asks it): an older one would hear them on its NET as well"""
+        import netmidi
+        letters = [x for x in letters if x in "ABC"] if self.link else []
+        for x in [x for x in self.fm1_net if x not in letters]:
+            self.fm1_net.pop(x).stop()
+        for x in letters:
+            if x not in self.fm1_net:
+                session = netmidi.Invitation(f"{netmidi.LINK_NAME} FM-1 {x}",
+                                             lambda message, x=x: self.from_link_fm1(x, message), host=self.link_host)
+                if session.start():
+                    self.fm1_net[x] = session
+
+    def link_fm1_port(self, x):
+        return {"A": self.usb, "B": self.usb_b, "C": self.usb_c}[x]
+
+    def from_link_fm1(self, x, message):
+        """the Studio's MIDI for this Pocket's FM-1 x (its FM-1 E-G), on that session's thread"""
+        if not self.paused:                   # (a flash pauses everything)
+            self.link_fm1_port(x).send_messages([message])
+
+    def to_link_fm1(self, x, message):
+        """FM-1 x's MIDI to its session, when it has one (the Studio leads the clock: none back to it)"""
+        session = self.fm1_net.get(x)
+        if session and message and message[0] not in TRANSPORT and not is_library_sysex(message):
+            session.send([message])
 
     def from_mcu(self, message):
         replies = self.mackie.feed(message)
@@ -1686,6 +1723,10 @@ class MidiBridge:
     def poll(self):
         self.usb.poll()
         self.usb_b.poll()
+        if self.fm1_net.get("C"):             # (FM-1 C's port: only while it's on the link)
+            self.usb_c.poll()
+        elif self.usb_c.name:
+            self.usb_c.close()
         self.controllers.poll()
 
     def usb_label(self):
@@ -1740,6 +1781,8 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 wanted[:] = command[1:5]
             elif command[0] == "link":             # ("link", on, host): the Pocket's Studio link
                 bridge.set_link(bool(command[1]), command[2] if len(command) > 2 else None)
+            elif command[0] == "link_fm1s":        # ("link_fm1s", ["A", ...]): each FM-1 on a session of its own
+                bridge.set_link_fm1s([str(x) for x in command[1]])
             elif command[0] == "mcu" and bridge.mcu:   # ("mcu", [messages]): the control surface, to the DAW
                 bridge.mcu.send([bytes(m) for m in command[1]])
             elif command[0] == "ble_saved":        # ("ble_saved", [[address, name]]): the keyboards, at start
@@ -1949,6 +1992,10 @@ class MidiProcess:
     def set_link(self, on, host=None):
         """the Pocket's Studio link on (to host, or the Studio found on the network) or off"""
         self.conn.send(("link", on, host))
+
+    def set_link_fm1s(self, letters):
+        """the Pocket's FM-1s (A-C) each on a session of its own to the linked Studio (its FM-1 E-G)"""
+        self.conn.send(("link_fm1s", list(letters)))
 
     def set_metronome(self, on, target, level, rate):
         self.conn.send(("metronome", on, target, level, rate))

@@ -147,8 +147,12 @@ class LibraryScreens:
         args, title = request.get("args") or [], request.get("title") or "Web request"
         if not args or args[0] not in WRITES:
             return
+        fm1 = request.get("fm1")
+        if fm1 in tuple(library.FM1_LETTERS):     # FM-1 A-C, not Settings > Sloop's (library.py --fm1)
+            args = ["--fm1", fm1, *args]
         self.pick = None
-        self.ask(title, (request.get("lines") or [])[:2] + ["from the web page"],
+        where = f"FM-1 {fm1}, from the web" if args[0] == "--fm1" else "from the web page"
+        self.ask(title, (request.get("lines") or [])[:2] + [where],
                  lambda: self.start_job(args, title, web=True), back="status")
         self.last_activity = time.monotonic()
         self.wake()

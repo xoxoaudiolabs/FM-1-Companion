@@ -59,6 +59,11 @@ def safe_path(folder, name):
     return library.folder(folder) / base
 
 
+def fm1_letters():
+    """the FM-1s plugged in, by USB port: "A", "B", "C" (sloop.fm1_cards), for a linked Studio's FM-1 E-G"""
+    return list(library.FM1_LETTERS[:len(sloop.fm1_cards())])
+
+
 def check_command(c):
     """a command for the box from the page -> the command to queue; ValueError says what's wrong"""
     if not isinstance(c, dict):
@@ -184,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, library.listing())
         elif url.path == "/api/status":
             status = library.read_status()
-            self.send(200, status if status else {"offline": True})
+            self.send(200, dict(status, fm1s=fm1_letters()) if status else {"offline": True})
         elif url.path == "/api/state":
             state = library.read_state() or {}
             if state.get("state") == "running" and not library.running():
@@ -247,7 +252,10 @@ class Handler(BaseHTTPRequestHandler):
                     "song-backup": ["song-backup"]}
             if command not in jobs:
                 return self.fail("unknown command")
-            error = library.spawn(jobs[command])
+            fm1 = request.get("fm1")
+            if fm1 is not None and fm1 not in fm1_letters():
+                return self.fail(f"no FM-1 {fm1}"[:40])
+            error = library.spawn((["--fm1", fm1] if fm1 and not command.startswith("fetch") else []) + jobs[command])
             return self.send(200, {"ok": not error, "message": error or "started"})
         if url.path == "/api/ask":
             return self.ask(request)
@@ -339,28 +347,34 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, {"ok": True, "message": f"Saved {out.name} to the samples", "name": out.name})
 
     def ask(self, r):
-        """a write to the FM-1: handed to the box, which asks for a hold-press there"""
-        command = r.get("cmd")
+        """a write to the FM-1: handed to the box, which asks for a hold-press there. fm1: which FM-1 (A-C, by
+        USB port), else Settings > Sloop's. confirmed: held on the screen of the Studio this Pocket is linked to
+        (its FM-1 E-G are this Pocket's A-C), so it starts at once: only from that Studio's address"""
+        command, fm1, confirmed = r.get("cmd"), r.get("fm1"), r.get("confirmed") is True
         if library.running():
             return self.fail("a library job is running")
+        if fm1 is not None and fm1 not in fm1_letters():
+            return self.fail(f"no FM-1 {fm1}"[:40])
+        if confirmed and (command == "update" or not self.from_studio()):
+            return self.fail("only the linked Studio confirms on its own screen", 403)
         if command == "restore":
             path = safe_path("backups", r.get("file"))
             if not path or not path.is_file():
                 return self.fail("no such backup")
-            library.ask_box(["restore", str(path)], "Restore?", [path.name[:16], "replaces the FM-1's data"])
+            asked = (["restore", str(path)], "Restore?", [path.name[:16], "replaces the FM-1's data"])
         elif command == "load-project":
             folder, target, source = r.get("folder"), r.get("target"), r.get("source") or "-"
             path = safe_path(folder if folder in ("backups", "projects") else "", r.get("file"))
             if not path or not path.is_file() or target not in TARGETS:
                 return self.fail("pick a project and where it goes")
-            library.ask_box(["load-project", str(path), source, target], "Load project?",
-                            [f"{path.stem[:14]} {source if source != '-' else ''}".strip(), f"into {TARGETS[target]}"])
+            asked = (["load-project", str(path), source, target], "Load project?",
+                     [f"{path.stem[:14]} {source if source != '-' else ''}".strip(), f"into {TARGETS[target]}"])
         elif command == "dx7-send":
             path, voice = safe_path("patches", r.get("file")), r.get("voice")
             if not path or not path.is_file() or not (voice is None or (isinstance(voice, int) and 1 <= voice <= 32)):
                 return self.fail("pick a .syx and a voice")
-            library.ask_box(["dx7-send", str(path)] + ([] if voice is None else [str(voice)]), "Send to FM-1?",
-                            [path.stem[:16], "all 32 voices" if voice is None else f"voice {voice}"])
+            asked = (["dx7-send", str(path)] + ([] if voice is None else [str(voice)]), "Send to FM-1?",
+                     [path.stem[:16], "all 32 voices" if voice is None else f"voice {voice}"])
         elif command == "update":                 # the newest release: confirmed on the box, it restarts
             info = update.check()
             if info["busy"]:
@@ -369,29 +383,39 @@ class Handler(BaseHTTPRequestHandler):
                 return self.fail("this box needs one update over SSH first (install.sh)")
             if not info["newer"]:
                 return self.fail(info["error"] or f"already up to date ({info['installed']})")
-            library.ask_box(["update"], "Update?", [f"{info['installed']} > {info['newest']}", "restarts; files kept"])
+            asked = (["update"], "Update?", [f"{info['installed']} > {info['newest']}", "restarts; files kept"])
         elif command == "load-song":
             path = safe_path("songs", r.get("file"))
             if not path or not path.is_file():
                 return self.fail("no such song")
-            library.ask_box(["song-load", str(path)], "Load song?", [path.stem[:16], "replaces sections A-D"])
+            asked = (["song-load", str(path)], "Load song?", [path.stem[:16], "replaces sections A-D"])
         elif command == "load-sample":
             paths = [safe_path("samples", n) for n in r.get("files") or []]
             slot, name = r.get("slot"), (r.get("name") or "")[:8]
             if not paths or None in paths or not all(p.is_file() for p in paths) or slot not in (1, 2, 3, 4):
                 return self.fail("pick WAV files and a slot")
             name = name or paths[0].stem[:8]
-            library.ask_box(["load-sample", str(slot), name, *map(str, paths)], "Load sample?",
-                            [f"{name} ({len(paths)} file{'s' if len(paths) > 1 else ''})", f"into USR{slot}"])
+            asked = (["load-sample", str(slot), name, *map(str, paths)], "Load sample?",
+                     [f"{name} ({len(paths)} file{'s' if len(paths) > 1 else ''})", f"into USR{slot}"])
         elif command == "flash":
             path = safe_path("firmware", r.get("file"))
             if not path or not path.is_file():
                 return self.fail("no such firmware")
             warning = "Experimental: see its README" if sloop.family(path.name) == "clipper" else "Keep the FM-1 plugged in"
-            library.ask_box(["flash", str(path)], "Install?", [path.stem[:20], warning])
+            asked = (["flash", str(path)], "Install?", [path.stem[:20], warning])
         else:
             return self.fail("unknown command")
+        args, title, lines = asked
+        if confirmed:
+            error = library.spawn(["--fm1", fm1, *args] if fm1 else args)
+            return self.send(200, {"ok": not error, "message": error or "started"})
+        library.ask_box(args, title, lines, fm1)
         self.send(200, {"ok": True, "message": "Confirm on the box: hold the joystick press for 2 seconds"})
+
+    def from_studio(self):
+        """the request came from the Studio this Pocket is linked to (its address on the link)"""
+        link = (library.read_status() or {}).get("link") or {}
+        return bool(link.get("on") and link.get("address") and self.client_address[0] == link["address"])
 
 
 PAGE = r"""<!doctype html>

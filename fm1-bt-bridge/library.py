@@ -3,6 +3,8 @@
 
   library.py [--studio] COMMAND ...   --studio: SLOOP on the Studio (SLOOP Remote Out's studio program, through
                                       its FIFOs) instead of an FM-1, for backup, restore, load-project, load-sample
+  library.py --fm1 A|B|C COMMAND ...  that FM-1 (A: the lowest USB port) instead of Settings > Sloop's, for a
+                                      linked Studio's library (its FM-1 E-G are this Pocket's A-C)
   library.py backup [--auto]          back up the FM-1 (SLOOP 2.3+) into ~/fm1-library/backups
   library.py restore FILE             a whole backup back onto the FM-1 (backs up first)
   library.py load-project FILE SRC TARGET
@@ -59,6 +61,8 @@ KEEP_AUTO = 20
 STUDIO = False                               # --studio: the jobs work on SLOOP on the Studio, not an FM-1
 STUDIO_MIDI, STUDIO_SYSEX = RUNTIME / "fm1-sloop-midi", RUNTIME / "fm1-sloop-sysex"   # its FIFOs (deskui.start_app)
 STUDIO_JOBS = ("backup", "restore", "load-project", "load-sample")
+FM1_LETTERS = "ABC"                          # the FM-1s the library works on, by USB port (sloop.fm1_cards)
+FM1 = None                                   # --fm1: one of them, else Settings > Sloop's (library_fm1)
 FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmwares, both based on Felucca
              "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
 RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
@@ -88,7 +92,7 @@ class Job:
     def __init__(self, name):
         self.name, self.lock = name, None
         self.status = {"job": name, "state": "running", "step": "", "percent": None, "message": "",
-                       "started": time.time(), "pid": os.getpid()}
+                       "started": time.time(), "pid": os.getpid(), "fm1": FM1}
 
     def __enter__(self):
         RUNTIME.mkdir(parents=True, exist_ok=True)
@@ -181,10 +185,11 @@ def spawn(args):
 REQUEST = RUNTIME / "fm1-web-request.json"
 
 
-def ask_box(args, title, lines):
+def ask_box(args, title, lines, fm1=None):
+    """fm1: the FM-1 it's for (A-C, --fm1), or None for Settings > Sloop's"""
     REQUEST.parent.mkdir(parents=True, exist_ok=True)
     # written in place: the box reads it every second and skips a half-written one
-    REQUEST.write_text(json.dumps({"args": args, "title": title, "lines": lines, "time": time.time()}))
+    REQUEST.write_text(json.dumps({"args": args, "title": title, "lines": lines, "fm1": fm1, "time": time.time()}))
 
 
 def take_request():
@@ -247,16 +252,28 @@ def take_commands():
 # ---------------------------------------------------------------- the device
 
 def target_card():
-    """the sound card of the FM-1 the library works on: with two plugged in, the one chosen in Settings > Sloop
-    (FM-1 A or B); None with one (whichever it is)"""
+    """the sound card of the FM-1 the library works on: with two or more plugged in, --fm1's or the one chosen in
+    Settings > Sloop (FM-1 A, B or C, by USB port); None with one (whichever it is). One that isn't plugged in is
+    an error, not another FM-1 (a Studio's FM-1 G must never write to its F)"""
     cards = sloop.fm1_cards()
-    if len(cards) < 2:
+    which = FM1 or chosen_fm1()
+    n = FM1_LETTERS.index(which)
+    if len(cards) < 2 and (n == 0 or not FM1):
         return None
+    if n >= len(cards):
+        if not FM1:                           # Settings' choice left over from an FM-1 since unplugged: A
+            return cards[0] if cards else None
+        raise sloop.SloopError("notfound", f"no FM-1 {which}: {len(cards)} plugged in")
+    return cards[n]
+
+
+def chosen_fm1():
+    """Settings > Sloop's FM-1 (library_fm1): A, B or C"""
     try:
         which = json.loads(SETTINGS.read_text()).get("library_fm1", "A")
     except (OSError, ValueError, AttributeError):
         which = "A"
-    return cards[1] if which == "B" else cards[0]
+    return which if isinstance(which, str) and len(which) == 1 and which in FM1_LETTERS else "A"
 
 
 def desk_box():
@@ -753,7 +770,12 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 2
-    global STUDIO
+    global STUDIO, FM1
+    if argv[0] == "--fm1":
+        if len(argv) < 3 or argv[1] not in FM1_LETTERS or len(argv[1]) != 1:
+            print(f"--fm1 is {', '.join(FM1_LETTERS)}", file=sys.stderr)
+            return 2
+        FM1, argv = argv[1], argv[2:]
     if argv[0] == "--studio":
         STUDIO, argv = True, argv[1:]
         if not argv or argv[0] not in STUDIO_JOBS:

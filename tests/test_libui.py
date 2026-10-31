@@ -1011,7 +1011,7 @@ def test_web_link():
     links = []
     app.midi.set_link = lambda on, host=None: links.append(on)
     assert app.web_status()["link"] == {"on": False, "audio": True, "studio": None, "address": None,
-                                        "cable": False, "sending": False, "error": None}
+                                        "cable": False, "sending": False, "fm1s": [], "error": None}
     library.queue_command({"cmd": "set", "key": "studio_link", "value": True})
     library.queue_command({"cmd": "set", "key": "link_audio", "value": False})
     app.web_commands()

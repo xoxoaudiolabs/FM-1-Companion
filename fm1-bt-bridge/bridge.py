@@ -65,7 +65,7 @@ DEFAULTS = {
     "metronome": False,     # a click on the speaker in time with the clock
     "click": "mid",         # its level: "low", "mid", "high"
     "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
-    "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
+    "library_fm1": "A",     # with two or three FM-1s on a hub, the one backups, restores and loads go to (library.py)
     "library_target": "fm1",  # Settings > Sloop works on: "fm1" (an FM-1), or on the Studio "sloop" or "x0x"
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
     "rec_parts": False,     # while mixing, recordings also keep each source on its own ("..._fm1-a.wav" etc.)
@@ -302,6 +302,17 @@ def pick_nodes(objects, source_match, cards=()):
         a, b = by_card.get(cards[0]), by_card.get(cards[1])
         return a or (sources[0] if sources else fallback), sink, b, others
     return (sources[0] if sources else fallback), sink, None, others
+
+
+def card_node(objects, card):
+    """sound card card's USB input (an FM-1 by sloop.fm1_cards) as {"id", "name", "label"}, or None"""
+    for o in objects:
+        props = (o.get("info") or {}).get("props") or {}
+        path = re.search(r":(\d+)", str(props.get("api.alsa.path", "")))
+        if (o.get("type") == "PipeWire:Interface:Node" and props.get("media.class") == "Audio/Source"
+                and str(props.get("node.name", "")).startswith("alsa_input.") and path and int(path.group(1)) == card):
+            return {"id": o.get("id"), "name": props["node.name"], "label": props.get("alsa.card_name") or "FM-1"}
+    return None
 
 
 class PwWatch:
@@ -858,6 +869,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         self.net_audio = netaudio.Sender()   # the Pocket's Studio link: its sound to the Studio (netaudio.SINK)
         self.net_sink = None                  # that sink's name, while it's there
         self.net_loop = Loopback(state["audio_rate"])   # the speaker's sound copied to it
+        self.fm1_loops = {x: Loopback(state["audio_rate"]) for x in netaudio.FM1_PORTS}   # FM-1 A-C each to its
+        self.studio_split = {}                # own stream (a Studio's E-G); {address: (takes them, when asked)}
+        self.fm1_net_sent = None              # the FM-1s last put on MIDI sessions of their own (set_link_fm1s)
         self.handed_at = 0.0                  # when the speaker was last let go for the Studio (handed_over)
         self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
         self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
@@ -1026,7 +1040,17 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         what the speaker plays copied to it; with no speaker, the sound goes to the Studio alone (outputs)"""
         address = (getattr(self.midi, "link_address", None)
                    if not self.desk and self.state.get("studio_link") and self.state.get("link_audio", True) else None)
-        self.net_audio.to(address)
+        letters = self.link_letters()         # each FM-1 its own MIDI session too, with or without the audio
+        if letters != self.fm1_net_sent and hasattr(self.midi, "set_link_fm1s"):
+            self.midi.set_link_fm1s(letters)
+            self.fm1_net_sent = letters
+        fm1s = self.link_fm1s(objects) if address else []
+        self.net_audio.to(address, [x for x, _ in fm1s])
+        for x, loop in self.fm1_loops.items():  # each FM-1 straight to its own stream, at full level (the
+            node = dict(fm1s).get(x)          # Studio's mixer sets it)
+            if loop.follow(objects):
+                self.post("status", False)
+            loop.ensure(node and node["name"], node and netaudio.fm1_sink(x), f"fm1-net-{x.lower()}")
         here = address and any(((o.get("info") or {}).get("props") or {}).get("node.name") == netaudio.SINK
                                for o in objects)
         if bool(here) != bool(self.net_sink):
@@ -1042,6 +1066,31 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             if mac and mac.replace(":", "_").upper() in self.sink["name"].upper():
                 self.say("Speaker: the Studio's now", 2)
                 threading.Thread(target=bt, args=("disconnect", mac), kwargs={"timeout": 10}, daemon=True).start()
+
+    def link_letters(self):
+        """the FM-1s (A-C by USB port) the linked Studio gets each on its own (its FM-1 E-G), or [] while not
+        linked, or linked to a Studio that doesn't take them (asked in the background, again every minute)"""
+        address = getattr(self.midi, "link_address", None) if not self.desk and self.state.get("studio_link") else None
+        if not address:
+            return []
+        takes, asked = self.studio_split.get(address, (False, None))
+        if asked is None or time.monotonic() - asked > 60:
+            self.studio_split[address] = (takes, time.monotonic())
+
+            def ask():
+                self.studio_split[address] = (netaudio.studio_takes_fm1s(address), time.monotonic())
+            threading.Thread(target=ask, daemon=True).start()
+        if not takes:
+            return []
+        return list(netaudio.FM1_PORTS)[:max(len(sloop.fm1_cards()), 1 if self.source else 0)]
+
+    def link_fm1s(self, objects):
+        """[(letter, capture node)] of the FM-1s whose sound goes to the Studio each on its own stream"""
+        cards = sloop.fm1_cards()
+        if not cards:                         # (one FM-1 known by its USB ID only)
+            return [("A", self.source)] if self.source and self.link_letters() else []
+        found = [(x, card_node(objects, card)) for x, card in zip(self.link_letters(), cards)]
+        return [(x, node) for x, node in found if node]
 
     def handed_over(self):
         """linked to a Studio with the link's audio: the Studio plays the Pocket's sound, on its own speaker"""
@@ -1104,7 +1153,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         """[(key, node)] of the sound sources there are: "a", "b" (the FM-1s), then any other USB audio (a
         keyboard's synth, an audio interface, a mic), each by its own key ("u-ep136": device_keys)"""
         found = [("a", self.source), ("b", self.source_b)] + list(zip(device_keys(self.others), self.others))
-        return [(key, node) for key, node in found if node]
+        split = getattr(getattr(self, "net_audio", None), "fm1s", ())   # sent to a Studio each on its own: not
+                                                                        # in the mix as well
+        return [(key, node) for key, node in found if node and key.upper() not in split]
 
     def channel_name(self, key, node=None):
         """"FM-1 A", "FM-1 B", or the device's own name ("SMK-37+VA", "EP-136")"""
@@ -1517,6 +1568,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         return {"on": bool(self.state.get("studio_link")), "audio": bool(self.state.get("link_audio", True)),
                 "studio": names[0] if names else None, "address": address,
                 "cable": bool(address and address.startswith("169.254.")), "sending": bool(self.net_sink),
+                "fm1s": list(self.net_audio.fm1s),   # the FM-1s sent each on its own (the Studio's E-G)
                 "error": getattr(self.midi, "net_error", None) if self.state.get("studio_link") else None}
 
     def link_label(self):
@@ -1590,7 +1642,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         elif key == "x0x_restore":
             self.x0x_pick_restore()
         elif key == "library_fm1":
-            self.state["library_fm1"] = "B" if self.state["library_fm1"] == "A" else "A"
+            letters = "ABC"[:max(2, min(3, len(sloop.fm1_cards())))]   # C with a third FM-1 (a Studio's G)
+            now_fm1 = self.state["library_fm1"]
+            self.state["library_fm1"] = letters[(letters.index(now_fm1) + 1) % len(letters)] if now_fm1 in letters else "A"
             self.save_settings()
             library.forget_firmware()          # IN shows what the chosen FM-1 runs: ask it
             self.fw_asked, self.fw_seen = False, time.monotonic() - 5
@@ -2232,6 +2286,8 @@ def main():
         app.loop.stop()
         app.jack_loop.stop()
         app.net_loop.stop()
+        for loop in app.fm1_loops.values():
+            loop.stop()
         app.net_audio.stop()
         app.cue_mixer.stop()
 

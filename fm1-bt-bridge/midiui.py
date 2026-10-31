@@ -3,7 +3,8 @@ its channels, transpose, velocity curve and what to drop. The routing itself run
 (blemidi.Route); these screens edit state["routes"] and send it there.
 
   Settings > MIDI > MIDI routes:  the grid; joystick moves, press opens a route, left from the first column: back
-  a route's page:          up/down rows; press changes (on/off), or starts editing (up/down, then press/left)
+  a route's page:          up/down rows; press changes (on/off), or starts editing (up/down, then press/left);
+                           keys (lowest, highest, split) step a semitone, right/left while editing an octave
   Channels > custom:       16 rows, input channel -> output channel or off
   Settings > MIDI > Route presets: four slots; press: Load / Save here / Clear
 """
@@ -16,10 +17,18 @@ SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "NET": "Network", "FM-1": 
                 "Box": "Box clock"}
 SHORT_NAMES = {"BT": "BT", "USB": "USB", "NET": "NET", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}
 SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET", "SMP": "SMP"}
-VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
+VELOCITY = (["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
+            + [f"scale {v}" for v in (50, 75, 125, 150, 200)])     # scale: in * v / 100
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
 CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
-          "arp_octaves": [1, 2, 3]}                     # route rows whose value steps through a list
+          "arp_octaves": list(range(1, blemidi.ARP_OCTAVES + 1)), "split_channel": list(range(16))}
+NOTE_ROWS = ("lowest", "highest", "split")              # route rows that are a key (0-127; split 0: off)
+NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+
+def note_name(note):
+    """60 -> "C4" (middle C)"""
+    return f"{NAMES[note % 12]}{note // 12 - 1}"
 PRESETS = ("1", "2", "3", "4")
 
 
@@ -41,7 +50,7 @@ class MidiScreens:
     def routes(self):
         """every route of the matrix as it is now (the USB devices plugged in)"""
         saved = self.state.get("routes") or {}
-        return {key: dict(blemidi.route_default(key), **saved.get(key, {}))
+        return {key: dict(blemidi.route_default(key), **blemidi.upgrade_route(saved.get(key, {})))
                 for key in blemidi.route_keys(self.usb_devices())}
 
     def keep_routes(self, routes):
@@ -174,6 +183,8 @@ class MidiScreens:
             if self.route_edit:
                 if key in ("up", "down"):
                     self.route_adjust(self.route_edit, 1 if key == "up" else -1)
+                elif key in ("left", "right") and self.route_edit in NOTE_ROWS:
+                    self.route_adjust(self.route_edit, 12 if key == "right" else -12)
                 elif key in ("press", "left", "right") and not held:
                     if self.route_edit == "channels" and self.route()["channels"] == "custom-pending":
                         self.set_route(channels=list(range(16)))
@@ -186,7 +197,7 @@ class MidiScreens:
                 self.screen = "matrix"
             elif key in ("press", "right") and not held:
                 name = rows[self.route_row][0]
-                if name in ("on", "drop_clock", "drop_aftertouch", "drop_bend", "chord_on", "arp_on"):
+                if name in ("on", "drop_clock", "drop_aftertouch", "drop_bend", "chord_on", "arp_on", "arp_hold"):
                     self.set_route(**{name: not self.route()[name]})
                 elif name == "channels" and isinstance(self.route()["channels"], list):
                     self.chan_row, self.chan_edit, self.screen = 0, False, "chanmap"
@@ -221,11 +232,18 @@ class MidiScreens:
             self.set_route(**{name: options[(options.index(now) + step) % len(options)]})
         elif name == "transpose":
             self.set_route(transpose=max(-24, min(24, r["transpose"] + step)))
+        elif name == "split" and not r["split"]:
+            self.set_route(split=60 if step > 0 else 0)        # off -> middle C
+        elif name in NOTE_ROWS:
+            self.set_route(**{name: max(0, min(127, r[name] + step))})
         elif name == "velocity":
-            now = f"fixed {r['fixed']}" if r["velocity"] == "fixed" else r["velocity"]
+            now = (f"fixed {r['fixed']}" if r["velocity"] == "fixed" else f"scale {r['scale']}"
+                   if r["velocity"] == "scale" else r["velocity"])
             pick = VELOCITY[(VELOCITY.index(now) + step) % len(VELOCITY) if now in VELOCITY else 0]
             if pick.startswith("fixed"):
                 self.set_route(velocity="fixed", fixed=int(pick.split()[1]))
+            elif pick.startswith("scale"):
+                self.set_route(velocity="scale", scale=int(pick.split()[1]))
             else:
                 self.set_route(velocity=pick)
         elif name == "channels":
@@ -246,9 +264,15 @@ class MidiScreens:
             ch = r["channels"]
             channels = ("same" if ch == "same" else f"all to {ch + 1}" if isinstance(ch, int)
                         else "custom ›" if isinstance(ch, list) else "custom")
-            velocity = f"fixed {r['fixed']}" if r["velocity"] == "fixed" else r["velocity"]
+            velocity = (f"fixed {r['fixed']}" if r["velocity"] == "fixed" else f"{r['scale']}%"
+                        if r["velocity"] == "scale" else r["velocity"])
             rows += [("channels", "Channels", channels), ("transpose", "Transpose", f"{r['transpose']:+d}" if r["transpose"] else "0"),
-                     ("velocity", "Velocity", velocity), ("drop_clock", "Drop clock", onoff(r["drop_clock"])),
+                     ("velocity", "Velocity", velocity),
+                     ("lowest", "Lowest key", note_name(r["lowest"])), ("highest", "Highest key", note_name(r["highest"])),
+                     ("split", "Split at", note_name(r["split"]) if r["split"] else "off")]
+            if r["split"]:
+                rows += [("split_channel", "Upper ch.", str(r["split_channel"] + 1))]
+            rows += [("drop_clock", "Drop clock", onoff(r["drop_clock"])),
                      ("drop_aftertouch", "Drop aftert.", onoff(r["drop_aftertouch"])),
                      ("drop_bend", "Drop bend", onoff(r["drop_bend"])),
                      ("chord_on", "Chord", onoff(r["chord_on"]))]
@@ -257,7 +281,7 @@ class MidiScreens:
             rows += [("arp_on", "Arp", onoff(r["arp_on"]))]
             if r["arp_on"]:
                 rows += [("arp", "Arp pattern", r["arp"]), ("arp_rate", "Arp rate", r["arp_rate"]),
-                         ("arp_octaves", "Arp octaves", str(r["arp_octaves"]))]
+                         ("arp_octaves", "Arp octaves", str(r["arp_octaves"])), ("arp_hold", "Arp hold", onoff(r["arp_hold"]))]
         return rows
 
     def route_title(self):

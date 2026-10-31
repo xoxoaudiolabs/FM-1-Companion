@@ -429,12 +429,15 @@ left from the first column goes back. **Press opens a route:**
 | **Route** on/off | Whether anything passes. |
 | **Channels** | *same*, *all to N* (every channel to one), or *custom ›*: 16 rows, each input channel to any channel or off. |
 | **Transpose** | ±24 semitones (notes and poly aftertouch). |
-| **Velocity** | *normal*; *soft* (light playing comes out louder); *hard* (loud takes more force); *fixed* 40, 64, 80, 100 or 127. |
+| **Velocity** | *normal*; *soft* (light playing comes out louder); *hard* (loud takes more force); *fixed* 40, 64, 80, 100 or 127; *scale* 50%–200% (the web app: any 10–200%). |
+| **Lowest key**, **Highest key** | The keys this route passes; the rest are dropped. Two routes from one keyboard with different keys split it across destinations (the bottom to FM-1 A, the top to FM-1 B). |
+| **Split at**, **Upper ch.** | From that key up, notes go out on another channel: two sounds from one keyboard on the same FM-1. A chord follows the key you played. |
 | **Drop clock / aftertouch / bend** | Keep clock and Start/Stop, channel and poly aftertouch, or pitch-bend off this route (less traffic and jitter). |
 | **Chord** on/off, **Chord type** | Chord memory: each key plays oct, 5th, maj, min, 7, maj7 or m7. |
-| **Arp** on/off, **Arp pattern**, **Arp rate**, **Arp octaves** | The arpeggiator: held keys (chords included) one at a time on the clock; up, down, updown, played or random; 1/4, 1/8, 1/8T, 1/16; 1–3 octaves. |
+| **Arp** on/off, **Arp pattern**, **Arp rate**, **Arp octaves**, **Arp hold** | The arpeggiator: held keys (chords included) one at a time on the clock; up, down, updown, played or random; 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32; 1–4 octaves. *Hold*: it keeps playing after you let go, until you play a new chord. |
 
-Values change with press, then up/down, then press or left. The *Box clock* routes have only on/off. Out
+Values change with press, then up/down, then press or left. On the key rows, left/right while changing move
+an octave, and press finishes. The *Box clock* routes have only on/off. Out
 of the box every route is on and changes nothing, except the ones to the USB keyboards and USB → Bluetooth,
 which start off. A note-off always goes where its note-on went, so
 changing a route while you hold a key can't leave a note hanging. The routes are remembered, and

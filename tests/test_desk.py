@@ -600,6 +600,14 @@ def test_touch_screens():
     assert app.screen == "route" and app.route_key == "BT>USB"            # held: its settings, a Studio page
     ui.render(now, force=True)
     assert not ui.classic and any(w[3] == "page-back" for w in ui.widgets)
+    split = [r[0] for r in app.route_rows()].index("split")
+    app.route_row, app.route_edit = split, "split"                    # a key being changed: an octave a tap
+    ui.render(now, force=True)
+    for expected in (60, 72):                                         # off -> middle C, then up an octave
+        up = next(w[0] for w in ui.widgets if w[3] == (">>", split))
+        tap((up[0] + up[2]) // 2, (up[1] + up[3]) // 2)
+        assert app.routes()["BT>USB"]["split"] == expected
+    app.route_edit = None
     app.screen = "status"
     ui.render(now, force=True)
     tab("MORE")                                                       # then THEME: its page, AMBER tapped

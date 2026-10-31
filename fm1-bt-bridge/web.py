@@ -842,7 +842,8 @@ function setFm1s(two, net = netOn, pads = padsOn, matrix = null) {
   }
 }
 const destName = (d) => devName(d) || (d === "BT" ? "Bluetooth" : d === "NET" ? "Network" : d === "SMP" ? "Sampler" : twoFm1 && d === "FM-1" ? "FM-1 A" : d);
-const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
+const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16","1/16T","1/32"];
+const KEYS = [...Array(128).keys()], NOTE = (n) => ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"][n % 12] + (Math.floor(n / 12) - 1);
 let routes = null, sel = "BT>FM-1", routesDirtyUntil = 0, saveTimer;
 setFm1s(false);
 function renderMatrix() {
@@ -872,15 +873,21 @@ function renderEditor() {
       ${mode === "all" ? `<select onchange="edit('channels', +this.value)">${opt([...Array(16).keys()], ch, (x) => "ch " + (x + 1))}</select>` : ""}</div></div>`;
     if (mode === "custom") h += `<div class="chgrid" style="margin:4px 0 10px">${ch.map((o, i) => `<div><label>in ${i + 1}</label><select onchange="chSet(${i}, this.value)">${opt(["off", ...Array(16).keys()], o == null ? "off" : o, (x) => x === "off" ? "off" : "ch " + (x + 1))}</select></div>`).join("")}</div>`;
     h += `<div class="line"><span class="k">Transpose</span><div class="row"><button onclick="edit('transpose', Math.max(-24, routes[sel].transpose - 1))">−</button><b style="min-width:42px;text-align:center">${r.transpose > 0 ? "+" : ""}${r.transpose}</b><button onclick="edit('transpose', Math.min(24, routes[sel].transpose + 1))">+</button></div></div>
-      <div class="line"><span class="k">Velocity</span><div class="row"><select onchange="edit('velocity', this.value)">${opt(["normal","soft","hard","fixed"], r.velocity)}</select>
-      ${r.velocity === "fixed" ? `<input type="number" min="1" max="127" value="${r.fixed}" onchange="edit('fixed', Math.max(1, Math.min(127, Math.round(+this.value || 100))))">` : ""}</div></div>
+      <div class="line"><span class="k">Velocity</span><div class="row"><select onchange="edit('velocity', this.value)">${opt(["normal","soft","hard","fixed","scale"], r.velocity, (x) => x === "scale" ? "scale %" : x)}</select>
+      ${r.velocity === "fixed" ? `<input type="number" min="1" max="127" value="${r.fixed}" onchange="edit('fixed', Math.max(1, Math.min(127, Math.round(+this.value || 100))))">` : ""}
+      ${r.velocity === "scale" ? `<input type="number" min="10" max="200" step="5" value="${r.scale}" onchange="edit('scale', Math.max(10, Math.min(200, Math.round(+this.value || 100))))">` : ""}</div></div>
+      <div class="line"><span class="k">Keys</span><div class="row"><select onchange="edit('lowest', +this.value)">${opt(KEYS, r.lowest, NOTE)}</select> to
+        <select onchange="edit('highest', +this.value)">${opt(KEYS, r.highest, NOTE)}</select></div></div>
+      <div class="line"><span class="k">Split</span><div class="row"><select onchange="edit('split', +this.value)">${opt(KEYS, r.split, (x) => x ? "from " + NOTE(x) : "off")}</select>
+        ${r.split ? `<select onchange="edit('split_channel', +this.value)">${opt([...Array(16).keys()], r.split_channel, (x) => "on ch " + (x + 1))}</select>` : ""}</div></div>
       <div class="line"><span class="k">Drop clock</span>${sw("drop_clock", r.drop_clock)}</div>
       <div class="line"><span class="k">Drop aftertouch</span>${sw("drop_aftertouch", r.drop_aftertouch)}</div>
       <div class="line"><span class="k">Drop pitch-bend</span>${sw("drop_bend", r.drop_bend)}</div>
       <div class="line"><span class="k">Chord</span><div class="row"><select onchange="edit('chord', this.value)">${opt(CHORDS, r.chord)}</select>${sw("chord_on", r.chord_on)}</div></div>
       <div class="line"><span class="k">Arp</span><div class="row"><select onchange="edit('arp', this.value)">${opt(ARPS, r.arp)}</select>
         <select onchange="edit('arp_rate', this.value)">${opt(RATES, r.arp_rate)}</select>
-        <select onchange="edit('arp_octaves', +this.value)">${opt([1,2,3], r.arp_octaves, (x) => x + " oct")}</select>${sw("arp_on", r.arp_on)}</div></div>`;
+        <select onchange="edit('arp_octaves', +this.value)">${opt([1,2,3,4], r.arp_octaves, (x) => x + " oct")}</select>${sw("arp_on", r.arp_on)}</div></div>
+      <div class="line"><span class="k">Arp hold</span>${sw("arp_hold", r.arp_hold)}</div>`;
   } else h += `<p class="dim small">The box's clock and Start/Stop go here when it's on (Clock: Box).</p>`;
   $("ed").innerHTML = h;
 }

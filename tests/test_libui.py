@@ -927,8 +927,8 @@ def test_arp_rows_and_presets():
     keys(app, "press", "up", "press")                        # maj -> min
     assert app.routes()["BT>FM-1"]["chord"] == "min"
     app.route_row = rows.index("arp_on")
-    keys(app, "press")                                       # Arp on: pattern, rate and octaves appear
-    assert [r[0] for r in app.route_rows()][-4:] == ["arp_on", "arp", "arp_rate", "arp_octaves"]
+    keys(app, "press")                                       # Arp on: pattern, rate, octaves and hold appear
+    assert [r[0] for r in app.route_rows()][-5:] == ["arp_on", "arp", "arp_rate", "arp_octaves", "arp_hold"]
     snap(app, "route-arp")
     # presets: save this setup into 2, change it, load 2 back
     at_row(app, "midi", "presets")
@@ -948,6 +948,39 @@ def test_arp_rows_and_presets():
     assert "2" not in app.state["route_presets"]
     keys(app, "left")
     assert app.screen == "settings"
+
+
+def test_route_keys_split_and_scale():
+    app = make_app()
+    app.midi = FakeMidi()
+    app.screen, app.route_key, app.route_row = "route", "BT>FM-1", 0
+    rows = [r[0] for r in app.route_rows()]
+    assert rows[rows.index("velocity") + 1:][:3] == ["lowest", "highest", "split"]
+    assert dict((r[0], r[2]) for r in app.route_rows())["lowest"] == "C-1"
+    app.route_row = rows.index("split")
+    keys(app, "press", "up")                                 # off -> middle C
+    assert app.routes()["BT>FM-1"]["split"] == 60
+    keys(app, "right", "down", "press")                      # an octave up, a semitone down: B4
+    assert app.routes()["BT>FM-1"]["split"] == 71 and app.screen == "route"
+    rows = [r[0] for r in app.route_rows()]
+    assert rows[rows.index("split") + 1] == "split_channel"   # the upper half's channel shows while split
+    app.route_row = rows.index("highest")
+    keys(app, "press", "left", "press")                      # G9 -> G8
+    assert app.routes()["BT>FM-1"]["highest"] == 115
+    app.route_row = rows.index("velocity")
+    keys(app, "press", *["down"] * 5, "press")               # back past normal: scale 200 ... 50
+    assert app.routes()["BT>FM-1"]["velocity"] == "scale" and app.routes()["BT>FM-1"]["scale"] == 50
+    assert dict((r[0], r[2]) for r in app.route_rows())["velocity"] == "50%"
+    snap(app, "route-keys")
+
+
+def test_routes_saved_before_chord_on():
+    app = make_app()
+    app.midi = FakeMidi()
+    app.state["routes"] = {"BT>FM-1": {"on": True, "chord": "off", "arp": "off"}}     # saved by an older box
+    route = app.routes()["BT>FM-1"]
+    assert (route["chord"], route["arp"], route["chord_on"], route["arp_on"]) == ("maj", "up", False, False)
+    midiui.blemidi.clean_routes(app.routes())                # what the web app sends back now passes its check
 
 
 def test_web_link():

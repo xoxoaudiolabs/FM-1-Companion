@@ -347,6 +347,63 @@ def test_arpeggiator():
     assert route.update({"arp_on": False, "chord_on": True, "chord": "5th"}) == [bytes([0x80, 0x30, 0])]
 
 
+def test_key_range_and_split():
+    route = blemidi.Route({"lowest": 48, "highest": 59})               # one octave, C3-B3
+    assert route.apply_all(b"\x90\x2f\x64") == []                       # below: dropped
+    assert route.apply_all(b"\x80\x2f\x00") == []                       # and its note-off too
+    assert route.apply_all(b"\x90\x30\x64") == [b"\x90\x30\x64"]
+    assert route.apply_all(b"\xa0\x3c\x40") == []                       # poly aftertouch above: dropped
+    assert route.apply_all(b"\xb0\x01\x40") == [b"\xb0\x01\x40"]       # controllers aren't keys: pass
+    route.update({"highest": 40})                                       # range changed while C3 is held
+    assert route.apply_all(b"\x80\x30\x00") == [b"\x80\x30\x00"]       # it still lets go
+    split = blemidi.Route({"split": 60, "split_channel": 1})             # from middle C up: channel 2
+    assert split.apply_all(b"\x90\x3b\x64") == [b"\x90\x3b\x64"]
+    assert split.apply_all(b"\x90\x3c\x64") == [b"\x91\x3c\x64"]
+    assert split.apply_all(b"\x80\x3c\x00") == [b"\x81\x3c\x00"]
+    chord = blemidi.Route({"split": 60, "split_channel": 1, "chord_on": True, "chord": "5th"})
+    assert chord.apply_all(b"\x90\x3a\x64") == [b"\x90\x3a\x64", b"\x90\x41\x64"]   # the key played decides
+    for bad in ({"lowest": 128}, {"split": -1}, {"split_channel": 16}, {"scale": 5}):
+        try:
+            blemidi.clean_routes({"BT>FM-1": bad})
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_velocity_scale():
+    route = blemidi.Route({"velocity": "scale", "scale": 50})
+    assert route.apply_all(b"\x90\x3c\x64") == [b"\x90\x3c\x32"]       # 100 -> 50
+    route.update({"velocity": "scale", "scale": 200})
+    assert route.apply_all(b"\x90\x3e\x64") == [b"\x90\x3e\x7f"]       # 200 -> 127 at most
+    route.update({"velocity": "scale", "scale": 10})
+    assert route.apply_all(b"\x90\x40\x05") == [b"\x90\x40\x01"]       # never 0 (that's a note-off)
+
+
+def test_arp_fast_rates_four_octaves_and_hold():
+    route = blemidi.Route({"arp_on": True, "arp": "up", "arp_rate": "1/32", "arp_octaves": 4})
+    route.apply_all(b"\x90\x24\x64")
+    assert play(route, 3 * 4)[0] == [0x24, 0x30, 0x3C, 0x48]          # 1/32: 3 ticks a step, four octaves
+    route.update({"arp_on": True, "arp": "up", "arp_rate": "1/16T", "arp_octaves": 1})
+    route.restart()
+    assert play(route, 8)[0] == [0x24, 0x24]                            # 1/16T: 4 ticks a step
+    hold = blemidi.Route({"arp_on": True, "arp": "up", "arp_rate": "1/16", "arp_hold": True})
+    for note in (0x3C, 0x40):
+        hold.apply_all(bytes([0x90, note, 0x64]))
+    for note in (0x3C, 0x40):
+        hold.apply_all(bytes([0x80, note, 0]))                           # let go: they keep playing
+    assert play(hold, 12)[0] == [0x3C, 0x40]
+    hold.apply_all(b"\x90\x43\x64")                                   # a key with none held: a new chord
+    hold.restart()
+    assert play(hold, 12)[0] == [0x43, 0x43]
+    hold.apply_all(b"\x90\x48\x64")                                   # another while that one's down: added
+    hold.restart()
+    assert play(hold, 12)[0] == [0x43, 0x48]
+    hold.apply_all(b"\x80\x48\x00")
+    hold.update({"arp_on": True, "arp": "up", "arp_rate": "1/16", "arp_hold": False})   # hold off: G's held
+    hold.restart()
+    assert play(hold, 12)[0] == [0x43, 0x43]
+
+
 def test_arp_keeps_time_without_a_clock():
     bridge = make_bridge()
     routes = blemidi.default_routes()

@@ -119,6 +119,12 @@ class DeskPages:
                                                                                    box[2] - 4, y + ROW_H - 9)
                 self.button(img, d, minus, "-", lambda: a.on_key("down"), key=("minus", i))
                 self.button(img, d, plus, "+", lambda: a.on_key("up"), key=("plus", i))
+                import midiui
+                if a.screen == "route" and a.route_edit in midiui.NOTE_ROWS:     # a key: an octave a tap too
+                    for n, (sign, step) in enumerate((("<<", "left"), (">>", "right"))):
+                        x = box[2] - 264 + n * 52
+                        self.button(img, d, (x, y + 3, x + 44, y + ROW_H - 9), sign,
+                                    lambda step=step: a.on_key(step), key=(sign, i))
                 vw = st.text_size(value[:7])[0]
                 st.text(img, ((minus[2] + plus[0] - vw) // 2, y + 12), value[:7], t.hi)
             else:

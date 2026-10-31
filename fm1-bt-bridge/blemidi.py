@@ -891,14 +891,19 @@ SOURCES, DESTINATIONS = ("BT", "USB", "NET", "FM-1", "FM-1 B", "Box"), ("FM-1", 
 FM1S = ("FM-1", "FM-1 B")               # FM-1 A (the only one, usually) and a second FM-1 on the hub
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
 DEFAULT_ROUTE = {"on": True, "channels": "same", "transpose": 0, "velocity": "normal", "fixed": 100,
-                 "drop_clock": False, "drop_aftertouch": False, "drop_bend": False,
+                 "scale": 100, "drop_clock": False, "drop_aftertouch": False, "drop_bend": False,
+                 "lowest": 0, "highest": 127, "split": 0, "split_channel": 1,
                  "chord_on": False, "chord": "maj", "arp_on": False, "arp": "up", "arp_rate": "1/8",
-                 "arp_octaves": 1}
+                 "arp_octaves": 1, "arp_hold": False}
 CURVES = {"normal": 1.0, "soft": 0.6, "hard": 1.6}      # velocity out = 127 * (in / 127) ** exponent
+# lowest/highest: the keys a route passes (a split across destinations: FM-1 A the bottom, FM-1 B the top).
+# split: 0 off, or the key from which notes go out on split_channel (0-15) instead (two sounds on one FM-1).
+# velocity "scale": in * scale / 100 (10-200 %).
 CHORDS = {"oct": (0, 12), "5th": (0, 7), "maj": (0, 4, 7), "min": (0, 3, 7), "7": (0, 4, 7, 10),
           "maj7": (0, 4, 7, 11), "m7": (0, 3, 7, 10)}    # chord memory: the notes one key plays
 ARPS = ("up", "down", "updown", "played", "random")
-ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6}  # clock ticks (24 a quarter note) per step
+ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6, "1/16T": 4, "1/32": 3}   # clock ticks (24 a quarter
+ARP_OCTAVES = 4                                                                  # note) per step
 
 
 # USB controllers play the FM-1, and both FM-1s play together; the rest is a choice
@@ -956,6 +961,17 @@ def route_default(key):
     return dict(DEFAULT_ROUTE, on=f"{generic(src)}>{generic(dest)}" not in OFF_AT_FIRST)
 
 
+def upgrade_route(settings):
+    """a route's settings as saved -> the same in today's values: saved before chord_on and arp_on, "off" was a
+    chord and an arp pattern (now maj and up, switched off by chord_on / arp_on)"""
+    out = dict(settings)
+    if out.get("arp", "up") not in ARPS:
+        out["arp"] = "up"
+    if out.get("chord", "maj") not in CHORDS:
+        out["chord"] = "maj"
+    return out
+
+
 def default_routes():
     """every route on but the USB ones above, nothing changed: MIDI passes as it always did"""
     return {key: route_default(key) for key in ROUTES}
@@ -985,15 +1001,18 @@ def _int(value, lo, hi):
 
 ROUTE_RULES = {                         # each route setting: what it may be (checked lazily, one rule a value)
     "on": lambda v: isinstance(v, bool), "drop_clock": lambda v: isinstance(v, bool),
+    "arp_hold": lambda v: isinstance(v, bool), "scale": lambda v: _int(v, 10, 200),
+    "lowest": lambda v: _int(v, 0, 127), "highest": lambda v: _int(v, 0, 127),
+    "split": lambda v: _int(v, 0, 127), "split_channel": lambda v: _int(v, 0, 15),
     "drop_aftertouch": lambda v: isinstance(v, bool), "drop_bend": lambda v: isinstance(v, bool),
     "chord_on": lambda v: isinstance(v, bool), "arp_on": lambda v: isinstance(v, bool),
     "channels": lambda v: v == "same" or _int(v, 0, 15) or (
         isinstance(v, list) and len(v) == 16 and all(c is None or _int(c, 0, 15) for c in v)),
     "transpose": lambda v: _int(v, -24, 24),
-    "velocity": lambda v: v in ("normal", "soft", "hard", "fixed"),
+    "velocity": lambda v: v in ("normal", "soft", "hard", "fixed", "scale"),
     "fixed": lambda v: _int(v, 1, 127),
     "chord": lambda v: isinstance(v, str) and v in CHORDS, "arp": lambda v: isinstance(v, str) and v in ARPS,
-    "arp_rate": lambda v: isinstance(v, str) and v in ARP_RATES, "arp_octaves": lambda v: _int(v, 1, 3),
+    "arp_rate": lambda v: isinstance(v, str) and v in ARP_RATES, "arp_octaves": lambda v: _int(v, 1, ARP_OCTAVES),
 }
 
 
@@ -1002,13 +1021,16 @@ class Route:
     channels: "same", one channel for everything (0-15), or 16 entries (a channel 0-15, or None: dropped).
     chord_on: one key plays a chord (chord: which, CHORDS). arp_on: the held notes (chords included) are played
     one at a time on the clock (tick(), 24 a quarter note), ARP_RATES apart, each for half a step (arp: the
-    pattern, ARPS). Switching either off keeps the choice of chord and pattern for next time.
+    pattern, ARPS). Switching either off keeps the choice of chord and pattern for next time. arp_hold: released
+    keys keep playing until the next key is pressed with none held (a new chord replaces the last).
+    lowest/highest: keys outside are dropped; split: from that key up, notes go out on split_channel.
     A note-off always stops what its note-on started, so changing a route while a key is held can't leave a
     note hanging. apply() and tick() run on different threads: a lock keeps them apart."""
 
     def __init__(self, settings=None):
         self.active = {}                    # (channel, note) in -> [(channel, note) out], for held notes
         self.held = []                      # arp: [(channel, note, velocity)] in the order played
+        self.down = set()                   # arp hold: the keys (channel, note) really held now
         self.sounding, self.ticks, self.step = None, 0, 0     # arp: the note playing, ticks counted, steps
         self.lock = threading.Lock()
         self.update(settings)
@@ -1016,14 +1038,12 @@ class Route:
     def update(self, settings):
         """new settings -> the note-offs that must go out now (an arp switched off mid-note)"""
         with self.lock:
-            self.s = dict(DEFAULT_ROUTE, **(settings or {}))
-            if self.s["arp"] not in ARPS:     # settings saved before arp_on: "off" was a pattern then
-                self.s["arp"] = "up"
-            if self.s["chord"] not in CHORDS:
-                self.s["chord"] = "maj"
+            self.s = dict(DEFAULT_ROUTE, **upgrade_route(settings or {}))
             if not self.arp_active():
-                self.held = []
+                self.held, self.down = [], set()
                 return self.silence()
+            if not self.s["arp_hold"]:          # hold switched off: only the keys still down play on
+                self.held = [h for h in self.held if h[:2] in self.down]
             return []
 
     def silence(self):
@@ -1041,15 +1061,22 @@ class Route:
             return channels
         return channels[channel] if isinstance(channels, list) and len(channels) == 16 else channel
 
-    def note(self, channel, note):
-        out, moved = self.out_channel(channel), note + self.s["transpose"]
+    def note(self, channel, note, played=None):
+        """(channel, note) out for a note in, or None; played: the key that made it (a chord's, an arp's), which
+        decides the split"""
+        split, key = self.s["split"], note if played is None else played
+        out = self.s["split_channel"] if split and key >= split else self.out_channel(channel)
+        moved = note + self.s["transpose"]
         return (out, moved) if out is not None and 0 <= moved <= 127 else None
+
+    def in_range(self, note):
+        return self.s["lowest"] <= note <= self.s["highest"]
 
     def chord(self, channel, note):
         """the (channel, note) outs one played note makes: its chord, mapped and transposed"""
         outs = []
         for interval in self.shape():
-            out = self.note(channel, note + interval)
+            out = self.note(channel, note + interval, note)
             if out and out not in outs:
                 outs.append(out)
         return outs
@@ -1061,6 +1088,8 @@ class Route:
     def velocity(self, value):
         if self.s["velocity"] == "fixed":
             return max(1, min(127, int(self.s["fixed"])))
+        if self.s["velocity"] == "scale":
+            return max(1, min(127, round(value * self.s["scale"] / 100)))
         return max(1, min(127, round(127 * (value / 127) ** CURVES.get(self.s["velocity"], 1.0))))
 
     def apply(self, message):
@@ -1084,13 +1113,21 @@ class Route:
         if kind in (0x80, 0x90) and len(message) == 3:
             key = (channel, message[1])
             off = kind == 0x80 or message[2] == 0           # note off (or note on at velocity 0)
+            if not off and not self.in_range(message[1]):
+                return []                                   # outside the route's keys
             if s["arp_on"] and s["on"]:                     # the arp plays the held notes on the clock
-                self.held = [h for h in self.held if h[:2] != key]
-                if not off:
-                    self.held.append((channel, message[1], message[2]))
+                if off:
+                    self.down.discard(key)
+                    if not s["arp_hold"]:
+                        self.held = [h for h in self.held if h[:2] != key]
+                else:
+                    if s["arp_hold"] and not self.down:     # the first key after letting go: a new chord
+                        self.held = []
+                    self.down.add(key)
+                    self.held = [h for h in self.held if h[:2] != key] + [(channel, message[1], message[2])]
                 return [] if self.held else self.silence()
             if off:
-                outs = self.active.pop(key, None) or (self.chord(*key) if s["on"] else [])
+                outs = self.active.pop(key, None) or (self.chord(*key) if s["on"] and self.in_range(key[1]) else [])
                 return [bytes([kind | c, n, message[2]]) for c, n in outs]
             outs = self.chord(*key) if s["on"] else []
             if outs:
@@ -1099,7 +1136,7 @@ class Route:
         if not s["on"] or (kind in (0xA0, 0xD0) and s["drop_aftertouch"]) or (kind == 0xE0 and s["drop_bend"]):
             return []
         if kind == 0xA0 and len(message) == 3:              # poly aftertouch: follows the note
-            out = self.note(channel, message[1])
+            out = self.note(channel, message[1]) if self.in_range(message[1]) else None
             return [bytes([0xA0 | out[0], out[1], message[2]])] if out else []
         out = self.out_channel(channel)
         return [] if out is None else [bytes([kind | out]) + bytes(message[1:])]
@@ -1107,17 +1144,18 @@ class Route:
     # ---- the arpeggiator
 
     def arp_notes(self):
-        """the notes the arp steps through, [(channel, note, velocity)], in the pattern's order (one cycle)"""
+        """the notes the arp steps through, [(channel, note, velocity, key played)], in the pattern's order (one
+        cycle)"""
         notes = []
         for channel, note, velocity in self.held:
             for interval in self.shape():
-                notes.append((channel, note + interval, velocity))
-        octaves = max(1, min(4, int(self.s["arp_octaves"])))
-        notes = [(c, n + 12 * o, v) for o in range(octaves) for c, n, v in notes]
+                notes.append((channel, note + interval, velocity, note))
+        octaves = max(1, min(ARP_OCTAVES, int(self.s["arp_octaves"])))
+        notes = [(c, n + 12 * o, v, k) for o in range(octaves) for c, n, v, k in notes]
         pattern = self.s["arp"]
         if pattern == "played":
             return notes
-        notes = sorted(set(notes), key=lambda x: x[1])
+        notes = sorted({x[:2]: x for x in notes}.values(), key=lambda x: x[1])     # each (channel, note) once
         if pattern == "down":
             return notes[::-1]
         if pattern == "updown":
@@ -1138,11 +1176,11 @@ class Route:
                 notes = self.arp_notes()
                 if self.s["arp"] == "random":
                     import random
-                    channel, note, velocity = random.choice(notes)
+                    channel, note, velocity, played = random.choice(notes)
                 else:
-                    channel, note, velocity = notes[self.step % len(notes)]
+                    channel, note, velocity, played = notes[self.step % len(notes)]
                 self.step += 1
-                mapped = self.note(channel, note)
+                mapped = self.note(channel, note, played)
                 if mapped:
                     self.sounding = mapped
                     out.append(bytes([0x90 | mapped[0], mapped[1], self.velocity(velocity)]))

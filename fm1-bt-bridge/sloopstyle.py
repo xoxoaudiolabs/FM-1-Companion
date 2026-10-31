@@ -36,9 +36,17 @@ PALETTES = {
 NAMES = list(PALETTES)                      # SLOOP's palette numbers: 0 GREEN ... 4 MONO
 TRACKS = [rgb(40, 124, 255), rgb(30, 204, 112), rgb(255, 198, 24), rgb(255, 98, 26)]   # blue, green, yellow, orange
 
+# XOXO: the XOXO Audio Labs website's black, off-white, warm grey and rules, its signal red-orange used sparingly
+# (the Pocket's default when FM-1 A's colours aren't known)
+XOXO_BLACK, XOXO_WHITE, XOXO_GREY = (11, 11, 11), (242, 240, 235), (138, 135, 128)
+XOXO_SIGNAL = (255, 59, 31)
+
 # the Studio's own themes, after SLOOP's five (FM-1 A can't show these): the five steps, the four track colours,
 # the background and the highlight
 EXTRA = {
+    "XOXO": ([(42, 42, 40), (61, 61, 58), XOXO_GREY, (200, 197, 190), XOXO_WHITE],
+             [XOXO_SIGNAL, (226, 170, 83), XOXO_WHITE, (126, 166, 201)],
+             XOXO_BLACK, XOXO_WHITE),
     "NEON NOIR": ([rgb(46, 14, 64), rgb(92, 26, 120), rgb(186, 40, 190), rgb(255, 56, 170), rgb(60, 236, 255)],
                   [rgb(255, 40, 160), rgb(0, 224, 255), rgb(156, 84, 255), rgb(196, 255, 40)],
                   rgb(8, 4, 16), rgb(230, 250, 255)),
@@ -64,8 +72,10 @@ EXTRA = {
                  [rgb(40, 150, 255), rgb(40, 230, 180), rgb(255, 210, 120), rgb(255, 110, 140)],
                  rgb(2, 10, 22), rgb(230, 255, 252)),
 }
-ALL = NAMES + list(EXTRA)                   # MORE > THEME's list
+ALL = NAMES + [n for n in EXTRA if n != "XOXO"]   # the Companion Studio's MORE > THEME list
+POCKET = list(EXTRA)                        # the Pocket's Settings > Theme after FM-1 A's
 GREYS = [rgb(26, 26, 30), rgb(54, 54, 60), rgb(118, 118, 126), rgb(196, 196, 204)]     # tiles, empty, labels, text
+XOXO_GREYS = [(22, 22, 21), (36, 36, 34), XOXO_GREY, (200, 197, 190)]                  # (XOXO's warm ones)
 
 THEME_MAGIC = 0x324D4854                    # "THM2": SLOOP 2.7's theme record (gfx.c theme_t, 40 bytes)
 CUSTOM_BIT = 1 << 30                        # the settings' lights word: the custom theme is the one shown
@@ -98,7 +108,7 @@ class Theme:
         else:
             self.mid = [scale(t, 2, 3) for t in self.track]
             self.dim = [scale(t, 1, 3) for t in self.track]
-        self.grey = [self.toward(g) for g in GREYS]
+        self.grey = [self.toward(g) for g in (XOXO_GREYS if name in EXTRA else GREYS)]   # (XOXO's warm ones)
 
     def toward(self, grey):
         """SLOOP's te_gray: a grey drawn for black, the same share of the way from this background toward white

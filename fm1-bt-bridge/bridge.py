@@ -450,6 +450,7 @@ class Loopback:
         self.rate, self.paused_until = rate, 0.0
         self.links, self.started, self.relinked = None, 0.0, 0.0   # a chosen pair's links, to check (heal)
         self.ends = None                      # (source node id, sink node id) it was linked between (follow)
+        self.unlinked = 0                     # follows in a row that found its playback side linked to nothing
 
     def ensure(self, source, sink, name=None, pair=None):
         """name: the playback side's node name (a mixer channel's, to set its level there); pair: (left, right)
@@ -525,10 +526,28 @@ class Loopback:
         if self.ends is None:
             self.ends = ends
             return False
-        if ends == self.ends:
+        if ends == self.ends and not self.left_unlinked(objects):
             return False
         self.stop()
         return True
+
+    def left_unlinked(self, objects, now=None):
+        """its playback side linked to nothing, twice in a row from 5 s after start, while its sink is there (seen
+        on the Pocket: the link's sink started again and the loopback stayed "running" with no links, though the
+        sink's node id looked the same to follow)"""
+        now = time.monotonic() if now is None else now
+        if not self.proc or not self.key:
+            return False
+        name = self.key[2] or f"output.pw-loopback-{self.proc.pid}"   # (pw-loopback's own name for it)
+        node = next((o.get("id") for o in objects if o.get("type") == "PipeWire:Interface:Node"
+                     and ((o.get("info") or {}).get("props") or {}).get("node.name") == name), None)
+        if node is None or now - self.started < 5:
+            self.unlinked = 0
+            return False
+        linked = any(o.get("type") == "PipeWire:Interface:Link" and (o.get("info") or {}).get("output-node-id") == node
+                     for o in objects)
+        self.unlinked = 0 if linked else self.unlinked + 1
+        return self.unlinked >= 2
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -547,7 +566,7 @@ class Loopback:
                 self.proc.wait(3)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-        self.proc, self.key, self.ends = None, None, None
+        self.proc, self.key, self.ends, self.unlinked = None, None, None, 0
 
 
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
@@ -2088,7 +2107,7 @@ def splash(display, state=None):
     if getattr(display, "colour", False):    # the LCD: in the theme fixed in the settings (FM-1 A's isn't known yet)
         import sloopstyle as st
         pick = (state or {}).get("desk_theme", "follow")
-        display.show(pocketui.draw_splash(st.Theme(pick) if pick != "follow" else st.Theme(),
+        display.show(pocketui.draw_splash(st.Theme(pick) if pick in st.POCKET else st.Theme("XOXO"),
                                           getattr(display, "size", 128)))
         return
     img = Image.new("1", (128, 64))

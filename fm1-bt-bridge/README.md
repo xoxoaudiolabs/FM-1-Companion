@@ -98,7 +98,7 @@ fm1-screen lcd144
 ```
 `oled`, `lcd144` (1.44" LCD), `lcd13` (1.3" LCD) or `ask` (the picker on the next start); `fm1-screen` alone says
 which it's set to. On a colour LCD every screen is in colour, and Settings › Theme picks the colours (FM-1 A's,
-SLOOP's five or the Studio's eight).
+XOXO or the Studio's eight).
 
 ## Bluetooth: what the Pocket can and can't do
 

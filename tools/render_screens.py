@@ -152,9 +152,9 @@ def scenes(app):
     def route():
         import blemidi
         routes = blemidi.default_routes()
-        routes["BT>FM-1"].update(transpose=12, velocity="soft")
-        app.state["routes"] = routes
-        app.screen, app.route_key, app.route_row = "route", "BT>FM-1", 2
+        routes["BT>FM-1"].update(transpose=12, velocity="scale", scale=120, lowest=36, split=60, split_channel=1)
+        app.state["routes"] = routes                     # (a split: from C4 up on channel 2)
+        app.screen, app.route_key, app.route_row = "route", "BT>FM-1", 6
 
     def recordings():
         import library as lib
@@ -546,7 +546,7 @@ def lcd_screens(state, out):
     display.image.resize((128 * LCD_SCALE,) * 2, Image.NEAREST).save(out / "lcd-theme-pick.png", optimize=True)
     print("wrote", out / "lcd-theme-pick.png")
     homes = []
-    for theme in st.ALL:
+    for theme in st.POCKET:                 # the Pocket's own list
         display = LcdCapture()
         app = pocket_app(display, dict(state, desk_theme=theme))
         app.battery = {"percent": 78, "mv": 3818, "plugged": False}

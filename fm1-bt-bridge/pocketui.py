@@ -244,7 +244,7 @@ class PocketScreens:
         in the settings ("desk_theme", as on the Studio); looked at every 2 s"""
         if now >= getattr(self, "theme_check", 0.0):
             self.theme_check = now + 2
-            pick = self.state.get("desk_theme", "follow")
+            pick = self.theme_pick()
             try:
                 key = pick if pick != "follow" else library.THEME.read_text()
             except OSError:
@@ -253,10 +253,16 @@ class PocketScreens:
                 self.theme_seen = key
                 try:
                     self.theme = (st.Theme(pick) if pick != "follow" else
-                                  st.theme_load(json.loads(key)) if key else st.Theme())
+                                  st.theme_load(json.loads(key)) if key else st.Theme("XOXO"))
                 except (ValueError, TypeError):
-                    self.theme = st.Theme()
+                    self.theme = st.Theme("XOXO")
         return self.theme
+
+    def theme_pick(self):
+        """the theme in the settings: "follow" (FM-1 A's) or one of st.POCKET; one of SLOOP's five, which the
+        list had before the XOXO look, is XOXO now (they're still shown by following FM-1 A)"""
+        pick = self.state.get("desk_theme", "follow")
+        return pick if pick == "follow" or pick in st.POCKET else "XOXO"
 
     def colour_frame(self, now):
         """this screen in colour, with the volume (HOME), busy and message boxes over it"""
@@ -316,18 +322,18 @@ class PocketScreens:
         try:
             return st.theme_load(json.loads(library.THEME.read_text()))
         except (OSError, ValueError, TypeError):
-            return st.Theme()
+            return st.Theme("XOXO")
 
     def theme_label(self):
-        pick = self.state.get("desk_theme", "follow")
+        pick = self.theme_pick()
         return "FM-1 A" if pick == "follow" else pick
 
     def open_theme_pick(self):
-        """FOLLOW FM-1 A, SLOOP's five and the Studio's own, each with a swatch; the screen shows the one under the
-        cursor; press uses it"""
-        items = [("FM-1 A", "", "follow")] + [(name, "", name) for name in st.ALL]
+        """FOLLOW FM-1 A, then XOXO and the Studio's eight, each with a swatch; the screen shows the one
+        under the cursor; press uses it"""
+        items = [("FM-1 A", "", "follow")] + [(name, "", name) for name in st.POCKET]
         self.open_pick("Theme", items, self.pick_theme, "", back="settings")
-        pick = self.state.get("desk_theme", "follow")
+        pick = self.theme_pick()
         self.pick.update(theme=True, cursor=next((i for i, item in enumerate(items) if item[2] == pick), 0))
 
     def pick_theme(self, name):
@@ -339,7 +345,7 @@ class PocketScreens:
 
     def colour_themes(self, img, d, t):
         p = self.pick
-        pick = self.state.get("desk_theme", "follow")
+        pick = self.theme_pick()
         draw_list(img, d, t, "Theme", [(label + (" *" if name == pick else ""), "") for label, _, name in p["items"]],
                   p["cursor"], "press = use  < back")
         top = min(max(0, p["cursor"] - 2), max(0, len(p["items"]) - ROWS))

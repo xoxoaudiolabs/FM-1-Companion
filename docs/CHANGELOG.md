@@ -2,6 +2,37 @@
 
 Every release of both boxes, newest first. [Back to the main page](../README.md)
 
+## Pocket v2.13: splits and key ranges, the XOXO themes, a steadier Studio link
+
+| A route: a key range and a split | Settings › Theme | HOME in each theme |
+|---|---|---|
+| ![BT > FM-1: Lowest key C2, Highest key G9, Split at C4, Upper ch. 2](images/lcd-route.png) | ![Theme: XOXO, NEON NOIR, KAWAII, BUBBLEGUM, SYNTHWAVE, 8-BIT, each with a swatch](images/lcd-theme-pick.png) | ![HOME in each of the nine themes](images/lcd-themes.png) |
+
+*Drawn by the Companion's own code on a computer (`tools/render_screens.py --lcd`).*
+
+- **Splits and key ranges in the MIDI matrix.** Each route has new rows:
+  - **Lowest key** and **Highest key:** the keys it passes. Two routes from one keyboard with different keys split
+    it across destinations: the bottom to FM-1 A, the top to FM-1 B.
+  - **Split at** and **Upper ch.:** from that key up, notes go out on another channel, for two sounds from one
+    keyboard on the same FM-1. A chord follows the key you played.
+  - **Velocity › scale:** 50–200% on the box, any 10–200% in the web app.
+  - **The arpeggiator:** 1/16T and 1/32 as well, up to 4 octaves, and **Arp hold**: it keeps playing after you let
+    go, until you play a new chord.
+  - On the key rows, left/right while changing moves an octave. The web app's route editor has them all.
+  - Tried on the 1.44" LCD Pocket: the new options saved and read back, a wrong value refused, a split saved from
+    the web app. *Not tried yet:* playing notes through them on a keyboard.
+- **The XOXO themes.** On the colour screen, **Settings › Theme** (and the web app's Screen theme) lists **FM-1 A**
+  first, as before, then **XOXO**, black, off-white, warm grey and red-orange, and the eight Studio themes, with
+  warmer greys. SLOOP's five palettes are still shown by following FM-1 A; a Pocket set to one of them, and
+  FM-1 A's choice before the FM-1 has been read, show XOXO. Tried on the 1.44" LCD.
+- **A steadier Studio link.**
+  - When the Pocket's sound stream to the Studio restarts, the Pocket's sound joins it again by itself (it could
+    stay silent until the Companion restarted). Tried over the cable: back on the Studio within 5 s.
+  - When the Studio restarts, the Pocket notices and links again. *Automated tests only so far;* until it's tried,
+    **MIDI › Studio link** off and on again does the same.
+- Routes saved by an older version, with the chord or arp set to off, no longer make every route change in the
+  web app fail.
+
 ## Pocket v2.12: a Studio link, one-click updates, a new web app, SLOOP songs
 
 | MIDI › Studio link | Sloop › Load song | FM-1 › DX7 patches: a bank's voices |

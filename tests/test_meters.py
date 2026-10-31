@@ -431,8 +431,8 @@ def test_colour_screens():
 
     class Lcd(Capture):
         colour = True
-    app = bridge.App(Lcd(), dict(bridge.DEFAULTS, desk_theme="CYAN"))
-    t = st.Theme("CYAN")
+    app = bridge.App(Lcd(), dict(bridge.DEFAULTS, desk_theme="DEEP SEA"))
+    t = st.Theme("DEEP SEA")
     app.pick = {"title": "Load project", "cursor": 7, "items": [(f"project {i}", "1 MB") for i in range(9)]}
     app.confirm = {"title": "Restore", "lines": ["Replaces FM-1 A's projects"]}
     app.job_title = "Backing up"
@@ -504,9 +504,11 @@ def test_colour_meters():
 
 
 def test_colour_themes():
-    """Settings > Theme, on the LCD only: FOLLOW FM-1 A, SLOOP's five and the Studio's own, the screen showing the
-    one under the cursor; press uses it; the OLED's Settings has no such row"""
+    """Settings > Theme, on the LCD only: FOLLOW FM-1 A, then XOXO and the Studio's eight, the screen
+    showing the one under the cursor; press uses it; one of SLOOP's five picked before is XOXO now; the OLED's
+    Settings has no such row"""
     import sloopstyle as st
+    import library
 
     class Lcd(Capture):
         colour = True
@@ -514,19 +516,30 @@ def test_colour_themes():
     app.save_settings = lambda: None
     app.screen, app.settings_menu = "settings", None
     keys = [r[0] for r in app.settings_rows()]
-    assert "theme" in keys and dict((k, v) for k, _, v in app.settings_rows())["theme"] == "AMBER"
+    assert "theme" in keys and dict((k, v) for k, _, v in app.settings_rows())["theme"] == "XOXO"
+    assert app.theme_status() == {"value": "XOXO", "choices": ["follow"] + st.POCKET}   # the web app's list
     app.setting = keys.index("theme")
     app.change_setting()
-    assert app.screen == "pick" and [i[2] for i in app.pick["items"]] == ["follow"] + st.ALL
-    assert app.pick["items"][app.pick["cursor"]][2] == "AMBER"          # the cursor on the one in use
-    app.library_key("down", False)                                      # CYAN, shown before it's chosen
+    assert app.screen == "pick" and [i[2] for i in app.pick["items"]] == ["follow", "XOXO", "NEON NOIR", "KAWAII",
+                                                                          "BUBBLEGUM", "SYNTHWAVE", "8-BIT",
+                                                                          "INFERNO", "TOXIC", "DEEP SEA"]
+    assert app.pick["items"][app.pick["cursor"]][2] == "XOXO"           # the cursor on the one in use
+    app.library_key("down", False)                                      # NEON NOIR, shown before it's chosen
     app.render(force=True)
-    assert app.display.image.getpixel((60, 18)) == st.Theme("CYAN").c[0]
+    assert app.display.image.getpixel((60, 18)) == st.Theme("NEON NOIR").c[0]
     assert app.state["desk_theme"] == "AMBER"
     app.library_key("press", False)
-    assert app.state["desk_theme"] == "CYAN" and app.screen == "settings"
+    assert app.state["desk_theme"] == "NEON NOIR" and app.screen == "settings"
     app.render(force=True)
-    assert app.display.image.getpixel((60, 18)) == st.Theme("CYAN").c[0]
+    assert app.display.image.getpixel((60, 18)) == st.Theme("NEON NOIR").c[0]
+    xoxo = st.Theme("XOXO")                                             # the XOXO look's colours
+    assert (xoxo.bg, xoxo.hi, xoxo.track[0], xoxo.grey[0]) == ((11, 11, 11), (242, 240, 235), (255, 59, 31),
+                                                               (32, 32, 31))
+    assert st.ALL == st.NAMES + st.POCKET[1:]                           # (the Companion Studio's list: no XOXO)
+    library.THEME.unlink(missing_ok=True)                               # following FM-1 A, none read yet: XOXO
+    app.state["desk_theme"], app.theme_check = "follow", 0.0
+    app.render(force=True)
+    assert app.pocket_theme(time.monotonic()) == xoxo
     oled = bridge.App(Capture(), dict(bridge.DEFAULTS))
     oled.settings_menu = None
     assert "theme" not in [r[0] for r in oled.settings_rows()]

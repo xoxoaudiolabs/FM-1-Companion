@@ -368,7 +368,8 @@ class Invitation:
         self.name, self.on_message, self.host, self.port, self.find = name, on_message, host, port, find
         self.ssrc, self.seq = random.getrandbits(32), random.getrandbits(16)
         self.lock = threading.Lock()
-        self.peer = None                      # {"name", "control", "data"} while linked
+        self.peer = None                      # {"name", "control", "data", "ssrc"} while linked
+        self.studio_ssrc = None               # the session id in the Studio's last OK (invite)
         self.error, self.running, self.heard = None, False, 0.0
         self.sock = self.dsock = None
 
@@ -431,6 +432,7 @@ class Invitation:
                 break
             packet, _ = sock.recvfrom(2048)
             if packet[:4] == SIGN + b"OK" and len(packet) >= 16 and struct.unpack(">I", packet[8:12])[0] == token:
+                self.studio_ssrc = struct.unpack(">I", packet[12:16])[0]
                 return packet[16:].split(b"\0")[0].decode("utf-8", "replace") or "Studio"
         return None
 
@@ -449,7 +451,7 @@ class Invitation:
             self.error = f"{name}: no answer"[:40]
             return False
         with self.lock:
-            self.peer = {"name": studio, "control": control, "data": data}
+            self.peer = {"name": studio, "control": control, "data": data, "ssrc": self.studio_ssrc}
         self.error, self.heard = None, time.monotonic()
         return True
 
@@ -516,7 +518,11 @@ class Invitation:
 
     def received(self, packet, data_port):
         if packet[:2] == SIGN:
-            if packet[2:4] in (b"CK", b"OK"):
+            if packet[2:4] == b"CK" and len(packet) >= 8 and self.restarted(struct.unpack(">I", packet[4:8])[0]):
+                with self.lock:                   # the Studio started again: its session is a new one that doesn't
+                    self.peer = None              # know this one (though it answers its syncs): invite again
+                self.error = "Studio restarted"
+            elif packet[2:4] in (b"CK", b"OK"):
                 self.heard = time.monotonic()
             elif packet[2:4] == b"BY":            # the Studio ended it: find it and invite again
                 with self.lock:
@@ -525,6 +531,13 @@ class Invitation:
             self.heard = time.monotonic()
             for m in decode(packet):
                 self.on_message(m)
+
+    def restarted(self, ssrc):
+        """a sync answered by a session other than the one that accepted the invitation: the Studio restarted
+        (its session answers anyone's syncs, so going quiet never shows it)"""
+        with self.lock:
+            known = self.peer and self.peer.get("ssrc")
+        return bool(known) and ssrc != known
 
     def send(self, messages):
         with self.lock:

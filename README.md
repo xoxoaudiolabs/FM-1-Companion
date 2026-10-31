@@ -31,7 +31,7 @@ your phone.
 | Screen and controls | A Waveshare Zero HAT: the 1.3" OLED, the 1.44" colour LCD or the 1.3" colour LCD (not tried yet); joystick and three keys | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
 | Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
 | Adds | Fits in a pocket | SLOOP and X0X running on the Studio itself, DJ decks, a sampler with SLOOP's sequencer and punch-in FX, a headphone jack with cue, a DAW control surface, four USB ports, Ethernet, HDMI out |
-| Software | v2.12 | Studio v1.6, and newer work on main |
+| Software | v2.13 | Studio v1.6, and newer work on main |
 | More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
 
 The installer works out which build it's on, and each build only shows what its hardware can do. What's been
@@ -61,7 +61,7 @@ it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
 - **Playing tools.** MIDI clock (follow, or lead with tap tempo and Start/Stop), metronome, arpeggiator and
   chord memory.
 - **A MIDI matrix.** Route Bluetooth, USB keyboards, the FM-1s and the box to each other: transpose, re-channel,
-  reshape velocity and filter, with four presets.
+  reshape velocity, pick a key range or split a keyboard, and filter, with four presets.
 - **Eleven meters.** LED bars, VU needles, spectrum, scope, a tape deck, a tuner, a keyboard view, a waterfall, a
   goniometer, a level history and a beat counter (the Studio shows ten, without the tuner).
 - **Looks after the FM-1 (SLOOP 2.3+).** Back up and restore everything on it, back up and load songs, load
@@ -139,13 +139,19 @@ Drawn by the Companion's own code on a computer (`tools/render_screens.py`).
 
 **The Pocket's HOME in each theme** (Settings › Theme on the LCD)
 
-![HOME in each of the thirteen themes](docs/images/lcd-themes.png)
+![HOME in each of the nine themes](docs/images/lcd-themes.png)
 </details>
 
 ## What's new
 
 The latest of each box; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+- **Pocket v2.13: splits and key ranges, the XOXO themes, a steadier Studio link.** A MIDI route can pass only
+  a range of keys or split a keyboard onto a second channel, scale velocity by a percentage, and arpeggiate at
+  1/16T or 1/32 over up to four octaves, with hold. The colour screen's themes are now XOXO (the new default) and
+  the eight Studio themes, after FM-1 A's own colours. The Studio link comes back by itself when the Pocket's
+  sound stream restarts.
+  ([More](docs/CHANGELOG.md#pocket-v213-splits-and-key-ranges-the-xoxo-themes-a-steadier-studio-link))
 - **Pocket v2.12: a Studio link, one-click updates, a new web app, SLOOP songs.** The Pocket links to a Studio
   over Wi-Fi or an Ethernet cable: MIDI both ways, the Studio's clock, and the Pocket's sound played on the Studio
   (the Studio's side of the link comes out on 30 October). The web app updates the box to the newest release and
@@ -204,6 +210,11 @@ Girl next to two FM-1s).
 - The update (v2.12): an install from a release file as the updater does it, settings and all 57 library files
   kept as they were; going back to the code from before; the web app asking, the box's hold-press, and an update
   turned down when there's nothing newer, with nothing restarted.
+- The MIDI matrix's new route options (v2.13) on the 1.44" LCD Pocket: key ranges, a split, velocity % and arp
+  hold saved and read back, a wrong value refused, a split saved from the web app's route editor.
+- The themes (v2.13) on the 1.44" LCD: Settings › Theme with XOXO and the eight, each shown as the cursor moves.
+- The Studio link (v2.13) over the cable: the Pocket's sound stream stopped on purpose, a new one started and
+  heard on the Studio again within 5 s, with nothing done by hand.
 - SLOOP songs (v2.12) on an FM-1 running SLOOP 2.8: a song backed up, then loaded back from the box and again from
   `library.py`, read back the same, a backup made first each time. The DX7 loader refusing that SLOOP FM-1 (SLOOP
   doesn't take DX7 patches).
@@ -226,6 +237,9 @@ Girl next to two FM-1s).
   and its Studio link, theme, auto backup and speaker controls.
 - The safe shutdown at 5% battery.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
+- Playing notes through v2.13's key ranges, splits, velocity % and the new arp rates and hold: saved and shown
+  on the box, but not yet played on a keyboard. The Studio link inviting itself again after the Studio restarts
+  (v2.13): automated tests only.
 - The rest, with automated tests only: the MIDI matrix's route options and presets, the other seven meters,
   auto backup, SD card import and the Wi-Fi switch.
 

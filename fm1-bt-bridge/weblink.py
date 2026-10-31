@@ -57,7 +57,7 @@ class WebLink:
         if self.desk or not getattr(self.display, "colour", False):
             return None
         import sloopstyle
-        return {"value": self.state.get("desk_theme", "follow"), "choices": ["follow", *sloopstyle.ALL]}
+        return {"value": self.theme_pick(), "choices": ["follow", *sloopstyle.POCKET]}
 
     def web_publish(self):
         """called by the monitor thread every second: the status file, rewritten when it changed, and every 2 s

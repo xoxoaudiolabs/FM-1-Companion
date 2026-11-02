@@ -2,9 +2,8 @@
 the OLED HAT's keys and joystick (bridge.KEYS):
 
   1.44" LCD HAT   ST7735S, 128x128 colour          ST7735   (tried on the Pocket)
-  1.3" LCD HAT    ST7789, 240x240 colour IPS       ST7789   (not tried on one yet: its colour order, turn and
-                                                             offsets are from Waveshare's demo; check them with
-                                                             the test card)
+  1.3" LCD HAT    ST7789, 240x240 colour IPS       ST7789   (tried on a Pocket 2026-11-02, with Pimoroni's
+                                                             panel set-up: Waveshare's showed it pale)
 
 No HAT can be read back over SPI, so which one is fitted is a setting (state "screen": "oled", "lcd144" or "lcd13";
 "lcd" is the 1.44" too, its name before the 1.3" came). The colour screens (pocketui) are drawn at the panel's
@@ -154,17 +153,18 @@ class ST7735(Panel):
 
 
 class ST7789(Panel):
-    """the 1.3" LCD HAT, 240x240: the screens drawn at 120 and shown at twice the size. NOT TRIED ON ONE YET: the
-    set-up is Waveshare's demo's for this HAT (MADCTL 0x70, RGB order, colours inverted as IPS panels want, no
-    offset at 240x240), and TURN guesses it sits as the 1.44" does. Its test card says what to change."""
+    """the 1.3" LCD HAT, 240x240: the screens drawn at 120 and shown at twice the size, turned as the 1.44" is.
+    Its set-up is Pimoroni's st7789 driver's (VCOM 0x37, gate 0x14, its gamma tables): with Waveshare's demo's
+    (VCOM 0x19, gate 0x35) the dark backgrounds showed pale blue; picked by eye on a Pocket, 2026-11-02. MADCTL 0x70,
+    RGB order, colours inverted as IPS panels want, no offset at 240x240."""
     W, H, X0, Y0, TURN, SPEED, size = 240, 240, 0, 0, 180, 40_000_000, 120
 
     def setup(self):
-        for c, *data in ((0x36, 0x70), (0x3A, 0x05), (0xB2, 0x0C, 0x0C, 0x00, 0x33, 0x33), (0xB7, 0x35),
-                         (0xBB, 0x19), (0xC0, 0x2C), (0xC2, 0x01), (0xC3, 0x12), (0xC4, 0x20), (0xC6, 0x0F),
-                         (0xD0, 0xA4, 0xA1),
-                         (0xE0, 0xD0, 0x04, 0x0D, 0x11, 0x13, 0x2B, 0x3F, 0x54, 0x4C, 0x18, 0x0D, 0x0B, 0x1F, 0x23),
-                         (0xE1, 0xD0, 0x04, 0x0C, 0x11, 0x13, 0x2C, 0x3F, 0x44, 0x51, 0x2F, 0x1F, 0x1F, 0x20, 0x23),
+        for c, *data in ((0x36, 0x70), (0x3A, 0x05), (0xB2, 0x0C, 0x0C, 0x00, 0x33, 0x33), (0xB7, 0x14),
+                         (0xBB, 0x37), (0xC0, 0x2C), (0xC2, 0x01), (0xC3, 0x12), (0xC4, 0x20), (0xD0, 0xA4, 0xA1),
+                         (0xC6, 0x0F),
+                         (0xE0, 0xD0, 0x08, 0x11, 0x08, 0x0C, 0x15, 0x39, 0x33, 0x50, 0x36, 0x13, 0x14, 0x29, 0x2D),
+                         (0xE1, 0xD0, 0x08, 0x10, 0x08, 0x06, 0x06, 0x39, 0x44, 0x51, 0x0B, 0x16, 0x14, 0x2F, 0x31),
                          (0x21,)):        # (0x21: colours inverted, as this IPS panel shows them right)
             self.cmd(c, *data)
 

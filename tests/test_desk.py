@@ -409,7 +409,13 @@ def test_fm1_on_studio():
         ui.touch("up", box[0] + 2, box[1] + 2, now[0] + hold)
         now[0] += 1 + hold
     ui.open_tab("MORE")
+    was = dict(deskui.APPS)
+    deskui.APPS.update({k: (n, Path("/nonexistent") / k) for k, (n, _) in was.items()})
+    ui.render(now[0], force=True)
+    assert ("more", "FM-1 ON STUDIO") not in {w[3] for w in ui.widgets}   # neither SLOOP nor X0X installed
+    deskui.APPS.update({"sloop": (was["sloop"][0], Path(__file__))})     # (one there: the tile shows)
     tap(("more", "FM-1 ON STUDIO"))
+    deskui.APPS.update(was)
     assert ui.tab == "FM1"
     ui.render(now[0], force=True)
     keys = {w[3] for w in ui.widgets}
@@ -721,8 +727,9 @@ def test_flow_walk_fixes():
     assert meters_box[1] == 0 and meters_box[3] >= deskui.HDR_H                # the header's whole height
     ui.open_tab("MORE")
     ui.render(0.0, force=True)
-    assert {m[0] for m in deskui.MORE} <= {w[3][1] for w in ui.widgets if isinstance(w[3], tuple)
-                                           and w[3][0] == "more"}               # all of it, no scrolling
+    assert {m[0] for m in deskui.MORE} - {"FM-1 ON STUDIO"} <= {w[3][1] for w in ui.widgets if isinstance(w[3], tuple)
+                                           and w[3][0] == "more"}               # all of it, no scrolling (FM-1
+                                                                                # ON STUDIO: with SLOOP or X0X)
     ui.open_tab("HOME")
     ui.render(0.0, force=True)
     row = next(w[0] for w in ui.widgets if w[3] == ("row", "spk"))

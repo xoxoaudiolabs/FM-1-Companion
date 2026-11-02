@@ -213,14 +213,58 @@ def changed_strips(changed, gap=8):
     return [tuple(s) for s in strips]
 
 
+class ScaledFb:
+    """A 480x320 RGB565 framebuffer file (seek, write) shown on a larger one, scaled up and turned round if
+    asked: the 3.5" HDMI touchscreen, sent a standard 720x480 (HDMI won't carry 480x320: the screen scales it back
+    down to its panel), its panel upside down on the Pi (flip). Each write sends the rows it touched on at once."""
+
+    def __init__(self, device, size, flip=False):
+        import numpy as np
+        self.out = open(device, "r+b", buffering=0)
+        self.size, self.pos = size, 0
+        self.frame = np.zeros((H, W), "<u2")
+        rows, cols = np.arange(size[1]) * H // size[1], np.arange(size[0]) * W // size[0]
+        if flip:
+            rows, cols = H - 1 - rows, W - 1 - cols
+        self.rows, self.cols = rows, cols
+
+    def seek(self, pos):
+        self.pos = pos
+
+    def write(self, data):
+        import numpy as np
+        flat = self.frame.reshape(-1)
+        start = self.pos // 2
+        words = np.frombuffer(bytes(data), "<u2")
+        flat[start:start + len(words)] = words
+        self.pos += len(data)
+        top, bottom = start // W, (start + len(words) - 1) // W + 1
+        out = np.nonzero((self.rows >= top) & (self.rows < bottom))[0]
+        if len(out):
+            first, last = out.min(), out.max() + 1
+            band = self.frame[self.rows[first:last]][:, self.cols]
+            self.out.seek(int(first) * self.size[0] * 2)
+            self.out.write(band.astype("<u2").tobytes())
+
+
+def fb_size(device):
+    try:
+        name = Path(device).name
+        return tuple(int(v) for v in (Path("/sys/class/graphics") / name / "virtual_size").read_text().split(","))
+    except (OSError, ValueError):
+        return (W, H)
+
+
 class TftDisplay:
     """The app's display (show, contrast, power) on the touchscreen's framebuffer. Only what changed is
     written: the picture's band of rows on a redraw, the buttons' rows when one is pressed (SPI moves a whole
     480x320 frame, 300 KB, in ~0.1 s; the picture's band is 60% of that, a press 40%)."""
 
-    def __init__(self, device="/dev/fb1"):
+    def __init__(self, device="/dev/fb1", flip=False):
         self.device = device                  # (SLOOP on the Studio draws on it too: deskui.start_sloop)
-        self.fb = open(device, "r+b", buffering=0)
+        size = fb_size(device)
+        self.fb = (ScaledFb(device, size, flip) if size != (W, H) or flip   # (the 3.5" HDMI touchscreen)
+                   else open(device, "r+b", buffering=0))
         self.frame, self.pressed, self.lock = Image.new("1", (128, 64)), None, threading.Lock()
         self.blank_path = Path("/sys/class/graphics") / Path(device).name / "blank"
         self.bases = {}                       # (pressed button, theme) -> the whole screen with no picture in it

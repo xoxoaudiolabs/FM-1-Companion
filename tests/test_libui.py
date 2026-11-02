@@ -190,7 +190,7 @@ def test_flows():
     assert app.settings_menu == "bt" and [r[0] for r in app.settings_rows()] == [
         "speaker", "audio", "midi", "pairing", "btkeys"]
     keys(app, "left", "down", "press")                     # Studio link ›
-    assert app.settings_menu == "link" and [r[0] for r in app.settings_rows()] == ["link", "link_audio"]
+    assert app.settings_menu == "link" and [r[0] for r in app.settings_rows()] == ["link", "link_audio", "link_hear"]
     assert app.settings_rows()[0][2] == "looking"                  # (on out of the box, no Studio here)
     keys(app, "left")                                      # back on Studio link, which says it too
     assert app.settings_menu is None and app.settings_rows()[app.setting][1:] == ("Studio link", "looking")
@@ -267,6 +267,37 @@ def test_flows():
     assert app.screen == "settings" and app.settings_menu == "library"
     keys(app, "left")
     assert app.screen == "settings" and app.settings_menu is None
+
+
+def test_library_page_follows_the_firmware():
+    """Library's FM-1 row and page: named after what the FM-1 runs, with only what the library does for it"""
+    app = make_app()
+    app.screen = "settings"
+    cases = {None: ("FM-1", ["backup", "restore", "project", "song_backup", "song_load", "sample", "sample_level",
+                             "auto", "keep"]),
+             "SLOOP 2.8": ("SLOOP", ["backup", "restore", "project", "song_backup", "song_load", "sample",
+                                     "sample_level", "auto", "keep"]),
+             "Sloopdx 4.0": ("sloopDX", ["backup", "restore", "project", "song_backup", "song_load", "auto", "keep"]),
+             "Clipper 1.3": ("Clipper", ["backup", "restore", "project", "auto", "keep"]),
+             "Felucca v1.9.0": ("Felucca", ["backup", "restore", "project", "auto", "keep"]),
+             "Jiant v0.9.18": ("JIANT", ["backup", "restore", "project", "auto", "keep"]),
+             "Melodee v1.6.0": ("Melodee", ["backup", "restore", "project", "auto", "keep"]),
+             "Jangada 1.0.1": ("Jangada", ["backup", "restore", "project", "auto", "keep"]),
+             "X0X 1.0": ("X0X", ["backup", "restore", "auto", "keep"]),
+             "FM-1+VA 102": ("FM-1+VA", ["backup", "restore", "auto", "keep"]),
+             "Stock 15": ("Stock", ["dx7_read"]),
+             "Hortator 1.0": ("FM-1", ["backup", "restore", "project", "song_backup", "song_load", "sample",
+                                      "sample_level", "auto", "keep"])}
+    for label, (name, rows) in cases.items():
+        app.fw_label, app.settings_menu = label, "library"
+        assert app.settings_rows()[0][:2] == ("g_sloop", name), label
+        app.settings_menu = "sloop"
+        assert [r[0] for r in app.settings_rows()] == rows and app.settings_title() == name, label
+    app.started.clear()
+    app.fw_label = "Stock 15"
+    at_row(app, "sloop", "dx7_read")
+    keys(app, "press")
+    assert app.started[-1] == ["dx7-read"]
 
 
 def test_auto_backup_schedule():
@@ -1051,10 +1082,11 @@ def test_web_link():
     assert library.read_status()["settings"]["metronome"] is True       # the page sees it
     # the Pocket's Studio link: its state for the page, and the page switching it and its audio
     links = []
-    app.midi.set_link = lambda on, host=None: links.append(on)
+    app.midi.set_link = lambda on, host=None, prefer=None: links.append(on)
     app.state["studio_link"] = False                                    # (on out of the box: off here first)
     assert app.web_status()["link"] == {"on": False, "audio": True, "studio": None, "address": None,
-                                        "cable": False, "sending": False, "fm1s": [], "error": None}
+                                        "cable": False, "sending": False, "fm1s": [], "error": None,
+                                        "hear": "studio", "usb_out": None, "back": False, "block": 1024}
     library.queue_command({"cmd": "set", "key": "studio_link", "value": True})
     library.queue_command({"cmd": "set", "key": "link_audio", "value": False})
     app.web_commands()

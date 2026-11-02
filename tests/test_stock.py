@@ -55,6 +55,12 @@ def test_save_the_sound():
     assert entry["kind"] == "voice"
 
 
+def test_identify_names_it():
+    """the box's firmware name for a stock FM-1 (no SLOOP protocol): from M-VAVE's handshake"""
+    assert run(fake_fm1.FakeStock(ident="FM-1_015"), ["identify"]) == 0
+    assert library.firmware_label() == "Stock 15"
+
+
 def test_not_stock_not_asked():
     """Baud Girl's, Felucca's: the handshake only, never the read; SLOOP's fake doesn't answer it: refused too"""
     for ident in ("FM-1_079", "FM-1_906"):

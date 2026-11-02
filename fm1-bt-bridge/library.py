@@ -335,15 +335,34 @@ def forget_firmware():
 
 def firmware_label():
     """"SLOOP 2.8" from what the FM-1 last said ("FELUCCA SLOOP 2.8"); None if nothing has asked it yet. Its
-    USB name says Felucca whatever it runs."""
+    USB name says Felucca whatever it runs. One without SLOOP's protocol: its handshake's ("FM-1+VA 102",
+    "Stock 15": note_firmware)"""
     try:
-        words = str(json.loads(FIRMWARE.read_text())["firmware"]).split()
-    except (OSError, ValueError, KeyError, TypeError):
+        seen = json.loads(FIRMWARE.read_text())
+        if seen.get("label"):
+            return str(seen["label"])
+        words = str(seen["firmware"]).split()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
     if len(words) > 1 and words[0].upper() == "FELUCCA" and not any(c.isdigit() for c in words[1]):
         words = words[1:]
     return " ".join(w if any(c.isdigit() for c in w) or w.upper() == "SLOOP" else w.capitalize()
                     for w in words) or None
+
+
+def note_firmware(ident):
+    """an FM-1 that answers M-VAVE's handshake but not SLOOP's protocol: what it runs, for the screens (its label:
+    "FM-1+VA 102", "Stock 15"); None if it's neither"""
+    import mvave
+    kind = mvave.kind(ident)
+    if kind not in ("baudgirl", "stock"):
+        return None
+    label = f"{'FM-1+VA' if kind == 'baudgirl' else 'Stock'} {ident.version}"
+    try:
+        FIRMWARE.write_text(json.dumps({"firmware": ident.text, "label": label}))
+    except OSError:
+        pass
+    return label
 
 
 def safety_backup(dev, job, why):
@@ -513,6 +532,7 @@ def fm1va_backup(job, auto=False):
     """its 128 presets (baudgirl.py) as a backup file of their own format, in the backups folder"""
     import baudgirl
     link, ident = fm1va_link()
+    note_firmware(ident)
     try:
         data = baudgirl.backup(link, f"FM-1+VA {ident.text}", job.progress("Backing up"))
     finally:
@@ -1007,7 +1027,21 @@ def main(argv=None):
             print(json.dumps(listing(), indent=1))
         elif command == "identify":
             with Job("identify") as job:
-                dev = connect()
+                try:
+                    dev = connect()
+                except sloop.SloopError as e:
+                    if e.code != "noreply" or STUDIO:
+                        raise
+                    import mvave              # (no SLOOP protocol: stock or Baud Girl's, by M-VAVE's handshake)
+                    link = sloop.Link(card=target_card())
+                    try:
+                        label = note_firmware(mvave.identity(link))
+                    finally:
+                        link.close()
+                    if not label:
+                        raise
+                    job.done(label)
+                    return 0
                 if colour_screen():           # and FM-1 A's colours, for a screen in colour
                     try:
                         read_theme(dev)

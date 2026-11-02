@@ -10,7 +10,7 @@ one with Bluetooth (the W boards) can do its job: detect()'s "bluetooth" says wh
 import os
 from pathlib import Path
 
-POCKET_VERSION = "2.13.1"       # the Pocket's release (the Studio's: deskboot.VERSION), shown by fm1-report
+POCKET_VERSION = "3.0"          # the Pocket's release (the Studio's: deskboot.VERSION), shown by fm1-report
 MODEL = Path("/proc/device-tree/model")
 FRAMEBUFFERS = Path("/sys/class/graphics")
 BLUETOOTH = Path("/sys/class/bluetooth")
@@ -32,6 +32,12 @@ def bluetooth(root=BLUETOOTH):
         return False
 
 
+def hdmi35(width, height):
+    """the 3.5" HDMI touchscreen's framebuffer: HDMI set to a whole multiple of its 480x320 panel, or 1.5x
+    (install.sh: the screen shows no signal at 480x320 itself, and scales what it gets down to its panel)"""
+    return (width, height) in ((720, 480), (960, 640), (1440, 960))
+
+
 def touchscreen(root=FRAMEBUFFERS):
     """(framebuffer device, width, height) of a small SPI screen (480x320), or None: fbtft's (fb_ili9486) or the
     kernel's DRM driver's (ili9486drmfb: the piscreen overlay's, Raspberry Pi OS from 2026), which is /dev/fb0
@@ -46,7 +52,7 @@ def touchscreen(root=FRAMEBUFFERS):
         except OSError:
             name = ""
         spi = any(k in name for k in ("fb_", "ili94", "piscreen", "mipi-dbi"))
-        if spi or (fb.name != "fb0" and width * height <= 800 * 480):   # (fb0 unnamed: an HDMI monitor)
+        if spi or hdmi35(width, height) or (fb.name != "fb0" and width * height <= 800 * 480):   # (fb0 unnamed: an HDMI monitor)
             return f"/dev/{fb.name}", width, height
     return None
 

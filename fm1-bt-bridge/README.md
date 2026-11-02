@@ -97,7 +97,7 @@ restarts on the new one), or hold **KEY1 and KEY3** while it starts to get the s
 fm1-screen lcd144
 ```
 `oled`, `lcd144` (1.44" LCD), `lcd13` (1.3" LCD) or `ask` (the picker on the next start); `fm1-screen` alone says
-which it's set to. On a colour LCD every screen is in colour, and Settings › Theme picks the colours (FM-1 A's,
+which it's set to. On a colour LCD every screen is in colour, and Settings › Box › Theme picks the colours (FM-1 A's,
 XOXO or the Studio's eight).
 
 ## Bluetooth: what the Pocket can and can't do
@@ -150,7 +150,7 @@ airtime.
 ### Quick answers
 
 - **"FM-1 Companion" isn't in my phone's Bluetooth list.** That's normal: connect from the music app instead.
-- **The speaker connects but there's no sound.** Settings → Audio › Audio rate, press (twice to keep the rate).
+- **The speaker connects but there's no sound.** Settings → Mixer › Audio rate, press (twice to keep the rate).
 - **Audio crackles or drops.** Turn Wi-Fi off first. Then see Troubleshooting.
 
 ## Using it
@@ -196,28 +196,20 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right) opens with what's used most: the **Mixer**, the **MIDI routes**, the **Sample
-editor**, **Sloop** (what needs SLOOP's editor protocol), **FM-1** (what needs the FM-1 itself) and **Bluetooth**
-(the speaker and Bluetooth MIDI together). Then **Playing**, **Audio** and **MIDI**, **Recordings** (your takes),
-**Theme** (on a colour LCD) and **Wi-Fi**. Press opens a section, left goes back. Holding up or down repeats,
-faster after a second and a half.
+**Settings** (joystick right) has seven pages (v3.0): **Mixer**, **Playing**, **MIDI**, **Bluetooth**, **Studio
+link**, **Library** (the FM-1's files and firmware) and **Box** (the Pocket's own). Press opens a page, left goes
+back. In Library, the FM-1's own page is named after what it runs (**SLOOP**, **Felucca**, **X0X** ...) and holds
+only what the box does for that firmware (Library, below). Holding up or down repeats, faster after a second and
+a half.
 
 ![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|
-| **Mixer ›** | A level for each sound source, by name (FM-1 A, FM-1 B, each USB audio device): press, then up/down in 5% steps, 0–200% (below). With one source it says *only source*: there's nothing to mix. |
+| **Mixer ›** | |
+| · a level for each source | By name (FM-1 A, FM-1 B, each USB audio device): press, then up/down in 5% steps, 0–200% (below). With one source it says *only source*: there's nothing to mix. |
 | · **Record parts** on/off | With more than one sound source: takes also keep each source as a file of its own (see Recording). Off at first. |
-| **MIDI routes ›** | The MIDI matrix (below). Also in MIDI ›. |
-| **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
-| **Sloop ›** | Backups, projects, samples and the sample level: SLOOP 2.3+ (below). |
-| **FM-1 ›** | What the FM-1 runs, and installing firmware (below). |
-| **Bluetooth ›** | |
-| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
-| · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
-| · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
-| · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
-| · **BT keys** | Bluetooth MIDI keyboards the Companion connects to itself (v2.9, not tried with a real keyboard yet): how many are connected of those saved; press to scan and pick (below). |
+| · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
 | **Playing ›** | |
 | · **Metronome** on/off | A click on the speaker in time with the clock (MIDI clock, below). |
 | · **Tempo** | The box's tempo: press, then up/down (hold to go faster); left when done. Tap tempo on the status screen sets it too. |
@@ -225,17 +217,30 @@ faster after a second and a half.
 | · **Arp** on/off | The keyboard's arpeggiator (below). |
 | · **Chord** on/off | The keyboard's chord memory: each key plays a chord (below). |
 | · **Click level** | The metronome's volume: low, mid, high. |
-| **Audio ›** | |
-| · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
 | **MIDI ›** | |
-| · **Studio link** off / on | Links the Pocket to a Studio over Wi-Fi or an Ethernet cable: MIDI both ways and the Studio's clock (the Studio's side of the link comes out on 30 October). On out of the box: the Pocket looks for a Studio by itself and links to the first one it finds (a cable first), and again whenever one shows up; off, it never links. Shows the Studio while linked. |
-| · **Link audio** on/off | While linked, the Pocket's sound plays on the Studio too, and the Studio's speaker takes over from the Pocket's. |
-| · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
-| **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
-| **Theme ›** | On a colour LCD: the screens' colours, FM-1 A's or one picked (it shows each as you scroll). |
-| **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
+| · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
+| **Bluetooth ›** | |
+| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
+| · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
+| · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
+| · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
+| · **BT keys** | Bluetooth MIDI keyboards the Companion connects to itself (v2.9, not tried with a real keyboard yet): how many are connected of those saved; press to scan and pick (below). |
+| **Studio link ›** | Shows the Studio while linked (*looking* while it looks for one, *off* when off). |
+| · **Studio link** off / on | Links the Pocket to a Studio over Wi-Fi or an Ethernet cable: MIDI both ways and the Studio's clock. On out of the box: the Pocket looks for a Studio by itself and links to the first one it finds (a cable first), and again whenever one shows up; off, it never links. |
+| · **Link audio** on/off | While linked, the Pocket's sound plays on the Studio too, and the Studio's speaker takes over from the Pocket's. |
+| · **Hear** Studio mix / Pocket | While linked with a USB audio interface plugged into the Pocket: what its output plays, the Studio's mix coming back, or the Pocket's own sound. |
+| **Library ›** | |
+| · **(the FM-1's firmware) ›** | Named after what the FM-1 runs: backups, restores and loads for it (Library, below). |
+| · **DX7 patches ›** | `.syx` banks and voices for firmwares that take them (Library, below). |
+| · **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
+| · **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
+| · **Firmware ›** | Shows what the FM-1 runs; press to install firmware (below). |
+| **Box ›** | |
+| · **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+| · **Theme ›** | On a colour LCD: the screens' colours, FM-1 A's or one picked (it shows each as you scroll). |
+| · **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
 
 ### Headphones
 
@@ -307,7 +312,7 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   needs a few seconds before its files show. The parts and the mix line up to the sample, and the mix
   doesn't need the speaker. The first second or so, while the recorder links up, is left out. A take with
   parts uses about four times the space.
-- **On the box:** Settings → **Recordings ›** lists the takes. Pick one, then:
+- **On the box:** Settings → Library → **Recordings ›** lists the takes. Pick one, then:
   - **Play:** on the speaker, over the FM-1's live sound, with the time and a progress bar. Press stops it.
   - **Edit as sample ›:** opens it in the sample editor (below).
   - **Parts ›** (a take with parts): play a part, or open it in the sample editor.
@@ -322,7 +327,7 @@ Turns a recording into a sample, or edits a sample that's already in the samples
 the FM-1 here: the edit is saved as a **new WAV in the samples folder** (the original is never
 overwritten), and from there **Sloop → Load sample** puts it in a slot like any other sample.
 
-**On the box:** Settings → **Sample editor ›** → *From a recording* or *From a sample* (or Recordings → a
+**On the box:** Settings → Library → **Sample editor ›** → *From a recording* or *From a sample* (or Recordings → a
 take → *Edit as sample*). The screen shows the waveform with the selection between two markers.
 
 | Key | What it does |
@@ -347,14 +352,14 @@ phone, then *Save to samples*.
 
 The status screen's bottom right shows the clock:
 
-| Settings → Clock | Status screen |
+| Settings → Playing › Clock | Status screen |
 |---|---|
 | **follow** (the default) | *follow*, or *follow 98* while clock arrives from the FM-1 or Bluetooth; it's passed on as before |
 | **box** | *120 BPM*: the box sends its own clock (24 a quarter note) to the FM-1 and Bluetooth, and keeps other clock out |
 
 ▶ in front means playing (after a Start).
 
-- **Tempo:** Settings → **Tempo**, press, then up/down (hold to go faster), left when done. Or
+- **Tempo:** Settings → Playing › **Tempo**, press, then up/down (hold to go faster), left when done. Or
   **tap tempo**: tap the joystick press 2–5 times on the status screen. Tapping makes the box the clock
   master; a pause of over 2 s starts a new tap.
 - **Start/Stop:** hold the joystick press for 2 seconds on the status screen.
@@ -408,12 +413,12 @@ recordings and the meters hear the whole mix (with no speaker connected, FM-1 A 
 
 FM-1 A keeps the audio clock. Two USB devices never run at exactly the same speed, so the others are re-timed
 to it, with a little extra buffering (`config/wireplumber-51-fm1-bridge.conf`) so the correction stays
-smooth. With two FM-1s, Settings → Sloop › **FM-1** picks which one backups, restores and loads go to;
+smooth. With two FM-1s, Settings → Library → (the FM-1's page) › **FM-1** picks which one backups, restores and loads go to;
 firmware installs ask you to unplug the other one, since the FM-1 restarts as another device mid-update.
 
 ### MIDI matrix
 
-Settings → **MIDI routes** (also in MIDI ›):
+Settings → MIDI → **MIDI routes**:
 
 ![MIDI routes](../docs/images/screen-matrix.png)
 
@@ -443,49 +448,59 @@ which start off. A note-off always goes where its note-on went, so
 changing a route while you hold a key can't leave a note hanging. The routes are remembered, and
 **Route presets ›** (under More) keeps four whole setups to switch between.
 
-**Arp and Chord, the quick way:** the **Arp** and **Chord** switches on Settings' top list turn them on and
+**Arp and Chord, the quick way:** the **Arp** and **Chord** switches in Settings → Playing turn them on and
 off for the keyboards (the Bluetooth → FM-1 and USB → FM-1 routes) in one press, with the pattern, rate and chord type last
 chosen on that route's page (up, 1/8, major at first). The arp follows the box's clock or an incoming one;
 with no clock it keeps time at the Tempo setting without sending clock anywhere.
 
 ## Library: backups, projects, samples, firmware
 
-The box talks to SLOOP (2.3 or later) the way SLOOP's own web editor does, over the same USB cable.
-Its backups are **SLOOP backup files** (`sloop-backup` JSON): they open in SLOOP's web editor, and
-backups made there can be restored from the box.
+The box asks the FM-1 what it runs and backs it up the way that firmware's own editor does, over the same USB
+cable, into that firmware's own backup files where it has them (SLOOP's open in SLOOP's web editor, Felucca's in
+Felucca's, X0X's `.x0b` on X0X's backup page), so backups made there restore from the box too. **Only SLOOP has
+been tried on an FM-1 so far:** the others are built from each firmware's published protocol (Baud Girl's from
+what the community worked out of her web tools) and tested against stand-ins.
 
-**SLOOP or Clipper:** both are isod89's firmwares. [SLOOP](https://github.com/isod89/sloop-fm1)
-is a groovebox (tracks, drums, songs, samples); [Clipper](https://github.com/isod89/clipper-fm1) is a
-synthesizer (23 engines, one instrument) and is **experimental**: its own README says it has run very little
-on a real FM-1. The box installs either and switches between them (the file of the other one stays in the
-library, so you can always go back). Backups, projects and samples belong to the firmware they came from:
-the box refuses to put a SLOOP backup or project onto Clipper, or the other way round, and Clipper has
-wavetable slots instead of sample slots (use Clipper's web editor for those). Backing up and restoring
-Clipper's own data works the same way as SLOOP's.
+| The FM-1 runs | What the box does |
+|---|---|
+| [SLOOP](https://github.com/isod89/sloop-fm1) 2.3+ | Everything below: backups and restores, projects, songs, samples. |
+| [Clipper](https://github.com/isod89/clipper-fm1) | Backups, restores, projects (wavetables instead of samples: Clipper's editor). |
+| [sloopDX](https://github.com/zvenson/dxsloop) | SLOOP's, plus all 8 of its DX7 banks in a backup (stop the song first); a DX7 bank loads into its bank in use. No samples. |
+| [Felucca](https://github.com/hugelton/Felucca) 1.x | Backups and restores (projects, presets, FM6 patches, samples), projects. |
+| [JIANT FM](https://github.com/juanjiant-bit/JIANT) | The same, with every song it keeps. |
+| [Melodee](https://github.com/keremimo/melodee) | The same, with its presets and every project; DX7 patches. |
+| [Jangada](https://github.com/zednaked/jangada) | Backups and restores (both FM6 banks, samples), projects; DX7 patches. |
+| [X0X](https://github.com/charlesvestal/fm1-x0x) | Its project as a `.x0b` (not its break loops); a restore is confirmed on X0X's own screen. |
+| Baud Girl's FM-1+VA | Its 128 presets backed up and restored, each read back after it's written. Not its patterns. |
+| M-VAVE's stock | Saves the sound it plays now as a DX7 voice; DX7 patches. A whole bank replaces 32 presets, and its factory reset doesn't bring the factory ones back. |
 
-**On the box:** Settings → **Sloop ›** (what needs SLOOP's editor protocol) and **FM-1 ›** (the FM-1
-itself, whatever it runs). Recordings has its own row on Settings.
+Backups, projects and songs belong to the firmware they came from: the box refuses to put one firmware's onto
+another. A firmware it doesn't know gets nothing written to it.
 
-![Sloop](../docs/images/screen-settings-sloop.png)
+**On the box:** Settings → **Library**. Its first row is the FM-1's own page, named after what it runs, with only
+the rows below that its firmware has. **DX7 patches**, **Sample editor**, **Recordings** and **Firmware** follow.
 
-| Sloop › | What it does |
+![Library](../docs/images/screen-settings-library.png)
+![The FM-1's page for SLOOP](../docs/images/screen-settings-sloop.png)
+
+| The FM-1's page › | What it does |
 |---|---|
 | **FM-1** A/B | Only with two FM-1s plugged in: which one the jobs below go to. |
-| **Back up now** | Saves everything on the FM-1: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots. |
+| **Back up now** | Saves everything the firmware keeps (on SLOOP: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots). |
 | **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
 | **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
 | **Back up song** | SLOOP 2.5+: the song as one file (in `songs`): its four sections (projects A–D) and the song order. |
 | **Load song ›** | Pick a song: it replaces sections A–D and the song order; the FM-1's other settings stay as they are. |
-| **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
+| **Load sample ›** | SLOOP: pick a WAV, then a slot (USR1–4). |
 | **Sample level** | How loud samples are made when they're loaded: **-6 dB** (leaves room in the mix), **-3 dB** or **full**. |
+| **Save FM-1 sound** | Stock firmware: the sound it plays now, as a DX7 voice in `patches`. |
 | **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
-| **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+| **Keep backups** | How many of the box's own backups are kept (1–100, 20 at first; the web app takes any number). |
 
-| FM-1 › | What it does |
+| Library › | What it does |
 |---|---|
-| **Runs** | The firmware on the FM-1 (SLOOP 2.8, say), as the FM-1 reports it. |
-| **Install firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
-| **DX7 patches ›** | For firmwares that take DX7 patches (not SLOOP or Clipper): pick a `.syx` from the `patches` folder, then the whole bank (the FM-1 asks where it goes) or one voice by name. *Not tried on such a firmware yet.* |
+| **DX7 patches ›** | For firmwares that take DX7 patches: pick a `.syx` from the `patches` folder, then the whole bank or one voice by name. With two FM-1s it goes to the one that takes it. *Not tried on such a firmware yet.* |
+| **Firmware ›** | Shows what the FM-1 runs; press to install a firmware file. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
 
 ![Job screen](../docs/images/screen-job.png)
 
@@ -496,14 +511,15 @@ itself, whatever it runs). Recordings has its own row on Settings.
 - It refuses while the FM-1's song plays (stop it first).
 - During a firmware install the screen says *Don't unplug the FM-1*, KEY3 won't shut down, and
   Bluetooth MIDI pauses. It takes about 2 minutes. Your projects, presets and samples stay.
-- **Automatic backups** (Library → *Auto backup*): *at start* (the default) backs up once whenever the
+- **Automatic backups** (Library → the FM-1's page → *Auto backup*): *at start* (the default) backs up once whenever the
   box starts with the FM-1 connected; *2 / 5 / 10 / 30 min* also backs up at that interval while the FM-1
   is connected. A backup only reads the FM-1 (about 7 seconds), so it's fine while the song plays, and
   the status screen shows *backup NN%* in its corner. If nothing changed since the last automatic
-  backup, no new file is kept. The newest 20 automatic backups are kept; the ones you make, and those
-  made before a restore, a load or an install, are never deleted.
+  backup, no new file is kept. **Keep backups** (20 at first) sets how many of the box's own backups
+  are kept, the automatic ones and those made before a restore, a load or an install; the ones you make
+  with Back up now are never deleted. Lowering it deletes the oldest at once.
 
-**From your phone or computer:** over Wi-Fi (Settings → Wi-Fi) or an Ethernet cable, open **http://fm1bridge.local**
+**From your phone or computer:** over Wi-Fi (Settings → Box › Wi-Fi) or an Ethernet cable, open **http://fm1bridge.local**
 (the hostname you gave the box, or the Pi's IP address). The page lists the library and does everything the box
 does, plus:
 - **upload** WAVs, firmware (`.fwsc`), backups and project files; **download** backups, and any
@@ -560,7 +576,7 @@ switch the keyboard's Bluetooth off and on. A phone or iPad has to be reconnecte
 
 **The keyboard's clock doesn't show** (the status screen says *follow* without a tempo). Clock comes only
 while the keyboard's transport (or arpeggiator) runs, and only if it sends clock over Bluetooth; with
-Settings → Clock on *box*, the box ignores other clock on purpose.
+Settings → Playing › Clock on *box*, the box ignores other clock on purpose.
 
 **The screen is upside down or mirrored.** The Companion is set up for the HAT held with KEY1–3 on
 the left and the cables hanging down. Waveshare's printed labels then read upside down, so the
@@ -647,7 +663,7 @@ The main files; the [main README](../README.md) lists every one, the Studio's in
 | `config/fm1-screen` | `/usr/local/bin/` | Sets the screen HAT over SSH |
 | `config/fm1-report` | `/usr/local/bin/` | A report of the box to paste into an email or issue |
 | `lcd.py` | `~/.local/share/fm1-bridge/` | The 1.44" (ST7735S) and 1.3" (ST7789) LCD HATs |
-| `pocketui.py` | `~/.local/share/fm1-bridge/` | The screens on the LCD, in colour, and Settings › Theme |
+| `pocketui.py` | `~/.local/share/fm1-bridge/` | The screens on the LCD, in colour, and Settings › Box › Theme |
 | `pocketmeters.py` | `~/.local/share/fm1-bridge/` | The eleven meters on the LCD |
 | `midiui.py` | `~/.local/share/fm1-bridge/` | The MIDI matrix screens, Arp/Chord switches and route presets |
 | `metronome.py` | `~/.local/share/fm1-bridge/` | The metronome's click stream (run by the MIDI process) |

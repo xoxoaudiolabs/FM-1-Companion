@@ -829,7 +829,8 @@ class DeskUI(DeskPages, DeskPads, DeskDecks, DeskFM1):
     def draw_more(self, img, d, now):
         t = self.theme
         self.header(img, d, "MORE", self.status_right())
-        items = MORE                               # (PLAY SLOOP / X0X: in FM-1 ON STUDIO)
+        apps = any(program.exists() for _, program in APPS.values())   # FM-1 ON STUDIO: only with SLOOP or X0X
+        items = [i for i in MORE if apps or i[1][0] != "fm1studio"]   # installed (PLAY SLOOP / X0X are in it)
         cols = 3                                   # tiles, three a row: everything on one screen, no scrolling
         rows = (len(items) + cols - 1) // cols
         top, bottom = HDR_H + 4, H - TAB_H - 4

@@ -138,6 +138,9 @@ class WebLink:
             if key in ("studio_link", "link_audio") and isinstance(value, bool) and not self.desk:
                 (self.set_studio_link if key == "studio_link" else self.set_link_audio)(value)
                 return None                   # (they say it)
+            if key == "link_hear" and value in ("studio", "pocket") and not self.desk:
+                self.set_link_hear(value)
+                return None
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:
                 self.volume_to(value)
                 return None

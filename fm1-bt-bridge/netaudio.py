@@ -11,6 +11,12 @@ Each FM-1 its own stream (a Studio that says "pocket_fm1s" in its /api/status): 
 to FM1_PORTS (46002, 46004, 46006) on sinks of their own ("fm1-studio-link-a" ...), where the Studio names them
 FM-1 E, F and G; PORT then carries the rest of the Pocket's sound (a keyboard's own, the pads) as POCKET. All the
 streams from the one PipeWire. An older Studio gets the whole mix on PORT, as before.
+
+As a snake (a Studio whose /api/status says "link_return"): the Studio sends its mix back to the Pocket on
+RETURN_PORT, received here as MIX_BACK for the Pocket's USB sound card (bridge.py), and its "latency" step sets the
+blocks both ends work in (LATENCY). The senders keep PipeWire's packet size (about 6.5 ms of sound): asked for
+1-2 ms packets (sess.min-ptime / max-ptime), PipeWire's sender on a Pi Zero W missed its timer and dropped sound
+("missing timeout", "overrun"), and so did the Studio's (tried 2026-11-01).
 """
 
 import json
@@ -26,6 +32,12 @@ PORT = 46000                    # (PipeWire's own default for RTP audio)
 SINK = "fm1-studio-link"        # the Pocket's: what goes to the Studio
 SOURCE = "fm1-pocket"           # the Studio's: what comes from a Pocket
 FM1_PORTS = {"A": 46002, "B": 46004, "C": 46006}   # the Pocket's FM-1s, each on its own (a Studio's FM-1 E-G)
+RETURN_PORT = 46010             # the Studio's mix back to the Pocket (a Studio that says "link_return")
+MIX_BACK = "fm1-studio-mix"     # the Pocket's: the Studio's mix, as it arrives
+# the Studio's Latency steps (its MORE > AUDIO): PipeWire's block in samples, a link receiver's buffer in ms
+LATENCY = {"SAFE": (1024, 40), "LOW": (512, 20), "LOWER": (256, 10), "LOWEST": (128, 6)}
+POCKET_BLOCK = 512              # the smallest block the Pocket follows down to: a Pi Zero W's one core ran out at
+                                # 256 with its FM-1, the snake's mix and a USB sound card (2026-11-01: crackle)
 FORMAT = """      audio.format = "S16BE"
       audio.rate = 48000
       audio.channels = 2
@@ -76,7 +88,7 @@ def sink_args(address, port, ssrc, name, description):
       rtp.ssrc = {ssrc}
       net.mtu = 1280
       sess.media = "audio"
-      stream.props = {{ node.name = "{name}" node.description = "{description}" media.class = "Audio/Sink" }}"""
+      stream.props = {{ resample.quality = 1 node.name = "{name}" node.description = "{description}" media.class = "Audio/Sink" }}"""
 
 
 def sender_config(address, port=PORT, ssrc=None, fm1s=()):
@@ -88,23 +100,54 @@ def sender_config(address, port=PORT, ssrc=None, fm1s=()):
 
 def receiver_config(port=PORT, latency_ms=40, name=SOURCE, description="Pocket (link)"):
     """latency_ms: what the Studio holds back to ride out the network's jitter (PipeWire's default is 100). For a
-    Pocket's FM-1 on its own: FM1_PORTS[letter], fm1_source(letter)"""
+    Pocket's FM-1 on its own: FM1_PORTS[letter], fm1_source(letter). Any stream id (SSRC) is taken: a sender
+    started again has a new one (seen: the Studio's mix back, refused packet by packet after its restart)"""
     return config("libpipewire-module-rtp-source", f"""      source.ip = "0.0.0.0"
       source.port = {port}
       sess.latency.msec = {latency_ms}
+      sess.ignore-ssrc = true
       sess.media = "audio"
-      stream.props = {{ node.name = "{name}" node.description = "{description}" media.class = "Audio/Source" }}""",
+      stream.props = {{ resample.quality = 1 node.name = "{name}" node.description = "{description}" media.class = "Audio/Source" }}""",
                   "fm1-pocket-link" if name == SOURCE else name + "-link")
+
+
+def studio_status(address, port=80, timeout=2.0):
+    """what the Studio at address says of the link in its /api/status: {"fm1s": it takes the Pocket's FM-1s each on
+    its own stream, "audio": what it wants of the Pocket's sound ("mix": one stream, "fm1s": each FM-1 on its own,
+    "midi": none; None from an older Studio), "rec": its Linked REC is on (the Pocket's REC / STOP sent to it as
+    MMC), "sees_pocket": it has a Pocket linked (None: it doesn't say), "return": the port its mix comes back on
+    (None: it doesn't send it),
+    "latency": its LATENCY step}; an older Studio, or one that doesn't answer: False, None and "SAFE"
+    """
+    try:
+        with urllib.request.urlopen(f"http://{address}:{port}/api/status", timeout=timeout) as reply:
+            status = json.loads(reply.read(1 << 20))
+    except (OSError, ValueError):
+        status = {}
+    if not isinstance(status, dict):
+        status = {}
+    back = status.get("link_return")
+    return {"fm1s": bool(status.get("pocket_fm1s")),
+            "audio": status.get("link_audio") if status.get("link_audio") in ("mix", "fm1s", "midi") else None,
+            "rec": status.get("link_rec") is True,
+            "sees_pocket": bool(status["pocket"]) if "pocket" in status else None,
+            "return": back if isinstance(back, int) and not isinstance(back, bool) and 0 < back < 65536 else None,
+            "latency": status.get("latency") if status.get("latency") in LATENCY else "SAFE"}
 
 
 def studio_takes_fm1s(address, port=80, timeout=2.0):
     """the Studio at address takes the Pocket's FM-1s each on its own stream (its /api/status says
     "pocket_fm1s"); False for an older one, or one that doesn't answer"""
-    try:
-        with urllib.request.urlopen(f"http://{address}:{port}/api/status", timeout=timeout) as reply:
-            return bool(json.loads(reply.read(1 << 20)).get("pocket_fm1s"))
-    except (OSError, ValueError, AttributeError):
-        return False
+    return studio_status(address, port, timeout)["fm1s"]
+
+
+def snake_timing(step, speaker=False):
+    """the Pocket's (block in samples, MIX_BACK's buffer in ms) for the Studio's LATENCY step: the Studio's block,
+    but not below POCKET_BLOCK, and 1024 with a Bluetooth speaker (it needs the room); the buffer more than two of
+    the Pocket's blocks, or PipeWire's RTP receiver runs short and starts over"""
+    block, ms = LATENCY.get(step, LATENCY["SAFE"])
+    block = 1024 if speaker else max(block, POCKET_BLOCK)
+    return block, max(ms, -(-2 * block * 1000 // 48000) + 1)
 
 
 class Hosted:
@@ -149,6 +192,17 @@ class Sender(Hosted):
         """fm1s: the FM-1 letters to send on their own (a Studio that takes them), the rest on SINK"""
         self.address, self.fm1s = address, tuple(fm1s)
         self.ensure(sender_config(address, fm1s=self.fm1s) if address else None)
+
+
+class MixBack(Hosted):
+    """the Pocket's: MIX_BACK, the Studio's mix as it arrives on its port"""
+
+    def __init__(self):
+        super().__init__("fm1-studio-mix")
+
+    def listen(self, port=None, latency_ms=40):
+        """port: the Studio's return port, or None for none"""
+        self.ensure(receiver_config(port, latency_ms, MIX_BACK, "Studio mix (link)") if port else None)
 
 
 class Receiver(Hosted):

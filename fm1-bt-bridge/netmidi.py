@@ -362,10 +362,15 @@ class Invitation:
     sync (CK) every 10 s, started again when the Studio stops answering. The same calls as Session: on_message for
     each MIDI message from the Studio, send(messages), names() (the Studio's, while linked), error."""
 
-    SYNC, LOST, RETRY, CABLE = 10.0, 30.0, 5.0, 30.0   # (CABLE: linked over Wi-Fi, look for it on a cable)
+    SYNC, LOST, RETRY, CABLE = 3.0, 30.0, 5.0, 30.0   # (CABLE: linked over Wi-Fi, look for it on a cable; SYNC:
+    # a Studio forgets a session after 25 s without one, and at 10 s two lost on Wi-Fi did it, 2026-11-02)
 
-    def __init__(self, name, on_message, host=None, port=5004, find=find_studios):
+    def __init__(self, name, on_message, host=None, port=5004, find=find_studios, on_thread=None, prefer=None):
+        """on_thread: called first on its own thread (the MIDI process makes it real-time: the Studio's clock comes
+        in on it, and late ticks on a busy Pocket made the FM-1's tempo jump)"""
         self.name, self.on_message, self.host, self.port, self.find = name, on_message, host, port, find
+        self.on_thread = on_thread
+        self.prefer = prefer                    # the Studio to link to when it's among those found (by its name)
         self.ssrc, self.seq = random.getrandbits(32), random.getrandbits(16)
         self.lock = threading.Lock()
         self.peer = None                      # {"name", "control", "data", "ssrc"} while linked
@@ -408,17 +413,24 @@ class Invitation:
         with self.lock:
             return self.peer["control"][0] if self.peer else None
 
-    def target(self):
-        """(name, address, control port) of the Studio to link to, or None"""
+    def targets(self):
+        """[(name, address, control port)] of the Studios to try, in turn: host's, or those found, the one linked
+        before (prefer) first, a cable before Wi-Fi; [] for none"""
         if self.host:
             try:
-                return self.host, socket.gethostbyname(self.host), self.port
+                return [(self.host, socket.gethostbyname(self.host), self.port)]
             except OSError:
                 self.error = f"{self.host}: not found"[:40]
-                return None
+                return []
         found = self.find()
         if not found:
             self.error = "no Studio found"
+        mine = [entry for entry in found if self.prefer and entry[0] == self.prefer]   # (cable first, as found)
+        return mine + [entry for entry in found if entry not in mine]
+
+    def target(self):
+        """the first of targets, or None"""
+        found = self.targets()
         return found[0] if found else None
 
     def invite(self, sock, addr, timeout=1.5):
@@ -434,26 +446,28 @@ class Invitation:
             if packet[:4] == SIGN + b"OK" and len(packet) >= 16 and struct.unpack(">I", packet[8:12])[0] == token:
                 self.studio_ssrc = struct.unpack(">I", packet[12:16])[0]
                 return packet[16:].split(b"\0")[0].decode("utf-8", "replace") or "Studio"
+            if packet[:4] == SIGN + b"NO" and len(packet) >= 12 and struct.unpack(">I", packet[8:12])[0] == token:
+                return None                       # refused (a Studio that follows another): no waiting it out
         return None
 
     def connect(self):
-        found = self.target()
-        if not found:
-            return False
-        name, address, port = found
-        control, data = (address, port), (address, port + 1)
-        try:
-            studio = self.invite(self.sock, control) and self.invite(self.dsock, data)
-        except OSError as e:
-            self.error = str(e)[:40]
-            return False
-        if not studio:
-            self.error = f"{name}: no answer"[:40]
-            return False
-        with self.lock:
-            self.peer = {"name": studio, "control": control, "data": data, "ssrc": self.studio_ssrc}
-        self.error, self.heard = None, time.monotonic()
-        return True
+        """the Studios found, in turn, until one says OK (one that refuses or doesn't answer: the next; seen
+        2026-11-02, two Studios on the network, one following the other)"""
+        for name, address, port in self.targets():
+            control, data = (address, port), (address, port + 1)
+            try:
+                studio = self.invite(self.sock, control) and self.invite(self.dsock, data)
+            except OSError as e:
+                self.error = str(e)[:40]
+                continue
+            if not studio:
+                self.error = f"{name}: no answer"[:40]
+                continue
+            with self.lock:
+                self.peer = {"name": studio, "control": control, "data": data, "ssrc": self.studio_ssrc}
+            self.error, self.heard = None, time.monotonic()
+            return True
+        return False
 
     def sync(self):
         with self.lock:
@@ -480,6 +494,8 @@ class Invitation:
         return True
 
     def run(self):
+        if self.on_thread:
+            self.on_thread()
         next_sync = 0.0
         next_cable = time.monotonic() + self.CABLE
         while self.running:

@@ -47,7 +47,7 @@ def short_firmware(text):
 
 
 LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto",
-                "song_backup", "song_load", "dx7", "keep")
+                "song_backup", "song_load", "dx7", "keep", "dx7_read")
 
 
 class LibraryScreens:
@@ -236,6 +236,9 @@ class LibraryScreens:
             return
         if key == "keep":
             self.cycle_keep()
+            return
+        if key == "dx7_read":                 # (stock firmware: the sound it plays now, as a DX7 voice)
+            self.start_job(["dx7-read"], "Save sound")
             return
         if key == "song_backup":              # SLOOP's song: its sections A-D and the song order, one file
             self.start_job(["song-backup"], "Song backup")

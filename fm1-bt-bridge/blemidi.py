@@ -16,6 +16,7 @@ import re
 import threading
 import time
 
+import iocard                           # the I/O card's DIN jacks
 import fm1map                           # any controller as FM-1 A's panel, for SLOOP and X0X on the Studio
 import sloop                            # which FM-1 is A and which is B (fm1_cards, port_card)
 
@@ -696,6 +697,22 @@ CLOCK, START, CONTINUE, STOP = 0xF8, 0xFA, 0xFB, 0xFC
 TRANSPORT = (CLOCK, START, CONTINUE, STOP)
 
 
+MMC = {0x06: "record", 0x01: "stop"}    # MMC's Record Strobe and Stop: linked REC over the Studio link
+
+
+def mmc_command(message):
+    """MMC Record Strobe or Stop (F0 7F <any device> 06 <06|01> F7) -> "record" / "stop", else None"""
+    m = bytes(message)
+    if len(m) == 6 and m[:2] == b"\xf0\x7f" and m[3] == 0x06 and m[5] == 0xF7:
+        return MMC.get(m[4])
+    return None
+
+
+def mmc_message(command):
+    """"record" / "stop" -> its MMC message, to all devices (7F)"""
+    return bytes([0xF0, 0x7F, 0x7F, 0x06, {"record": 0x06, "stop": 0x01}[command], 0xF7])
+
+
 def make_realtime(priority=10):
     """Real-time scheduling for the calling thread through RTKit (as PipeWire gets it; the installer's
     polkit rule allows it without a desktop session). Best effort: without it the clock just wobbles more."""
@@ -763,6 +780,59 @@ class ClockWatch:
         return f[1] + f[0] * 96 * (self.ticks[-1][0] // 96)
 
 
+class ClockRelay:
+    """The linked Studio's clock, re-timed: over the link (Wi-Fi or a cable) its ticks arrive bunched, and passed on
+    as they came the FM-1's tempo jumped (31-154 BPM measured for a steady 100, 2026-11-02). Its ticks are counted
+    and a straight line fitted through the last WINDOW (eight beats); the box sends ticks of its own on that line,
+    in step with the Studio's count. No clock for half a second: none sent."""
+
+    WINDOW = 192
+
+    def __init__(self):
+        self.ticks = []                         # [(tick number, arrival time)]
+        self.count = 0                          # ticks arrived (never reset: Start doesn't move the line)
+        self.sent = None                        # the next tick to send, by its number
+        self.line = None                        # (seconds per tick, time of tick 0) through the ticks, or None
+
+    def tick(self, now):
+        self.ticks.append((self.count, now))
+        del self.ticks[:-self.WINDOW]
+        self.count += 1
+        self.line = self.fitted()               # (once a tick, here: worked out on every look, the real-time
+                                                # clock thread took a fifth of a Zero W, 2026-11-02)
+
+    def fitted(self):
+        """the line by least squares, or None: under 24 ticks, under 0.4 s of them (a burst after a stall: a line
+        nearly flat), or a tempo outside 20-300 BPM"""
+        t = self.ticks
+        if len(t) < 24 or t[-1][1] - t[0][1] < 0.4:
+            return None
+        n = len(t)
+        mx, my = sum(k for k, _ in t) / n, sum(v for _, v in t) / n
+        sxx = sum((k - mx) ** 2 for k, _ in t)
+        per = sum((k - mx) * (v - my) for k, v in t) / sxx if sxx else 0
+        return (per, my - per * mx) if 60.0 / (300 * 24) <= per <= 60.0 / (20 * 24) else None
+
+    def fit(self, now):
+        """the line, or None with no clock for 0.5 s"""
+        return self.line if self.ticks and now - self.ticks[-1][1] <= 0.5 else None
+
+    def due(self, now):
+        """when the next tick to send is due on the line, or None (no clock); fallen a beat behind the Studio's
+        count, or two ahead of it (its clock stalled): it starts again at the Studio's next tick"""
+        f = self.fit(now)
+        if not f:
+            self.sent = None
+            return None
+        if self.sent is None or not self.count - 24 <= self.sent <= self.count + 48:
+            self.sent = self.count
+        return f[1] + f[0] * self.sent
+
+    def bpm(self, now):
+        f = self.fit(now)
+        return 60.0 / (f[0] * 24) if f else None
+
+
 class UsbControllers:
     """USB MIDI controllers (on a hub): every MIDI port that isn't the FM-1, a Bluetooth link or the system's own,
     opened as it appears and closed as it goes, up to MAX. They merge into one source and one destination: "USB"
@@ -780,7 +850,8 @@ class UsbControllers:
         self.lock = threading.Lock()
 
     def wanted(self, names):
-        """mido port names -> {client name: port name} of the controllers among them (a client's first port)"""
+        """mido port names -> {client name: port name} of the controllers among them (a client's first port). The
+        I/O card's DIN jacks are "DIN" (iocard.py)."""
         out, fm1s = {}, set(sloop.fm1_cards())
         for name in names:
             low = name.lower()
@@ -789,6 +860,10 @@ class UsbControllers:
                 continue
             if any(d in low for d in DJ_CONTROLLERS) or dj_learned(name):   # a DJ controller: the decks'
                 continue                               # (decks.py), not a keyboard
+            if iocard.is_card(name):
+                if iocard.din_port(name):
+                    out[iocard.DIN] = name
+                continue
             out.setdefault(name.split(":")[0], name)
         return out
 
@@ -1248,6 +1323,7 @@ class MidiBridge:
         self.ble_loaded = False             # the app has sent them (till then the status leaves them out)
         self.ble_found, self.ble_scanning = [], False    # the last keyboard scan's [[address, name]]
         self.ble_note = [0, None]           # [count, text]: what the screen says about a keyboard (counted: said once)
+        self.mmc = [0, None, 0.0]           # [count, "record" / "stop", when]: the Studio's REC / STOP (linked REC)
         self.name_timer = False
         self.pairing_until = 0.0
         self.last_ble = 0.0
@@ -1271,6 +1347,7 @@ class MidiBridge:
         self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
         self.box_origin = None                      # when the box clock's tick 0 (after Start) was due
         self.watch = {source: ClockWatch() for source in SOURCES if source != "Box"}
+        self.relay = ClockRelay()           # the linked Studio's clock, re-timed (clock_loop sends it)
         self.routes = {key: Route(route_default(key)) for key in ROUTES}
         self.saved = {}                       # the routes as the app last sent them (a USB device's, made on use)
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
@@ -1363,6 +1440,18 @@ class MidiBridge:
         make_realtime()
         due = time.monotonic()
         while True:
+            if self.relaying():               # the linked Studio's clock: its ticks again, evenly, on its line
+                now = time.monotonic()
+                at = self.relay.due(now)
+                if at is None or at > now:
+                    time.sleep(0.02 if at is None else min(at - now, 0.05))   # (the line moves: looked at again)
+                    continue
+                self.route_from("NET", bytes([CLOCK]))
+                self.arp_tick()
+                self.relay.sent += 1
+                due = time.monotonic()
+                time.sleep(0.001)             # (a real-time thread never 200 ms without a pause: RTKit's limit
+                continue                      # kills the whole MIDI process, 2026-11-02)
             box = self.clock_mode == "box"
             # no clock to follow but an arp to play: ticks of our own at the box's tempo, not sent anywhere
             own = not box and any(r.arp_active() for r in self.routes.values()) and not self.external_clock()
@@ -1428,11 +1517,20 @@ class MidiBridge:
             if self.route(f"Box>{dest}").s["on"]:
                 self.deliver(f"Box>{dest}", [message])
 
+    def relaying(self):
+        """the Studio's clock is re-timed (ClockRelay): linked, and following the clock"""
+        return self.link and self.clock_mode != "box"
+
     def clock_status(self, now):
         """{"bpm", "source", "playing"} for the screen, or None"""
         if self.clock_mode == "box":
             return {"bpm": round(self.bpm), "tempo": self.bpm, "source": "box", "playing": self.playing,
                     "bar": self.box_bar}
+        relayed = self.relay.bpm(now) if self.relaying() else None
+        if relayed:                           # (the re-timed line's tempo: the arrivals' own jump about)
+            watch = self.watch["NET"]
+            return {"bpm": round(relayed), "tempo": round(relayed, 2), "source": "NET", "playing": watch.playing,
+                    "bar": round(watch.bar(now) or 0.0, 3)}
         for source, watch in self.watch.items():
             bpm = watch.bpm(now)
             if bpm:
@@ -1522,13 +1620,22 @@ class MidiBridge:
 
     # network MIDI: a DAW's notes and clock (the routes' NET), and what it shows on the control surface
     def from_net(self, message):
+        command = mmc_command(message) if self.link else None
+        if command:                           # the linked Studio's REC / STOP: the app's recorder, not MIDI to route
+            self.mmc = [self.mmc[0] + 1, command, time.monotonic()]
+            return
+        if message and message[0] == CLOCK and self.relaying():   # counted, and sent again evenly (clock_loop)
+            now = time.monotonic()
+            self.watch["NET"].message(CLOCK, now)
+            self.relay.tick(now)
+            return
         if not self.passes("NET", message):
             return
         self.route_from("NET", message)
 
-    def set_link(self, on, host=None):
-        """the Pocket's Studio link on (to host, or the Studio DNS-SD finds) or off: a session it starts to a
-        Studio's music session, the routes' NET while it's on"""
+    def set_link(self, on, host=None, prefer=None):
+        """the Pocket's Studio link on (to host, or the Studio DNS-SD finds, prefer the one by that name when it's
+        there) or off: a session it starts to a Studio's music session, the routes' NET while it's on"""
         import netmidi
         if self.link and self.net:
             self.net.stop()
@@ -1536,7 +1643,7 @@ class MidiBridge:
         self.set_link_fm1s(())
         self.link_host = host or None
         if on:
-            self.net = netmidi.Invitation(netmidi.LINK_NAME, self.from_net, host=host or None)
+            self.net = netmidi.Invitation(netmidi.LINK_NAME, self.from_net, host=host or None, prefer=prefer)
             self.link = self.net.start()
 
     def set_link_fm1s(self, letters):
@@ -1550,7 +1657,9 @@ class MidiBridge:
         for x in letters:
             if x not in self.fm1_net:
                 session = netmidi.Invitation(f"{netmidi.LINK_NAME} FM-1 {x}",
-                                             lambda message, x=x: self.from_link_fm1(x, message), host=self.link_host)
+                                             lambda message, x=x: self.from_link_fm1(x, message),
+                                             host=self.link_host or (self.net and self.net.address()))
+                # (the Studio the link reached, not whichever is found first: two Studios on the network)
                 if session.start():
                     self.fm1_net[x] = session
 
@@ -1779,8 +1888,12 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
                 bridge.set_routes(command[1])
             elif command[0] == "metronome":        # ("metronome", on, speaker, level, rate)
                 wanted[:] = command[1:5]
-            elif command[0] == "link":             # ("link", on, host): the Pocket's Studio link
-                bridge.set_link(bool(command[1]), command[2] if len(command) > 2 else None)
+            elif command[0] == "link":             # ("link", on, host, prefer): the Pocket's Studio link
+                bridge.set_link(bool(command[1]), command[2] if len(command) > 2 else None,
+                                command[3] if len(command) > 3 else None)
+            elif command[0] == "mmc":              # ("mmc", "record" or "stop"): the Pocket's REC to the Studio
+                if bridge.link and bridge.net and command[1] in ("record", "stop"):
+                    bridge.net.send([mmc_message(command[1])])
             elif command[0] == "link_fm1s":        # ("link_fm1s", ["A", ...]): each FM-1 on a session of its own
                 bridge.set_link_fm1s([str(x) for x in command[1]])
             elif command[0] == "mcu" and bridge.mcu:   # ("mcu", [messages]): the control surface, to the DAW
@@ -1827,7 +1940,7 @@ def run_child(conn, source_match, enabled, net=False, pads=None):
         status["fm1map"] = bridge.fm1map.status()
         status["split"] = bridge.split
         status.update(ble_keys=bridge.keyboard_list() if bridge.ble_loaded else None, ble_found=bridge.ble_found,
-                      ble_scanning=bridge.ble_scanning, ble_note=bridge.ble_note)
+                      ble_scanning=bridge.ble_scanning, ble_note=bridge.ble_note, mmc=bridge.mmc)
         if status != last:
             try:
                 conn.send(status)
@@ -1906,7 +2019,8 @@ class MidiProcess:
         self.notes, self.chans = [], 0      # for the MIDI meter
         self.ble_keys, self.ble_found, self.ble_scanning = [], [], False   # Bluetooth MIDI keyboards (MidiBridge's)
         self.ble_note = 0
-        self.on_note = self.on_saved = None  # the app's: a keyboard's news to say; the saved keyboards to keep
+        self.mmc = 0                        # the Studio's REC / STOP last told the app (on_mmc), by its count
+        self.on_note = self.on_saved = self.on_mmc = None  # the app's: a keyboard's news to say; the saved keyboards to keep
         self.fm1map = None                  # fm1map.Mapper.status(): the FM-1 controls learnt, one being learnt
 
     def start(self):
@@ -1941,6 +2055,10 @@ class MidiProcess:
             if count != self.ble_note and text and self.on_note:
                 self.on_note(text)
             self.ble_note = count
+            count, command, at = status.get("mmc") or (0, None, 0.0)
+            if count != self.mmc and command and self.on_mmc:
+                self.on_mmc(command, at)      # (at: when it arrived, time.monotonic(): the same clock here)
+            self.mmc = count
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
@@ -1971,55 +2089,60 @@ class MidiProcess:
 
     def set_enabled(self, on):
         self.enabled = on
-        self.conn.send(("enabled", on))
+        self.send_command(("enabled", on))
 
     def open_pairing(self):
         self.pairing_until = time.monotonic() + PAIRING_SECONDS
-        self.conn.send(("pair",))
+        self.send_command(("pair",))
 
     def pause(self, on):
-        self.conn.send(("pause", on))
+        self.send_command(("pause", on))
 
     def set_clock(self, mode, bpm):
-        self.conn.send(("clock", mode, bpm))
+        self.send_command(("clock", mode, bpm))
 
     def transport(self, command):
-        self.conn.send(("transport", command))
+        self.send_command(("transport", command))
 
     def set_routes(self, routes):
-        self.conn.send(("routes", routes))
+        self.send_command(("routes", routes))
 
-    def set_link(self, on, host=None):
-        """the Pocket's Studio link on (to host, or the Studio found on the network) or off"""
-        self.conn.send(("link", on, host))
+    def set_link(self, on, host=None, prefer=None):
+        """the Pocket's Studio link on (to host, or the Studio found on the network: prefer, by name, when it's
+        there) or off"""
+        self.send_command(("link", on, host, prefer))   # (a MIDI process that died: not the app too, 2026-11-02)
+
+    def send_mmc(self, command):
+        """"record" / "stop" to the linked Studio as MMC (linked REC)"""
+        self.send_command(("mmc", command))
 
     def set_link_fm1s(self, letters):
         """the Pocket's FM-1s (A-C) each on a session of its own to the linked Studio (its FM-1 E-G)"""
-        self.conn.send(("link_fm1s", list(letters)))
+        self.send_command(("link_fm1s", list(letters)))
 
     def set_metronome(self, on, target, level, rate):
-        self.conn.send(("metronome", on, target, level, rate))
+        self.send_command(("metronome", on, target, level, rate))
 
     def set_tap(self, path):
         """FM-1 A's MIDI also into the FIFO at path (SLOOP on the Studio, deskui.start_sloop); None: not"""
-        self.conn.send(("tap", path))
+        self.send_command(("tap", path))
 
     def set_ble_saved(self, keys):
         """the saved keyboards (the app's state), to connect to whenever they're on"""
         self.ble_keys = [list(k[:2]) + [False] for k in keys or []]
-        self.conn.send(("ble_saved", [list(k[:2]) for k in keys or []]))
+        self.send_command(("ble_saved", [list(k[:2]) for k in keys or []]))
 
     def ble_scan(self):
         self.ble_scanning = True              # (till the MIDI process says otherwise: no "none found" first)
-        self.conn.send(("ble", "scan"))
+        self.send_command(("ble", "scan"))
 
     def ble_connect(self, address):
-        self.conn.send(("ble", "connect", address))
+        self.send_command(("ble", "connect", address))
 
     def ble_forget(self, address):
         self.ble_keys = [k for k in self.ble_keys if k[0] != address]
-        self.conn.send(("ble", "forget", address))
+        self.send_command(("ble", "forget", address))
 
     def mcu_send(self, messages):
         """the control surface's moves (netmidi.Mackie.fader / press) to the DAW"""
-        self.conn.send(("mcu", [list(m) for m in messages]))
+        self.send_command(("mcu", [list(m) for m in messages]))

@@ -118,6 +118,7 @@ def scenes(app):
         app.screen, app.setting, app.settings_menu = "settings", 0, "play"
 
     def settings_sloop():
+        app.fw_label = "SLOOP 2.8"                # (the page is named after what the FM-1 runs)
         app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
 
     def settings_bt():                        # the Pocket's Bluetooth: the speaker and Bluetooth MIDI together
@@ -128,6 +129,17 @@ def scenes(app):
 
     def settings_fm1():
         app.screen, app.setting, app.settings_menu = "settings", 0, "fm1"
+
+    def settings_library():                   # 3.0: Library, its first row named after what the FM-1 runs
+        app.fw_label = "SLOOP 2.8"
+        app.screen, app.setting, app.settings_menu = "settings", 0, "library"
+
+    def settings_firmware():                  # 3.0: that page for an FM-1 running Felucca: what's done for it
+        app.fw_label = "Felucca v1.9.0"
+        app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
+
+    def settings_box():
+        app.screen, app.setting, app.settings_menu = "settings", 0, "box"
 
     def volume():
         app.volume, app.volume_shown = 64, time.monotonic() + 60
@@ -224,7 +236,8 @@ def scenes(app):
         app.screen, app.scan_kind, app.cursor = "scan", "midi", 0
 
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
-            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("settings-bt", settings_bt), ("status-volume", volume),
+            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-library", settings_library),
+            ("settings-firmware", settings_firmware), ("settings-box", settings_box), ("settings-midi", settings_midi), ("settings-bt", settings_bt), ("status-volume", volume),
             ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings), ("bt-keys", bt_keys),
             ("editor", editor), ("editor-note", editor_note),
@@ -538,7 +551,7 @@ def lcd_screens(state, out):
         print("wrote", out / f"lcd-{name}.png")
     display = LcdCapture()
     app = pocket_app(display, dict(state, desk_theme="KAWAII"))
-    app.screen, app.settings_menu = "settings", None
+    app.screen, app.settings_menu = "settings", "box"         # (3.0: Settings > Box > Theme)
     app.setting = [r[0] for r in app.settings_rows()].index("theme")
     app.change_setting()
     app.pick["cursor"] = [item[2] for item in app.pick["items"]].index("KAWAII")

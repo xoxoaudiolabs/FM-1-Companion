@@ -77,6 +77,7 @@ def check_command(c):
               "clock_mode": value in ("follow", "box"), "click": value in ("low", "mid", "high"),
               "audio_rate": value in (44100, 48000),
               "studio_link": isinstance(value, bool), "link_audio": isinstance(value, bool),   # the Pocket's Studio link
+              "link_hear": value in ("studio", "pocket"),
               "auto_backup": not isinstance(value, bool) and value in ("off", "boot", 2, 5, 10, 30),
               "keep_backups": number and int(value) == value and 1 <= value <= 100,
               "output": value in ("both", "speaker", "phones"),
@@ -542,6 +543,8 @@ details summary{cursor:pointer}
   <div class="line"><span class="k">Studio</span><span class="v" id="s-lstudio">–</span></div>
   <div class="line"><span class="k">Link audio</span><label class="sw"><input type="checkbox" id="s-laudio"><span></span></label></div>
   <div class="line"><span class="k">Audio</span><span class="v" id="s-lsend">–</span></div>
+  <div class="line"><span class="k">Hear</span><select id="s-lhear" onchange="set('link_hear', this.value)"><option value="studio">the Studio's mix</option><option value="pocket">this Pocket</option></select></div>
+  <div class="line"><span class="k">On</span><span class="v" id="s-lout">–</span></div>
   <p class="dim small" style="margin:6px 0 0">Links this Pocket to an XOXO Studio on the same network: its MIDI, and its sound when Link audio is on.</p>
 </section>
 <section><h2>Record</h2>
@@ -791,6 +794,9 @@ function renderLink(l) {                           // the Pocket's Studio link (
   $("s-laudio").checked = l.audio; $("s-laudio").onchange = (e) => set("link_audio", e.target.checked);
   $("s-lstudio").textContent = !l.on ? "off" : l.studio ? `${l.studio} · ${l.cable ? "cable" : "Wi-Fi"}` : (l.error && l.error !== "no Studio found" ? l.error : "looking…");
   $("s-lsend").textContent = !l.on || !l.audio ? "off" : l.sending ? "going to the Studio" : "not going yet";
+  if (document.activeElement !== $("s-lhear")) $("s-lhear").value = l.hear || "studio";
+  $("s-lout").textContent = !l.usb_out ? "a USB sound card, when one's plugged in"
+    : l.usb_out + (l.back ? " · the Studio's mix" : "");
 }
 // the mixer: a level for each sound source while there's more than one (FM-1 A and B, a USB keyboard's synth)
 // a source with more than two channels (an audio interface) shows which pair it takes; tap it for the next

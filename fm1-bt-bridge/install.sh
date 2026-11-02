@@ -63,6 +63,19 @@ if [ "$BUILD" = pocket ]; then            # the HAT can't be asked which it is (
     fi
     case "$SCREEN_CHOICE" in oled|lcd144|lcd13|ask|"") ;; *) stop "FM1_SCREEN must be oled, lcd144, lcd13 or ask" ;; esac
 fi
+STUDIO_SCREEN=""
+if [ "$BUILD" = desk ]; then              # the Studio's 3.5" touchscreen: on SPI, or on HDMI with its touch on SPI
+    STUDIO_SCREEN="${FM1_STUDIO_SCREEN:-}"
+    if [ -z "$STUDIO_SCREEN" ] && [ -z "$UPDATE" ] && [ -t 0 ]; then
+        echo
+        echo "Which 3.5\" touchscreen is on the Pi?"
+        echo "  1) On the GPIO pins only (the common \"3.5 inch RPi LCD\", ILI9486)"
+        echo "  2) HDMI for the picture, touch on the GPIO pins (UCTRONICS 3.5\" HDMI)"
+        read -r -p "1-2 [1]: " answer
+        case "$answer" in 2) STUDIO_SCREEN=hdmi35 ;; *) STUDIO_SCREEN=spi35 ;; esac
+    fi
+    case "$STUDIO_SCREEN" in spi35|hdmi35|"") ;; *) stop "FM1_STUDIO_SCREEN must be spi35 or hdmi35" ;; esac
+fi
 
 if [ -z "$UPDATE" ]; then
     echo "== Your password is needed once, for sudo"
@@ -123,7 +136,19 @@ if [ -f "$(dirname "$CONFIG")/overlays/waveshare35a.dtbo" ]; then
 else
     SCREEN="dtoverlay=piscreen,speed=24000000,rotate=90"
 fi
-if [ "$BUILD" = desk ] && ! grep -q "^dtoverlay=\(waveshare35a\|piscreen\|mipi-dbi-spi\)" "$CONFIG"; then
+# The HDMI one (UCTRONICS 3.5" HDMI): a 480x320 panel on HDMI, sent 720x480 (at 480x320 it shows "no signal":
+# tested 2026-10-29) which it scales down to its panel; the Studio draws its 480x320 1.5x larger and turned round
+# (desk.ScaledFb: the panel is upside down on the Pi). 960x640 (2x: sharper) not tried yet. Its XPT2046 touch on SPI CE0, its interrupt on GPIO25, as
+# the pins under it are marked (tested 2026-10-29).
+VIDEO="video=HDMI-A-1:720x480M@60"
+if [ "$STUDIO_SCREEN" = hdmi35 ]; then
+    SCREEN="dtoverlay=ads7846,cs=0,penirq=25,penirq_pull=2,speed=50000,keep_vref_on=0,swapxy=0,pmax=255,xohms=150"
+    if ! grep -q "$VIDEO" "$CMDLINE"; then
+        sudo cp "$CMDLINE" "$CMDLINE.bak"
+        sudo sed -i -e '1 s/ video=HDMI-A-1:[^ ]*//' -e "1 s/\$/ $VIDEO/" "$CMDLINE"
+    fi
+fi
+if [ "$BUILD" = desk ] && ! grep -q "^dtoverlay=\(waveshare35a\|piscreen\|mipi-dbi-spi\|ads7846\)" "$CONFIG"; then
     sudo cp "$CONFIG" "$CONFIG.bak"
     printf '
 [all]
@@ -188,6 +213,7 @@ install -D -m 644 "$DIR/oledi2c.py"                             ~/.local/share/f
 install -D -m 644 "$DIR/screenpick.py"                          ~/.local/share/fm1-bridge/screenpick.py
 install -D -m 644 "$DIR/dx7.py"                                 ~/.local/share/fm1-bridge/dx7.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
+install -D -m 644 "$DIR/iocard.py"                              ~/.local/share/fm1-bridge/iocard.py
 install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
 install -D -m 644 "$DIR/deskmeters.py"                          ~/.local/share/fm1-bridge/deskmeters.py

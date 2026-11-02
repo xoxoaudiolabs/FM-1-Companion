@@ -170,6 +170,12 @@ Drawn by the Companion's own code on a computer (`tools/render_screens.py`).
 
 The latest of each box; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+- **Pocket v3.0: ten FM-1 firmwares in the library, Settings in seven pages.** Backups and restores for the
+  FM-1 whatever it runs: SLOOP, Clipper, sloopDX, Felucca, JIANT FM, Melodee, Jangada and X0X, Baud Girl's
+  FM-1+VA's presets, and the sound a stock FM-1 plays now, each in its own backup files (only SLOOP tried on an
+  FM-1 yet). Settings opens with Mixer, Playing, MIDI, Bluetooth, Studio link, Library and Box; Library's first page
+  is named after what the FM-1 runs. Keep backups, a shorter Projects list, DX7 patches to the FM-1 that takes them.
+  ([More](docs/CHANGELOG.md#pocket-v30-ten-fm-1-firmwares-in-the-library-settings-in-seven-pages))
 - **Pocket v2.13: splits and key ranges, the XOXO themes, a steadier Studio link.** A MIDI route can pass only
   a range of keys or split a keyboard onto a second channel, scale velocity by a percentage, and arpeggiate at
   1/16T or 1/32 over up to four octaves, with hold. The colour screen's themes are now XOXO (the new default) and

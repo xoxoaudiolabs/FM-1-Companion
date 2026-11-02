@@ -324,7 +324,7 @@ class FakeUsb:
 class FakeSession:
     made = []
 
-    def __init__(self, name, on_message, host=None):
+    def __init__(self, name, on_message, host=None, on_thread=None, prefer=None):
         self.name, self.on_message, self.host, self.sent, self.stopped = name, on_message, host, [], False
         FakeSession.made.append(self)
 

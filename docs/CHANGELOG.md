@@ -2,6 +2,42 @@
 
 Every release of both boxes, newest first. [Back to the main page](../README.md)
 
+## Pocket v3.0: ten FM-1 firmwares in the library, Settings in seven pages
+
+| Settings | Library | The FM-1's page, for Felucca |
+|---|---|---|
+| ![Settings: Mixer, Playing, MIDI, Bluetooth, Studio link, Library, Box](images/lcd-settings-3.png) | ![Library: SLOOP, DX7 patches, Sample editor, Recordings, Firmware SLOOP 2.8](images/lcd-settings-library.png) | ![Felucca: Back up now, Restore, Load project, Auto backup, Keep backups](images/lcd-settings-firmware.png) |
+
+*Drawn by the Companion's own code on a computer (`tools/render_screens.py --lcd`).*
+
+- **The library, whatever the FM-1 runs.** The box asks the FM-1 what it runs and backs it up the way that
+  firmware's own editor does, into its own backup files where it has them, so they open there too:
+  - **SLOOP**, as before; **Clipper** and **sloopDX** the same way, sloopDX with all 8 of its DX7 banks (it's
+    stepped through them, then set back; stop the song first), and a DX7 bank file loads into its bank in use.
+  - **Felucca**, **JIANT FM** (every song it keeps) and **Melodee** (every project): Felucca's backup files.
+  - **Jangada**: its own backup files; DX7 patches go to it, as to Melodee.
+  - **X0X**: its project as a `.x0b`, the file X0X's backup page uses; X0X asks on its own screen before a
+    restore. Not its break loops.
+  - **Baud Girl's FM-1+VA**: its 128 presets, each read back after it's written. From what the community worked
+    out of her web tools (her firmware isn't open), so an update of hers may change it. Not its patterns.
+  - **M-VAVE's stock firmware**: *Save FM-1 sound* keeps the sound it plays now as a DX7 voice. A whole DX7 bank
+    replaces 32 of its presets, and its factory reset doesn't bring the factory ones back: the box says so first.
+  - A backup made for one firmware is never put onto another, and a firmware the box doesn't know gets nothing
+    written to it.
+  - *Only SLOOP has been tried on an FM-1 so far:* the others are built from each firmware's published protocol
+    and tested against stand-ins.
+- **Settings in seven pages:** **Mixer** (the levels, Record parts, Audio rate), **Playing**, **MIDI**,
+  **Bluetooth**, **Studio link**, **Library** (the FM-1's page, DX7 patches, Sample editor, Recordings, Firmware)
+  and **Box** (Import SD card, Theme, Wi-Fi). The FM-1's page is named after what it runs and shows only what the
+  box does for it.
+- **Keep backups:** how many of the box's own backups are kept (automatic, and those before a restore or a load),
+  1–100, 20 at first; lowering it deletes the oldest at once. Yours from Back up now are never deleted.
+- **The web app's Projects list** shows the newest backup's projects, with the older ones a press away (every
+  restart's backup had added more).
+- **DX7 patches** go to the FM-1 that takes them when two are plugged in, not to the one running SLOOP.
+- **On its own with a USB audio interface:** with no speaker, the Pocket plays through a USB audio interface
+  plugged into it.
+
 ## Pocket v2.13: splits and key ranges, the XOXO themes, a steadier Studio link
 
 | A route: a key range and a split | Settings › Theme | HOME in each theme |

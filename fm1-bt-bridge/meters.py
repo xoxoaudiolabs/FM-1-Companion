@@ -339,6 +339,22 @@ def wav_seconds(path):
         return 0.0
 
 
+def write_link_file(wav_path, take, stopped):
+    """a linked REC's note beside its take, <take>.wav.link.json, for lining the two boxes' takes up:
+    {"trigger": "here" (this box's REC) or "linked box", "linked_with": the other box, "first_sample_after_trigger_ms":
+    when the take's first sample was after the REC (its length before it stopped, less when REC came), "seconds"}"""
+    import json
+    try:
+        with wave.open(str(wav_path)) as w:
+            length = w.getnframes() / w.getframerate()
+        note = {"trigger": take["trigger"], "linked_with": take["linked_with"],
+                "first_sample_after_trigger_ms": round((stopped - length - take["at"]) * 1000, 1),
+                "seconds": round(length, 3)}
+        Path(str(wav_path) + ".link.json").write_text(json.dumps(note, indent=2), encoding="utf-8")
+    except (OSError, EOFError, wave.Error, KeyError, TypeError):
+        pass
+
+
 class Recorder:
     """pw-record writing the FM-1's input to a WAV file (16-bit stereo, at the FM-1's own rate), with PipeWire
     doing the writing: next to nothing for the Zero W's CPU. Stopping it (SIGTERM) finishes the WAV header.
@@ -553,6 +569,7 @@ class MeterScreens:
         background; the MIDI played meanwhile goes into a .mid beside it"""
         stopped = time.monotonic()            # (the WAV ends here: its first frame is its length before this)
         raw, seconds = self.recorder.stop()
+        linked, self.link_take = getattr(self, "link_take", None), None   # (a linked REC's take: its note below)
         midi = getattr(self, "midi", None) if self.rec_midi else None
         if midi is not None:
             midi.midi_record(False)
@@ -567,12 +584,16 @@ class MeterScreens:
                     return
                 if midi is not None:          # (the mix: the take without its silent start, ending as it did)
                     self.write_take_midi(midi, job["path"], stopped)
+                if linked:
+                    write_link_file(job["path"], linked, stopped)
                 self.check_clipping(job["path"], parts)
             threading.Thread(target=finish, daemon=True).start()
         elif raw:
             def finish():
                 if midi is not None:
                     self.write_take_midi(midi, raw, stopped)
+                if linked:
+                    write_link_file(raw, linked, stopped)
                 self.check_clipping(raw)
             threading.Thread(target=finish, daemon=True).start()
 
@@ -610,9 +631,13 @@ class MeterScreens:
         elif bad:                             # set FM-1 USB to master and turn it down, or lower its tracks
             self.say(f"Clipped {count}x: turn the FM-1 down", 6)
 
-    def toggle_recording(self):
+    def toggle_recording(self, linked=False):
+        """REC / STOP. linked: the linked Studio's (MMC), so not sent back to it; else sent (link_rec_out)"""
+        pressed = time.monotonic()
+        tell = None if linked else getattr(self, "link_rec_out", None)
         if self.recorder.recording():
             self.finish_recording("Saved: {} recorded")
+            tell and tell("stop", pressed)
             return
         if not self.source:
             self.say("FM-1 not found")
@@ -643,12 +668,15 @@ class MeterScreens:
             self.rec_lag = 0.0                # (each source straight in: its delay not measured, so not shifted)
             sources = [(node["name"], *self.capture_ports_of(key, node)) for key, node in channels]
             threading.Thread(target=lambda: (time.sleep(1.5), link_parts(sources)), daemon=True).start()
+            tell and tell("record", pressed)
             return
         target = self.capture_target()
         self.rec_lag = MIX_LAG if str(target).startswith("monitor:") else 0.0    # (straight from a source: not
         if not self.recorder.start(target, path, self.state["audio_rate"]):      # measured, so not shifted)
             self.say("Can't record (pw-record?)")
             self.rec_midi and self.midi.midi_record(False)
+            return
+        tell and tell("record", pressed)
 
     def recording_tick(self, now):
         """Stops a recording whose pw-record died (the FM-1 went away) or that would fill the SD card;

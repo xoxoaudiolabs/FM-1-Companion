@@ -45,6 +45,10 @@ def test_backup_listing_auto():
     assert library.read_state()["result"].get("unchanged") and fake.writes == 0
 
 
+def test_identify_names_it():
+    assert run(fake_fm1.FakeFM1VA(), ["identify"]) == 0 and library.firmware_label() == "FM-1+VA 102"
+
+
 def test_restore_reads_back():
     fake = fake_fm1.FakeFM1VA()
     assert run(fake, ["backup"]) == 0

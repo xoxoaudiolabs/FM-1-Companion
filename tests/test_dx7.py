@@ -117,6 +117,28 @@ def test_sending():
         sloop.Link = was
 
 
+def test_two_fm1s():
+    """FM-1 A on SLOOP (the library's), B on a firmware that takes DX7: the bank goes to B, nothing to A; both on
+    SLOOP: refused"""
+    voices = [dx7.pack(random_voice(i, f"W{i}")) for i in range(32)]
+    path = library.folder("patches") / "two-bank.syx"
+    path.write_bytes(dx7.bank_message(voices))
+    silent, fake = SilentFM1(), fake_fm1.FakeFM1()
+    was, cards = sloop.Link, sloop.fm1_cards
+    try:
+        sloop.fm1_cards = lambda text=None: [1, 2]
+        sloop.Link = lambda card=None: was(mido={1: fake, 2: silent}[card], time_scale=0.02)
+        assert library.main(["dx7-send", str(path)]) == 0
+        assert silent.sent[-1] == dx7.bank_message(voices)
+        assert library.main(["dx7-send", str(path), "2"]) == 0
+        assert silent.sent[-1] == dx7.voice_message(dx7.unpack(voices[1]))
+        sloop.Link = lambda card=None: was(mido=fake, time_scale=0.02)
+        assert library.main(["dx7-send", str(path)]) == 1
+        assert "doesn't take DX7" in library.read_state()["message"]
+    finally:
+        sloop.Link, sloop.fm1_cards = was, cards
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

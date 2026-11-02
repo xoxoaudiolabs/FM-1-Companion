@@ -67,6 +67,28 @@ it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
 - **Looks after the FM-1 (SLOOP 2.3+).** Back up and restore everything on it, back up and load songs, load
   projects and samples, and install firmware: [SLOOP](https://github.com/isod89/sloop-fm1) or isod89's experimental
   [Clipper](https://github.com/isod89/clipper-fm1). Backups are SLOOP's own files.
+- **Backs up Felucca too** ([Hügelton's](https://github.com/hugelton/Felucca), 1.x): back up and restore everything
+  on it, and load a project from a backup, in Felucca's own backup files (its web editor reads them). Not tried on an
+  FM-1 running Felucca yet: built from its published protocol. Songs and samples stay SLOOP's for now.
+- **And JIANT FM** ([juanjiant-bit's](https://github.com/juanjiant-bit/JIANT), 0.3 and later): the same, with every
+  song it keeps (its song index and each song's sections). Not tried on an FM-1 running JIANT yet.
+- **And X0X** ([charlesvestal's](https://github.com/charlesvestal/fm1-x0x)): back up its project (sounds, the 32
+  patterns, the song, knob motion, settings) as X0X's own `.x0b`, and restore one: X0X asks on its screen first. Not
+  its break loops. Not tried on an FM-1 running X0X yet.
+- **And Jangada** ([zednaked's](https://github.com/zednaked/jangada)): back up and restore everything on it (projects,
+  presets, both FM6 banks, samples), in Jangada's own backup files; load a project; DX7 patches go to it. Not tried on
+  an FM-1 running Jangada yet.
+- **And sloopDX** ([zvenson's](https://github.com/zvenson/dxsloop)): SLOOP's backups with all 8 of its DX7 banks (it is
+  stepped through them, then set back to the one in use; stop the song first), and a DX7 bank file loads into its bank
+  in use (backed up first). Not tried on an FM-1 running sloopDX yet.
+- **And Clipper** (isod89's synth): back up and restore everything on it, and load a project, as on SLOOP (not its
+  songs or samples). Not tried on an FM-1 running Clipper yet.
+- **And Melodee** ([keremimo's](https://github.com/keremimo/melodee)): back up and restore everything on it (its presets
+  and every project), in Felucca's backup files as its own editor makes them; load a project; DX7 patches go to it. Not
+  tried on an FM-1 running Melodee yet.
+- **And Baud Girl's FM-1+VA** (closed source): back up and restore its 128 presets (each read back after it's
+  written), from what the community has worked out of her web tools, so an update of hers may change it. Not its
+  patterns. Not tried on an FM-1 running FM-1+VA yet.
 - **A web app on your phone** at `http://<the box's hostname>.local`: live status, the mixer, the MIDI matrix, a
   sample editor, your recordings and the library. [Try it with sample data](https://xoxoaudiolabs.com/app/).
 - **The Studio adds:**
@@ -81,7 +103,9 @@ it prints. Adding a part or a screen driver: [HARDWARE.md](HARDWARE.md).
   - **A DAW control surface** over network MIDI, for [Kraken](https://github.com/isod89/sodwave-site) (Ableton
     Live untested).
 - **DX7 patches** for FM-1 firmwares that take them: a library of `.syx` banks, sent whole or a voice at a time
-  (not tried on such a firmware yet).
+  (not tried on such a firmware yet). On M-VAVE's stock firmware it can also save the sound the FM-1 plays now as a
+  voice (the way [czietz/fm1-read-voice](https://github.com/czietz/fm1-read-voice) reads it; not tried here). A whole
+  bank replaces 32 of stock's presets, and its factory reset doesn't bring the factory ones back.
 - **Coming:** 5-pin DIN MIDI in, out and thru, on an expansion card of its own (in its own repository).
 
 ```

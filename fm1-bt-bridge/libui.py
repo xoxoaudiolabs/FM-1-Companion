@@ -18,6 +18,7 @@ TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"
 WRITES = ("restore", "load-project", "load-sample", "flash", "song-load", "dx7-send", "update")
 AUTO_CHOICES = ["off", "boot", 2, 5, 10, 30]            # the "auto_backup" setting: minutes between backups
 AUTO_LABELS = {"off": "off", "boot": "at start"}
+KEEP_CHOICES = [1, 2, 3, 5, 10, 20, 30, 50, 100]        # "keep_backups" on the box (the web page takes any 1-100)
 
 
 def job_running(state):
@@ -46,7 +47,7 @@ def short_firmware(text):
 
 
 LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto",
-                "song_backup", "song_load", "dx7")
+                "song_backup", "song_load", "dx7", "keep")
 
 
 class LibraryScreens:
@@ -138,6 +139,21 @@ class LibraryScreens:
         self.last_auto = time.monotonic()
         self.save_settings()
 
+    def keep_backups(self):
+        keep = self.state.get("keep_backups", library.KEEP_AUTO)
+        return keep if isinstance(keep, int) and not isinstance(keep, bool) and 1 <= keep <= 100 else library.KEEP_AUTO
+
+    def set_keep(self, keep):
+        """keep_backups saved, and the box's backups beyond it deleted now (not at the next one)"""
+        self.state["keep_backups"] = keep
+        self.save_settings()
+        return library.prune_auto(keep)
+
+    def cycle_keep(self):
+        keep = next((k for k in KEEP_CHOICES if k > self.keep_backups()), KEEP_CHOICES[0])
+        gone = self.set_keep(keep)
+        self.say(f"Keeping {keep}" + (f": {gone} deleted" if gone else ""), 2)
+
     @staticmethod
     def auto_label(mode):
         return AUTO_LABELS.get(mode) or f"{mode} min"
@@ -218,6 +234,9 @@ class LibraryScreens:
         if key == "auto":
             self.cycle_auto()
             return
+        if key == "keep":
+            self.cycle_keep()
+            return
         if key == "song_backup":              # SLOOP's song: its sections A-D and the song order, one file
             self.start_job(["song-backup"], "Song backup")
             return
@@ -225,6 +244,8 @@ class LibraryScreens:
         if key == "restore":
             items = [(short_date(b["name"]), short_firmware(b.get("firmware")), b["name"])
                      for b in listing["backups"] if not b.get("damaged")]
+            items += [(short_date(b["name"]), "X0X", ("x0x", b["name"]))      # (an FM-1 running X0X)
+                      for b in listing["x0x"] if not b.get("damaged")]
             self.open_pick("Restore", items, self.pick_restore, "No backups yet")
         elif key == "project":
             items = [(f"{short_date(b['name'])} backup", "›", ("backup", b["name"]))
@@ -237,9 +258,10 @@ class LibraryScreens:
                      for s in listing["songs"] if not s.get("damaged")]
             self.open_pick("Load song", items, self.pick_song, "No songs yet: Back up song")
         elif key == "dx7":                    # DX7 .syx banks and voices (patches folder), for firmwares that take them
-            items = [(Path(p["name"]).stem, "bank" if p.get("kind") == "bank" else "voice", p["name"])
-                     for p in listing["patches"] if not p.get("damaged")]
-            self.open_pick("DX7 patches", items, self.pick_dx7, "No .syx files yet: SD card or web")
+            items = [("Save FM-1 sound", "", ("read",))] + [   # (M-VAVE's stock firmware: the sound it plays now)
+                (Path(p["name"]).stem, "bank" if p.get("kind") == "bank" else "voice", p["name"])
+                for p in listing["patches"] if not p.get("damaged")]
+            self.open_pick("DX7 patches", items, self.pick_dx7, "")
         elif key == "sample":
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing["samples"]]
             self.open_pick("Sample", items, self.pick_sample, "No WAV files yet")
@@ -275,14 +297,23 @@ class LibraryScreens:
         self.screen = "confirm"
 
     def pick_restore(self, name):
+        if isinstance(name, tuple):           # X0X's .x0b: X0X asks on its own screen too
+            path = library.folder("x0x") / name[1]
+            self.ask("Restore X0X?", [short_date(name[1]), "replaces X0X's project", "then SEL on the FM-1"],
+                     lambda: self.start_job(["restore", str(path)], "Restore"))
+            return
         path = library.folder("backups") / name
         self.ask("Restore?", [short_date(name) + "  " + short_firmware(library.sloop.load_json(path).get("firmware")),
                               "replaces the FM-1's data", "(backed up first)"],
                  lambda: self.start_job(["restore", str(path)], "Restore"))
 
     def pick_dx7(self, name):
-        """a bank: the whole bank, or one of its voices by name; a voice file: itself"""
+        """a bank: the whole bank, or one of its voices by name; a voice file: itself; ("read",): the FM-1's sound
+        saved (it only reads)"""
         import dx7
+        if name == ("read",):
+            self.start_job(["dx7-read"], "Save sound")
+            return
         path = library.folder("patches") / name
         try:
             what = dx7.describe(path)
@@ -299,7 +330,7 @@ class LibraryScreens:
                        "", back="pick")
 
     def ask_dx7(self, path, voice, label):
-        lines = ([str(label)[:20], "all 32 voices: the FM-1", "asks where they go"] if voice is None
+        lines = ([str(label)[:20], "all 32 voices (stock:", "factory presets lost)"] if voice is None
                  else [str(label)[:20], f"voice {voice} as a single", "voice (selected preset)"])
         self.ask("Send to FM-1?", lines, lambda: self.start_job(["dx7-send", str(path)] + ([] if voice is None
                                                                                        else [str(voice)]), "DX7"))

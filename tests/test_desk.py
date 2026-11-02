@@ -640,6 +640,7 @@ def test_tab_bar():
     app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
     app.save_settings = lambda: None
     ui = deskui.DeskUI(app, app.display)
+    app.desk = ui                                                    # (as on the Studio: its Settings, not the Pocket's)
     ui.theme_check = 1e12
     ui.render(0.0, force=True)
     assert [w[3][1] for w in ui.widgets if isinstance(w[3], tuple) and w[3][0] == "tab"] ==         ["HOME", "MIX", "PADS", "REC", "MIDI", "MORE"] and deskui.TAB_LABEL["PADS"] == "SAMPLER"

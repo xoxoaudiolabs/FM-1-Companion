@@ -67,6 +67,7 @@ DEFAULTS = {
     "metronome": False,     # a click on the speaker in time with the clock
     "click": "mid",         # its level: "low", "mid", "high"
     "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
+    "keep_backups": 20,     # the box's own backups (auto, before a restore) kept, 1-100; Back up now's: all (library.py)
     "library_fm1": "A",     # with two or three FM-1s on a hub, the one backups, restores and loads go to (library.py)
     "library_target": "fm1",  # Settings > Sloop works on: "fm1" (an FM-1), or on the Studio "sloop" or "x0x"
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
@@ -104,7 +105,10 @@ GROUPS = {"g_play": ("play", "Playing"),   # Settings' sections: (row key) -> (s
           "g_sloop": ("sloop", "Sloop"),    # The Pocket's Mixer: its sources' levels, at the top of Settings
           "g_fm1": ("fm1", "FM-1"),
           "g_mixer": ("mixer", "Mixer"),
-          "g_bt": ("bt", "Bluetooth")}      # (the Pocket's Bluetooth settings together)
+          "g_bt": ("bt", "Bluetooth"),      # (the Pocket's Bluetooth settings together)
+          "g_link": ("link", "Studio link"),   # the Pocket's last three (pocket_settings_rows)
+          "g_library": ("library", "Library"),
+          "g_box": ("box", "Box")}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
 UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 
@@ -1473,6 +1477,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         rate = f"{self.state['audio_rate'] / 1000:g} kHz"
         tempo = f"{self.state['bpm']} BPM"
         onoff = lambda on: "on" if on else "off"      # noqa: E731
+        if not self.desk and self.settings_menu in (None, "mixer", "midi", "link", "library", "sloop", "box"):
+            return self.pocket_settings_rows(wifi, rate)
         if self.settings_menu == "sloop":     # SLOOP 2.3+'s editor protocol
             targets = self.library_targets()
             target = ([("library_target", "For", dict(targets)[self.library_target()])] if len(targets) > 1 else [])
@@ -1491,7 +1497,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                             ("project", "Load project", "›"), ("song_backup", "Back up song", ""),
                             ("song_load", "Load song", "›"), ("sample", "Load sample", "›"),
                             ("sample_level", "Sample level", self.state["sample_level"]),
-                            ("auto", "Auto backup", self.auto_label(self.auto_mode())), ("sd", "Import SD card", "")]
+                            ("auto", "Auto backup", self.auto_label(self.auto_mode())),
+                            ("keep", "Keep backups", str(self.keep_backups())), ("sd", "Import SD card", "")]
         if self.settings_menu == "fm1":       # the FM-1 itself, whatever it runs
             return [("fw_info", "Runs", self.fw_label or "?"), ("firmware", "Install firmware", "›"),
                     ("dx7", "DX7 patches", "›")]     # (for firmwares that take them: dx7.py)
@@ -1549,6 +1556,53 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         return ([("g_mixer", "Mixer", "›"), ("routes", "MIDI routes", "›")] + editor + fm1
                 + [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
                    ("recording", "Recordings", "›")] + theme + [("wifi", "Wi-Fi", wifi)])
+
+    def pocket_settings_rows(self, wifi, rate):
+        """the Pocket's Settings: seven pages (tidied 2026-11-02: the backup settings were hard to find, MIDI routes
+        were in two places, Audio had one row), and in Library, Sloop: what only works on SLOOP (settings_parent).
+        Playing and Bluetooth are settings_rows' own."""
+        menu = self.settings_menu
+        if menu == "mixer":                   # its sources' levels by name, Record parts, the audio rate
+            channels = self.mix_channels()
+            rows = [(f"mix_{k}", self.channel_name(k, n), ("± " if self.editing == f"mix_{k}" else "")
+                     + f"{self.mix_level(k)}%") for k, n in channels] if len(channels) > 1 else []
+            if rows:
+                rows.append(("rec_parts", "Record parts", "on" if self.state["rec_parts"] else "off"))
+            else:                             # (one source: nothing to mix, its level not used; pressed: nothing)
+                rows = [("one_source", self.channel_name(*channels[0]) if channels else "FM-1", "only source")]
+            jack = ([("output", "Output", self.state["output"]), ("cue", "Click to phones",
+                                                                  "on" if self.state["cue"] else "off")]
+                    if self.jack else [])
+            return rows + jack + [("rate", "Audio rate", rate)]
+        if menu == "midi":
+            keys = getattr(self.midi, "controllers", None) or []
+            return [("routes", "MIDI routes", "›"), ("presets", "Route presets", "›"),
+                    ("usbkeys", "USB keys", str(len(keys)) if keys else "none")]
+        if menu == "link":
+            return [("link", "Studio link", self.link_label()),
+                    ("link_audio", "Link audio", "on" if self.state.get("link_audio", True) else "off")]
+        if menu == "library":                 # the FM-1's files, and what it runs
+            return [("g_sloop", "Sloop", "›"), ("dx7", "DX7 patches", "›"),
+                            ("editor", "Sample editor", "›"), ("recording", "Recordings", "›"),
+                            ("firmware", "Firmware", self.fw_label or "›")]
+        if menu == "sloop":                   # Library > Sloop: what needs SLOOP's editor protocol, together
+            which = ([("library_fm1", "FM-1", self.state["library_fm1"])]       # only with two FM-1s plugged in
+                     if self.midi and getattr(self.midi, "usb_b", None) else [])   # (DX7 finds its own)
+            return which + [("backup", "Back up now", ""), ("restore", "Restore", "›"), ("project", "Load project", "›"),
+                    ("song_backup", "Back up song", ""), ("song_load", "Load song", "›"),
+                    ("sample", "Load sample", "›"), ("sample_level", "Sample level", self.state["sample_level"]),
+                    ("auto", "Auto backup", self.auto_label(self.auto_mode())),
+                    ("keep", "Keep backups", str(self.keep_backups()))]
+        if menu == "box":                     # the Pocket's own
+            theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
+            return [("sd", "Import SD card", "")] + theme + [("wifi", "Wi-Fi", wifi)]
+        return [("g_mixer", "Mixer", "›"), ("g_play", "Playing", "›"), ("g_midi", "MIDI", "›"),
+                ("g_bt", "Bluetooth", "›"), ("g_link", "Studio link", self.link_label()),
+                ("g_library", "Library", "›"), ("g_box", "Box", "›")]
+
+    def settings_parent(self):
+        """the list a Settings page is in: the Pocket's Library for its Sloop, else the top list (None)"""
+        return "library" if not self.desk and self.settings_menu == "sloop" else None
 
     def set_studio_link(self, on):
         """the Pocket's Studio link on or off (Settings > MIDI > Studio link, or the web page)"""
@@ -1822,9 +1876,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                 self.setting = (self.setting + (1 if key == "down" else -1)) % len(self.settings_rows())
             elif key in ("press", "right"):
                 self.change_setting()
-            elif key == "left" and self.settings_menu:      # back up to the top list, on the group
+            elif key == "left" and self.settings_menu:      # back up a list (the top one), on the group
                 group = next(k for k, (name, _) in GROUPS.items() if name == self.settings_menu)
-                self.settings_menu = None
+                self.settings_menu = self.settings_parent()
                 self.setting = [row[0] for row in self.settings_rows()].index(group)
             elif key == "left":
                 self.screen = "status"

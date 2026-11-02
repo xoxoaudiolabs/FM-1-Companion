@@ -26,6 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "vendor" / "sloop"))
 HDR = (0x7D, 0x46, 0x4C)
 INFO, SMP_BEGIN, SMP_WRITE, SMP_END, SMP_ERASE, SMP_INFO = 1, 11, 12, 13, 14, 15
 BK_LIST, BK_GET, BK_PUT, LIVE = 34, 35, 36, 77
+FL_LIST, FL_GET, FL_PUT = 65, 66, 67      # Felucca's full backup (its EDITOR_PROTOCOL.md, v7): there 34-38 are other
+                                          # commands (UI_STATE, UI_SET ...), and 77 is FM6B_LIST
+FL_FORMAT = "felucca-backup"              # Felucca's own backup file (its web editor's fm1backup.js reads it)
+JG_FORMAT = "jangada-backup"              # Jangada's (zednaked/jangada fm1backup.js): SLOOP's commands, its own file
+SLOOP_OWN = ("sloop", "clipper", "sloopdx")   # isod89's lineage: songs, samples and the theme as SLOOP keeps them
+DX_BEGIN, DX_WRITE, DX_END, DX_INFO, DX_SELECT = 37, 38, 39, 40, 46   # sloopDX's DX7 banks (its editor.c v7-v9);
+DX_BANK = 8                               # its backup object 8: the bank in use (of 8). Sent to sloopDX only: on
+                                          # SLOOP 37 is LOCK_GET, and BANK_BEGIN empties the bank at once
 PUSHES = {23, 24, 26, 32}                 # frames the device sends unasked: never replies
 FORMAT, VERSION, PROJECT_FORMAT = "sloop-backup", 1, "sloop-project"
 SONG_FORMAT = "sloop-song"                # a song: the four sections (projects A-D) and the song order
@@ -162,6 +170,7 @@ class Link:
         if mido is None:
             import mido
         self.mido, self.frames, self.time_scale = mido, queue.Queue(), time_scale    # (tests shorten timeouts)
+        self.raw = queue.Queue()               # other SysEx: M-VAVE's own frames (mvave.py)
         inp, out = find_ports(mido.get_input_names(), card), find_ports(mido.get_output_names(), card)
         if not inp or not out:
             raise SloopError("notfound", "FM-1 not found on USB")
@@ -171,6 +180,8 @@ class Link:
     def received(self, msg):
         if msg.type == "sysex" and tuple(msg.data[:3]) == HDR and len(msg.data) > 3:
             self.frames.put((msg.data[3], list(msg.data[4:])))
+        elif msg.type == "sysex":
+            self.raw.put(list(msg.data))
 
     def request(self, cmd, args=(), timeout=1.0, retries=1):
         args = list(args)
@@ -289,37 +300,77 @@ class Sloop:
         info = {"version": r.s(), "nengines": r.b(), "pcount": r.b(), "gcount": r.b(), "nstep": r.b(), "pe0": r.b()}
         info["engines"] = [r.s() for _ in range(info["nengines"])]
         info["ntrk"] = r.b() if r.more() else 0
-        info["proto"] = r.b() if r.more() else 0
+        rest = r.a[r.i:]
+        info["proto"] = rest[0] if rest else 0  # (Felucca: CHAIN_ROWS, then its tagged blocks)
+        info["backup_caps"] = next((rest[i + 2] for i in range(1, len(rest) - 2)          # Felucca's "42 01 caps":
+                                    if rest[i] == 0x42 and rest[i + 1] == 1), 0)          # bit 0 read, bit 1 restore
         return info
+
+    @property
+    def dialect(self):
+        """"felucca" (backup commands 65-67) or "sloop" (34-36, and LIVE)"""
+        f = family(self.version)
+        return "felucca" if f in ("felucca", "jiant", "melodee") else "x0x" if f == "x0x" else "sloop"
+
+    def cmd(self, name):
+        return {"list": FL_LIST, "get": FL_GET, "put": FL_PUT}[name] if self.dialect == "felucca" else             {"list": BK_LIST, "get": BK_GET, "put": BK_PUT}[name]
 
     @property
     def version(self):
         return self.info["version"]
 
     def can_backup(self):
-        return self.info["proto"] >= 6
+        """SLOOP 2.3+ or a firmware that shares its backup commands (family): other Felucca-based firmwares answer
+        INFO too, but take 34-38 as other commands (Felucca: UI_STATE, UI_SET ...)"""
+        if self.dialect == "felucca":         # (one that says it can: Felucca 1.x; Salt and older don't)
+            return bool(self.info["backup_caps"] & 1)
+        if self.dialect == "x0x":             # (its own backup, in M-VAVE's frames: library.py, mvave.py)
+            return False
+        return self.info["proto"] >= 6 and family(self.version) is not None
+
+    def require_restore(self):
+        self.require_backup()
+        if self.dialect == "felucca" and not self.info["backup_caps"] & 2:
+            raise SloopError("old", f"{self.version} can't take a restore over USB")
+
+    def require_sloop(self, what):
+        """songs, samples: SLOOP's own (Clipper, sloopDX: its family)"""
+        known(self.version)
+        if family(self.version) not in SLOOP_OWN:
+            raise SloopError("family", f"{FAMILY_NAMES[family(self.version)]}: {what} only on SLOOP for now")
 
     def require_sample_slots(self):
+        self.require_sloop("loading samples")
         if family(self.version) == "clipper":
             raise SloopError("family", "Clipper has wavetable slots, not samples: use Clipper's editor")
+        if family(self.version) == "sloopdx":
+            raise SloopError("family", "sloopDX has no sample slots")
 
     def require_backup(self):
+        known(self.version)
+        if self.dialect == "x0x":
+            raise SloopError("family", "X0X: its whole project only (Back up now, Restore)")
         if not self.can_backup():
             raise SloopError("old", f"{self.version}: backups need SLOOP 2.3 or later")
 
     def playing(self):
-        """True while the song plays (SLOOP 2.7+, LIVE op 0), None if the firmware can't say"""
-        if self.info["proto"] < 12:
+        """True while the song plays (SLOOP 2.7+, LIVE op 0), None if the firmware can't say. SLOOP's and sloopDX's
+        only: 77 is HY_GET on Clipper (its HYBRID patches), FM6B_LIST on Felucca, a parameter on Jangada; their
+        writes answer "stop first" (rc 3) themselves"""
+        if self.info["proto"] < 12 or family(self.version) not in ("sloop", "sloopdx"):
             return None
         r = self.link.request(LIVE, [0], timeout=1.0)
         return bool(r[1] & 1) if len(r) > 1 else None
 
     # ---- backup
     def list_objects(self):
-        r = Reader(self.link.request(BK_LIST, timeout=5.0, retries=0))
+        r = Reader(self.link.request(self.cmd("list"), timeout=5.0, retries=0))
+        if self.dialect == "felucca" and r.b() != 1:   # (Felucca's list starts with its version: 1)
+            raise SloopError("bad", "unknown backup list")
         rc, n = r.b(), r.b()
         if rc:
-            raise SloopError("rc", "the FM-1 has no flash" if rc == 4 else f"backup list failed (rc {rc})")
+            raise SloopError("stop" if rc == 3 else "rc", "stop the song on the FM-1 first" if rc == 3 else
+                             "the FM-1 has no flash" if rc == 4 else f"backup list failed (rc {rc})")
         return [{"id": r.b(), "len": r.u35(), "crc": r.u35()} for _ in range(n)]
 
     def backup(self, progress=lambda done, total: None):
@@ -335,16 +386,29 @@ class Sloop:
             data = self.read_object(it, counted)
             objects.append({"id": it["id"], "len": it["len"], "crc": it["crc"],
                             "data": base64.b64encode(bytes(data)).decode()})
-        return {"format": FORMAT, "version": VERSION, "firmware": self.version,
-                "date": datetime.now().astimezone().isoformat(timespec="seconds"), "objects": objects}
+        when = datetime.now().astimezone().isoformat(timespec="seconds")
+        if family(self.version) == "sloopdx":   # and every one of its 8 DX7 banks, not only the one in use
+            in_use, banks = self.read_dx_banks()
+            return {"format": FORMAT, "version": VERSION, "firmware": self.version, "date": when, "objects": objects,
+                    "dx7_in_use": in_use, "dx7_banks": [{"bank": k, "len": len(d), "crc": crc32(d),
+                                                         "data": base64.b64encode(d).decode()}
+                                                        for k, d in banks.items()]}
+        if self.dialect == "felucca" or family(self.version) == "jangada":   # their own files, in the order listed:
+            return {"format": JG_FORMAT if family(self.version) == "jangada" else FL_FORMAT, "version": 1, "firmware": self.version, "created": when, "date": when,
+                    "objects": [{"id": o["id"], "size": o["len"], "crc": o["crc"], "data": o["data"]}
+                                for o in objects]}
+        return {"format": FORMAT, "version": VERSION, "firmware": self.version, "date": when, "objects": objects}
 
     def read_object(self, it, progress=lambda n: None):
         """one object of list_objects() ({id, len, crc}) -> its bytes, checked"""
         data = bytearray()
         for off in range(0, it["len"], CHUNK):
             n = min(CHUNK, it["len"] - off)
-            r = Reader(self.link.request(BK_GET, [it["id"], *u35(off), n & 0x7F, n >> 7], timeout=1.5, retries=2))
+            r = Reader(self.link.request(self.cmd("get"), [it["id"], *u35(off), n & 0x7F, n >> 7], timeout=1.5,
+                                         retries=2))
             _, rc, _, _ = r.b(), r.b(), r.u35(), r.b() | (r.b() << 7)
+            if rc == 3:
+                raise SloopError("stop", "stop the song on the FM-1 first")
             if rc:
                 raise SloopError("rc", "the FM-1 changed during the backup: try again" if rc == 5
                                  else f"reading {NAMES.get(it['id'], it['id'])} failed (rc {rc})")
@@ -356,6 +420,46 @@ class Sloop:
         if crc32(data) != it["crc"]:
             raise SloopError("rc", "the FM-1 changed during the backup: try again")
         return bytes(data)
+
+    # ---- sloopDX's 8 DX7 banks: its backup has the one in use (object 8); the others by selecting each in turn
+    def dx_select(self, bank):
+        """sloopDX's bank in use -> bank (0-7); stop the song first (it keeps its bank while it plays)"""
+        r = self.link.request(DX_SELECT, [bank], timeout=2.0, retries=1)
+        if r[0] != bank:
+            raise SloopError("stop", "stop the song on the FM-1 first (sloopDX keeps its bank while it plays)")
+
+    def read_dx_banks(self):
+        """-> (the bank in use, {bank: its object 8 bytes}), the bank in use put back after"""
+        r = self.link.request(DX_INFO, timeout=2.0, retries=1)
+        in_use, n = r[-2], r[-1]
+        banks = {}
+        try:
+            for k in range(n):
+                self.dx_select(k)
+                it = next((it for it in self.list_objects() if it["id"] == DX_BANK), None)
+                banks[k] = self.read_object(it) if it and it["len"] else b""
+        finally:
+            self.dx_select(in_use)
+        return in_use, banks
+
+    def write_dx_bank(self, voices):
+        """32 packed voices (4096 bytes) into sloopDX's bank in use, as its editor loads a .syx: BANK_BEGIN (the bank
+        is empty from now on), BANK_WRITE 512 at a time, BANK_END with the DX7 checksum"""
+        if len(voices) != 4096 or any(b > 127 for b in voices):
+            raise SloopError("bad", "not a DX7 bank")
+        known(self.version)
+        if family(self.version) != "sloopdx":
+            raise SloopError("family", f"{self.version}: not sloopDX")
+        if self.link.request(DX_BEGIN, timeout=2.0, retries=0)[0]:
+            raise SloopError("rc", "sloopDX didn't start the bank")
+        for off in range(0, 4096, 512):
+            if self.link.request(DX_WRITE, [off & 0x7F, off >> 7, *voices[off:off + 512]], timeout=2.0, retries=0)[2]:
+                raise SloopError("rc", "sloopDX refused a piece of the bank")
+        rc = self.link.request(DX_END, [(-sum(voices)) & 0x7F], timeout=5.0, retries=0)[0]
+        if rc == 3:
+            raise SloopError("stop", "stop the song on the FM-1 first: the bank plays but isn't stored")
+        if rc:
+            raise SloopError("rc", "sloopDX refused the bank" + (" (checksum)" if rc == 1 else f" (rc {rc})"))
 
     def read_objects(self, ids):
         """{id: bytes} of the objects asked for that the FM-1 has (SLOOP lists the theme only when there is one)"""
@@ -387,22 +491,26 @@ class Sloop:
         fails, the object is aborted and written once more from the start."""
         what = NAMES.get(obj_id, obj_id)
         for attempt in (1, 2):
-            r = self.link.request(BK_PUT, [0, obj_id, *u35(len(data)), *u35(crc32(data))], timeout=1.5, retries=1)
-            if r[2] in (1, 5) and obj_id in OPTIONAL:
+            put = self.cmd("put")
+            r = self.link.request(put, [0, obj_id, *u35(len(data)), *u35(crc32(data))], timeout=1.5, retries=1)
+            if r[2] in (1, 5) and (obj_id in OPTIONAL if self.dialect == "sloop" else obj_id >= 8):
+                # (Felucca's 8 and 9 and JIANT's songs, 10 and 40-71, are newer than some of their firmwares)
                 return False
+            if r[2] == 3:
+                raise SloopError("stop", "stop the song on the FM-1 first")
             if r[2]:
                 raise SloopError("rc", f"writing {what} failed (begin rc {r[2]})")
             try:
                 for off in range(0, len(data), CHUNK):
-                    self.send_chunk(BK_PUT, [1, obj_id, *u35(off), *pack7(data[off:off + CHUNK])], 2, what, 1.5)
+                    self.send_chunk(put, [1, obj_id, *u35(off), *pack7(data[off:off + CHUNK])], 2, what, 1.5)
                     progress(min(CHUNK, len(data) - off))
                 break
             except SloopError:
-                self.link.request(BK_PUT, [3, obj_id], timeout=1.0, retries=1)     # abort
+                self.link.request(put, [3, obj_id], timeout=1.0, retries=1)        # abort
                 if attempt == 2:
                     raise
         try:
-            r = self.link.request(BK_PUT, [2, obj_id], timeout=5.0, retries=0)
+            r = self.link.request(put, [2, obj_id], timeout=5.0, retries=0)
         except SloopError:
             # the commit's reply was lost: it can't be sent again, so look at what the FM-1 now holds
             if any(it["id"] == obj_id and it["len"] == len(data) and it["crc"] == crc32(data)
@@ -456,14 +564,20 @@ class Sloop:
         return [{"zones": r.b(), "name": r.s(), "kib": r.b()} for _ in range(n)]
 
     def restore(self, file, progress=lambda done, total: None):
-        """a whole sloop-backup back onto the FM-1, as SLOOP's editor does"""
-        self.require_backup()
+        """a whole sloop-backup back onto the FM-1, as SLOOP's editor does (a felucca-backup as Felucca's)"""
+        self.require_restore()
         objects = objects_of(file)
         same_family(self.version, file.get("firmware"))
+        if self.dialect == "felucca" or family(self.version) == "jangada":
+            return self.restore_felucca(objects, progress)
         newest = max([project_format(objects[i]) for i in (0, 2, 3, 4, 5) if i in objects] or [0])
         if newest > device_format(self.info):
             raise SloopError("newer", f"the backup ({file.get('firmware', '?')}) is newer than {self.version}")
-        if 10 not in objects and firmware_at_least(file.get("firmware"), (2, 5, 1)):
+        banks = dx_banks_of(file) if family(self.version) == "sloopdx" else {}
+        if banks:                               # (each bank on its own, below: object 8 is only the bank in use)
+            objects.pop(DX_BANK, None)
+        if 10 not in objects and family(file.get("firmware")) == "sloop" and \
+                firmware_at_least(file.get("firmware"), (2, 5, 1)):
             midi = bytearray(40)                 # a 2.6 backup without object 10 had the MIDI defaults
             midi[32:37] = bytes([1, 2, 3, 10, 2])
             objects[10] = bytes(midi)
@@ -484,9 +598,42 @@ class Sloop:
                     self.erase_sample_slot(obj_id - 32)
                 else:
                     self.write_sample_slot(obj_id - 32, d[:SMP_HDR], d[SMP_DATA:], moved)
+        if banks:
+            for k, d in banks.items():
+                self.dx_select(k)
+                self.put_object(DX_BANK, d, moved)
+            self.dx_select(file.get("dx7_in_use", 0))
+
+
+    def restore_felucca(self, objects, progress):
+        """as Felucca's web editor (fm1backup.js restoreBackup): every object but the working project and the
+        settings in the file's order (projects, presets, FM6, then the samples), the settings, the working project
+        last. Its PUT stops the song itself (rc 3 if it can't). One a firmware doesn't know (8 and up: Felucca's
+        FM6, JIANT's songs): skipped, as their editors do. JIANT's (juanjiant-bit/JIANT fm1backup.js): the same,
+        with its song index (10) and every song's sections (40-71). Melodee's (keremimo/melodee fm1backup.js): the
+        same order over its own objects (up to 57; its sample slots 32-63 are retired: not written)"""
+        order = [i for i in objects if i not in (0, 1)] + [i for i in (1, 0) if i in objects]
+        total, done = sum(len(d) for d in objects.values()) or 1, [0]
+
+        def moved(n):
+            done[0] += n
+            progress(done[0], total)
+
+        for obj_id in order:
+            d = objects[obj_id]
+            if 32 <= obj_id <= 34:            # sample slots: written as samples, not through PUT (JIANT has none)
+                if family(self.version) not in ("felucca", "jangada"):
+                    continue
+                if not d:
+                    self.erase_sample_slot(obj_id - 32)
+                else:
+                    self.write_sample_slot(obj_id - 32, d[:SMP_HDR], d[SMP_DATA:], moved)
+            else:
+                self.put_object(obj_id, d, moved)
 
     def read_song(self, progress=lambda done, total: None):
         """the song on the FM-1: ({"A".."D": bytes, b"" for an empty section}, the song order's 36 bytes)"""
+        self.require_sloop("songs")
         self.require_backup()
         if not firmware_at_least(self.version, (2, 5)):
             raise SloopError("old", f"{self.version} has no song mode (SLOOP 2.5+)")
@@ -505,6 +652,7 @@ class Sloop:
     def put_song(self, sections, order, progress=lambda done, total: None, firmware=None):
         """a song back: its four sections (an empty one empties that slot), then the song order into the FM-1's
         settings (only those 36 bytes: the rest of its settings stay as they are). Stopped only, as SLOOP wants"""
+        self.require_sloop("songs")
         self.require_backup()
         same_family(self.version, firmware)
         if not firmware_at_least(self.version, (2, 5)):
@@ -526,9 +674,10 @@ class Sloop:
 
     def put_project(self, data, target, progress=lambda done, total: None, firmware=None):
         """one project (backup object bytes, from `firmware`) into "working" or "A".."D" """
-        self.require_backup()
+        self.require_restore()
         same_family(self.version, firmware)
-        if project_format(data) > device_format(self.info):
+        if family(self.version) in SLOOP_OWN and project_format(data) > device_format(self.info):
+            # (Felucca's, JIANT's, Jangada's: they check their own)
             raise SloopError("newer", f"the project is newer than {self.version} reads")
         self.check_stopped()
         done = [0]
@@ -557,22 +706,41 @@ class Sloop:
 # ---------------------------------------------------------------- files
 
 def objects_of(file, need_complete=True):
-    """a sloop-backup -> {id: bytes}, every object checked against its length and CRC"""
-    if not isinstance(file, dict) or file.get("format") != FORMAT or not file.get("version", 0) >= 1 \
-            or not isinstance(file.get("objects"), list):
-        raise SloopError("bad", "not a SLOOP backup")
+    """a sloop-backup or a felucca-backup -> {id: bytes}, every object checked against its length and CRC"""
+    if not isinstance(file, dict) or file.get("format") not in (FORMAT, FL_FORMAT, JG_FORMAT) \
+            or not file.get("version", 0) >= 1 or not isinstance(file.get("objects"), list):
+        raise SloopError("bad", "not a SLOOP, Felucca or Jangada backup")
+    ids = (RESTORE + SAMPLES if file["format"] == FORMAT else list(range(12)) + [32, 33, 34] if file["format"] == JG_FORMAT
+           else list(range(128)))    # (Felucca 0-9 and 32-34, JIANT's songs 10 and 40-71, Melodee's 0-28 and its
+                                       # projects 64-91: whatever each lists; the device checks what it takes)
+    size = "len" if file["format"] == FORMAT else "size"
     objects = {}
     for o in file["objects"]:
         try:
             data = base64.b64decode(o.get("data", ""), validate=False)
         except (ValueError, TypeError):
             raise SloopError("bad", f"object {o.get('id')}: damaged")
-        if o.get("id") not in RESTORE + SAMPLES or len(data) != o.get("len") or crc32(data) != (o.get("crc", 0) & 0xFFFFFFFF):
+        if o.get("id") not in ids or len(data) != o.get(size) or crc32(data) != (o.get("crc", 0) & 0xFFFFFFFF):
             raise SloopError("bad", f"object {o.get('id')}: damaged")
         objects[o["id"]] = data
     if need_complete and (0 not in objects or 1 not in objects):
         raise SloopError("bad", "incomplete backup")
     return objects
+
+
+def dx_banks_of(file):
+    """a sloopDX backup's 8 DX7 banks -> {bank: bytes}, each checked ({} for a backup without them)"""
+    banks = {}
+    for b in file.get("dx7_banks") or []:
+        try:
+            data = base64.b64decode(b.get("data", ""), validate=False)
+        except (ValueError, TypeError):
+            raise SloopError("bad", f"DX7 bank {b.get('bank')}: damaged")
+        if not isinstance(b.get("bank"), int) or not 0 <= b["bank"] < 8 or len(data) != b.get("len") \
+                or crc32(data) != b.get("crc"):
+            raise SloopError("bad", f"DX7 bank {b.get('bank')}: damaged")
+        banks[b["bank"]] = data
+    return banks
 
 
 def project_format(data):
@@ -585,19 +753,35 @@ def device_format(info):
     return 6 if info["pcount"] >= 71 else 5 if info["pcount"] >= 61 else 4
 
 
+FAMILY_NAMES = {"sloop": "SLOOP", "clipper": "Clipper", "sloopdx": "sloopDX", "felucca": "Felucca", "jiant": "JIANT",
+                "x0x": "X0X", "jangada": "Jangada", "melodee": "Melodee"}
+
+
 def family(version):
-    """"sloop" or "clipper" from a firmware name ("FELUCCA SLOOP 2.8"), None if neither. isod89's two
-    firmwares share the protocol and file format but not the data inside: projects, presets and sample
-    slots mean different things in each."""
+    """"sloop", "clipper" or "sloopdx" from a firmware name ("FELUCCA SLOOP 2.8", "FELUCCA sloopDX 4.0"), None if
+    none. They share SLOOP's backup commands and file format but not the data inside: projects, presets, sample
+    slots and banks mean different things in each (sloopDX's object 8 is its DX7 bank, SLOOP's an FM6 one)."""
     text = str(version or "").upper()
-    return "clipper" if "CLIPPER" in text else "sloop" if "SLOOP" in text else None
+    return ("clipper" if "CLIPPER" in text else "sloopdx" if "SLOOPDX" in text.replace(" ", "").replace("-", "")
+            else "sloop" if "SLOOP" in text else "felucca" if re.match(r"FELUCCA V?\d", text)
+            else "jiant" if re.match(r"JIANT V?\d", text) else "x0x" if text.startswith("X0X ")
+            else "jangada" if re.match(r"JANGADA V?\d", text) else "melodee" if re.match(r"MELODEE V?\d", text)
+            else None)
+
+
+def known(device_version):
+    """nothing is written to a firmware outside the families: Felucca's other forks answer the same INFO but take
+    the same command numbers as other commands (research 2026-11-02, not tried on them)"""
+    if family(device_version) is None:
+        raise SloopError("family", f"{device_version or 'this firmware'}: not SLOOP, Clipper, sloopDX, Felucca, "
+                                   f"JIANT, X0X, Jangada or Melodee")
 
 
 def same_family(device_version, file_version):
+    known(device_version)
     a, b = family(device_version), family(file_version)
-    if a and b and a != b:
-        raise SloopError("family", f"that's from {b.capitalize() if b == 'clipper' else 'SLOOP'}, "
-                                   f"the FM-1 runs {a.capitalize() if a == 'clipper' else 'SLOOP'}")
+    if b and a != b:
+        raise SloopError("family", f"that's from {FAMILY_NAMES[b]}, the FM-1 runs {FAMILY_NAMES[a]}")
 
 
 def firmware_at_least(version, want):
@@ -624,7 +808,7 @@ def project_from(file, source=None):
             raise SloopError("bad", f"no project {source} in that backup")
     if not data:
         raise SloopError("bad", f"project {source} is empty")
-    if not project_format(data):
+    if not project_format(data) and data[:4] not in (b"JNG1", b"JNG2", b"1GNJ", b"2GNJ"):   # (Jangada's: JNG2)
         raise SloopError("bad", "not a SLOOP project")
     return data
 
@@ -712,5 +896,6 @@ def describe(file):
     objects = objects_of(file, need_complete=False)
     projects = [n for n, i in PROJECT_IDS.items() if objects.get(i) and n != "working"]
     samples = [f"USR{i - 31}" for i in SAMPLES if objects.get(i)]
-    return {"firmware": file.get("firmware"), "made": file.get("date"), "projects": projects, "samples": samples,
+    return {"firmware": file.get("firmware"), "made": file.get("date") or file.get("created"), "projects": projects,
+            "samples": samples,
             "data_bytes": sum(len(d) for d in objects.values())}

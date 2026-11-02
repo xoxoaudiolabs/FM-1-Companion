@@ -78,6 +78,7 @@ def check_command(c):
               "audio_rate": value in (44100, 48000),
               "studio_link": isinstance(value, bool), "link_audio": isinstance(value, bool),   # the Pocket's Studio link
               "auto_backup": not isinstance(value, bool) and value in ("off", "boot", 2, 5, 10, 30),
+              "keep_backups": number and int(value) == value and 1 <= value <= 100,
               "output": value in ("both", "speaker", "phones"),
               "theme": isinstance(value, str) and len(value) <= 24,          # the box checks it against its list
               "volume": number and int(value) == value and 0 <= value <= 100}.get(key)
@@ -249,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.fail(str(e))
                 return self.send(200, {"ok": True, "message": f"{len(copied)} new file(s) from the SD card"})
             jobs = {"backup": ["backup"], "fetch-sloop": ["fetch", "sloop"], "fetch-clipper": ["fetch", "clipper"],
-                    "song-backup": ["song-backup"]}
+                    "song-backup": ["song-backup"], "dx7-read": ["dx7-read"]}
             if command not in jobs:
                 return self.fail("unknown command")
             fm1 = request.get("fm1")
@@ -558,7 +559,8 @@ details summary{cursor:pointer}
   <div class="line" id="s-themeline" hidden><span class="k">Screen theme</span><select id="s-theme" onchange="set('theme', this.value)"></select></div>
   <div class="line" id="s-autoline"><span class="k">Auto backup</span><select id="s-auto" onchange="set('auto_backup', /^\d+$/.test(this.value) ? +this.value : this.value)">
     <option value="off">off</option><option value="boot">at start</option><option value="2">every 2 min</option><option value="5">every 5 min</option><option value="10">every 10 min</option><option value="30">every 30 min</option></select></div>
-  <p class="dim small" style="margin:6px 0 0">Auto backups go to Library → Backups.</p>
+  <div class="line" id="s-keepline"><span class="k">Keep backups</span><input type="number" id="s-keep" min="1" max="100" step="1" style="width:5em" onchange="const n = Math.round(+this.value); if (n >= 1 && n <= 100) set('keep_backups', n)"></div>
+  <p class="dim small" style="margin:6px 0 0">Auto backups go to Library → Backups. The box keeps the newest of its own (auto, and the one before each restore) and deletes older ones; yours from Back up now stay until you delete them.</p>
 </section>
 </div>
 </div>
@@ -618,9 +620,9 @@ details summary{cursor:pointer}
 <div id="songs"></div>
 <div class="row" style="margin-top:8px"><button class="primary" onclick="run('song-backup')">Back up song</button><label class="file"><input type="file" accept=".json" onchange="upload('songs',this)"><button onclick="this.previousElementSibling.click()">Upload a song…</button></label></div></section>
 
-<section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank (the FM-1 asks where it goes) or one voice. Not for SLOOP or Clipper, which have their own patches. <i>Not tried on an FM-1 yet.</i></p>
+<section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank or one voice. On M-VAVE's stock firmware a whole bank replaces 32 presets, and its factory reset doesn't bring the factory ones back. Not for SLOOP, Clipper or Felucca, which have their own patches. On stock firmware, Save the FM-1's sound keeps the sound it plays now as a voice here. <i>Not tried on an FM-1 yet.</i></p>
 <div id="patches"></div>
-<div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
+<div class="row" style="margin-top:8px"><button onclick="run('dx7-read')">Save the FM-1's sound</button><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
 
 <section id="lib-samples"><h2>Samples</h2><p class="meta" style="margin:0 0 6px" id="smp-pads" hidden>WAVs for the pads (on the box: PADS → EDIT → a pad → SAMPLE). A note in the name, e.g. <i>bass_C2.wav</i>, is its root note.</p><p class="meta" style="margin:0 0 6px" id="smp-fm1">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
 <div id="samples"></div>
@@ -683,6 +685,7 @@ const q = (s) => esc(JSON.stringify(s));            // a JS string literal insid
 const when = (t) => new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
 const fw = (s) => esc((s || "?").split(" ").pop());
 const mins = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+let olderProjects = false;                // the Projects list: the newest backup's only, or every backup's
 let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[], songs:[], patches:[]};
 let st = null;                                     // the box's status
 let tab = "status";
@@ -777,6 +780,8 @@ function renderStatus() {
   if (th && document.activeElement !== $("s-theme")) $("s-theme").innerHTML = opt(th.choices, th.value, (x) => x === "follow" ? "FM-1 A" : x);
   $("s-autoline").hidden = s.auto_backup == null; $("s-box").hidden = !th && s.auto_backup == null;   // a box from before these
   if (s.auto_backup != null && document.activeElement !== $("s-auto")) $("s-auto").value = String(s.auto_backup);
+  $("s-keepline").hidden = s.keep_backups == null;      // a box from before it
+  if (s.keep_backups != null && document.activeElement !== $("s-keep")) $("s-keep").value = s.keep_backups;
 }
 const speaker = () => cmd({cmd:"speaker", value: st && (st.speaker || st.connecting) ? "disconnect" : "connect"}, false);
 function renderLink(l) {                           // the Pocket's Studio link (null on the Studio)
@@ -959,19 +964,23 @@ const jump = (id) => $(id).scrollIntoView({behavior:"smooth", block:"start"});  
 function renderLibrary() {
   for (const k of ["backups", "projects", "samples", "firmware", "recordings", "songs", "patches"]) lib[k] = lib[k] || [];
   for (const k of ["backups", "songs", "patches", "samples", "firmware"]) $("n-" + k).textContent = (lib[k] || []).length || "";
-  $("n-projects").textContent = lib.projects.length + lib.backups.reduce((n, b) => n + (b.projects || []).length, 0) || "";
+  const newest = lib.backups.filter((b, i) => (b.projects || []).length && lib.backups.findIndex((o) => (o.projects || []).length && fw(o.firmware) === fw(b.firmware)) === i);   // each firmware's newest backup (newest first)
+  const shown = olderProjects ? lib.backups : newest;
+  $("n-projects").textContent = lib.projects.length + shown.reduce((n, b) => n + (b.projects || []).length, 0) || "";
   $("backups").innerHTML = lib.backups.length ? lib.backups.map((b) => `<div class="item"><div><div class="name">${when(b.date)}</div>
     <div class="meta">${fw(b.firmware)} · projects ${esc((b.projects || []).join(" ") || "none")} · samples ${esc((b.samples || []).join(" ") || "none")}${b.name.includes("_auto") ? " · auto" : ""}</div></div>
     <div class="row"><a href="/files/backups/${encodeURIComponent(b.name)}" download><button>Download</button></a>
     <button onclick="ask({cmd:'restore', file:${q(b.name)}})">Restore…</button><button class="danger" onclick="del('backups',${q(b.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No backups yet.</p>`;
-  const fromBackups = lib.backups.flatMap((b) => (b.projects || []).map((p) => ({folder:"backups", file:b.name, source:p, label:`Project ${p}`, meta:`${when(b.date)} backup · ${fw(b.firmware)}`})));
+  const fromBackups = shown.flatMap((b) => (b.projects || []).map((p) => ({folder:"backups", file:b.name, source:p, label:`Project ${p}`, meta:`${when(b.date)} backup · ${fw(b.firmware)}`})));
   const files = lib.projects.map((p) => ({folder:"projects", file:p.name, source:"-", label:p.title || p.name, meta:`project file · ${fw(p.firmware)}`}));
   const all = [...files, ...fromBackups];
   $("projects").innerHTML = all.length ? all.map((p, i) => `<div class="item"><div><div class="name">${esc(p.label)}</div><div class="meta">${p.meta}</div></div>
     <div class="row">${targetSelect("t" + i)}<button onclick="ask({cmd:'load-project', folder:${q(p.folder)}, file:${q(p.file)}, source:${q(p.source)}, target:$('t${i}').value})">Load…</button>
     ${p.folder === "backups" ? `<a href="/api/project?backup=${encodeURIComponent(p.file)}&source=${p.source}" download><button>Download</button></a>` : `<a href="/files/projects/${encodeURIComponent(p.file)}" download><button>Download</button></a><button class="danger" onclick="del('projects',${q(p.file)})">Delete</button>`}</div></div>`).join("")
     : `<p class="empty">No projects yet: make a backup, or upload a project file.</p>`;
+  const older = lib.backups.filter((b) => (b.projects || []).length).length - newest.length;   // (every boot backup added five: a Pocket user's list, 2026-11-02)
+  if (older > 0 || olderProjects) $("projects").innerHTML += `<div class="row" style="margin-top:8px"><button onclick="olderProjects = !olderProjects; renderLibrary()">${olderProjects ? "Newest backup only" : `Show older backups' projects (${older})`}</button></div>`;
   const patches = lib.patches || [];
   $("patches").innerHTML = patches.length ? patches.map((p, i) => `<div class="item"><div><div class="name">${esc(p.name)}</div>
     <div class="meta">${p.damaged ? "damaged" : p.kind === "bank" ? "bank · " + esc((p.voices || []).filter(Boolean).slice(0, 6).join(", ")) + "…" : "voice · " + esc((p.voices || [""])[0])}</div></div>

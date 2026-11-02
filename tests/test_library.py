@@ -223,11 +223,11 @@ def test_library_jobs():
     # a sample
     library.job_load_sample(4, "drum", [write_wav(TMP / "hit.wav", 0.1)])
     assert fake.objects[35][8:12] == b"DRUM"
-    # pruning keeps the newest 20 auto backups
+    # pruning keeps the newest 20 of the box's own backups (auto, and the safety ones before a restore or a load)
     for k in range(25):
         (TMP / "library" / "backups" / f"2020-01-01_0000{k:02d}_x_auto.json").write_text("{}")
     library.prune_auto()
-    assert len(list((TMP / "library" / "backups").glob("*_auto.json"))) == 20
+    assert len([p for p in (TMP / "library" / "backups").glob("*.json") if library.BOX_MADE.search(p.name)]) == 20
     listing = library.listing()
     assert listing["projects"][0]["title"] == "Night Drive"
 
@@ -403,7 +403,7 @@ def test_timed_backups_skip_unchanged():
 
 def test_sloop_and_clipper_dont_mix():
     assert sloop.family("FELUCCA SLOOP 2.8") == "sloop" and sloop.family("clipper-1.1-experimental.fwsc") == "clipper"
-    assert sloop.family("FELUCCA 1.6") is None
+    assert sloop.family("FELUCCA 1.6") == "felucca" and sloop.family("MELODEE v1.6.0") == "melodee" and sloop.family("HORTATOR 1.0") is None
     sloop_backup = device()[1].backup()
     clipper, dev = device(version="FELUCCA CLIPPER 1.1", pcount=126, proto=14)
     before = dict(clipper.objects)
@@ -455,6 +455,60 @@ def test_sd_import():
     (sd / "notes.txt").write_text("not a sample")
     assert library.import_sd() == ["samples/pad_C3.wav"]
     assert library.import_sd() == []                       # already there
+
+
+def test_keep_backups():
+    """Settings' keep_backups: the box's own backups (auto, before a restore, the Studio's) beyond it deleted, the
+    newest kept; Back up now's never; a setting outside 1-100: 20"""
+    backups = TMP / "library" / "backups"
+    for path in backups.glob("*.json"):
+        path.unlink()
+    names = ([f"2020-01-02_0000{k:02d}_x_auto.json" for k in range(6)] + ["2020-01-02_000100_x_before-restore.json",
+             "2020-01-02_000200_x_studio-auto.json"] + [f"2020-01-01_0000{k:02d}_x_manual.json" for k in range(4)]
+             + ["2020-01-01_000000_x_studio.json", "uploaded.json"])
+    for name in names:
+        (backups / name).write_text("{}")
+    settings = TMP / "settings.json"
+    try:
+        settings.write_text(json.dumps({"keep_backups": 3}))
+        assert library.keep_count() == 3
+        assert library.prune_auto() == 5
+        left = sorted(p.name for p in backups.glob("*.json"))
+        assert left == sorted(names[5:])                   # the newest three box-made, all the user's
+        assert library.prune_auto(1) == 2 and (backups / "2020-01-02_000200_x_studio-auto.json").exists()
+        for bad in (0, 101, "5", True, None):
+            settings.write_text(json.dumps({"keep_backups": bad}))
+            assert library.keep_count() == 20
+    finally:
+        settings.unlink(missing_ok=True)
+
+
+def test_firmware_families():
+    """SLOOP, Clipper, sloopDX and Felucca told apart by INFO's name; anything else Felucca-based (same header, other
+    command numbers): nothing written, no backup asked for"""
+    assert [sloop.family(v) for v in ("FELUCCA SLOOP 2.8.4", "FELUCCA CLIPPER 1.3", "FELUCCA sloopDX 4.0",
+                                      "FELUCCA v1.3.3", "JIANT v0.9.18", "HORTATOR 1.0", None)] == [
+        "sloop", "clipper", "sloopdx", "felucca", "jiant", None, None]
+    sloop.same_family("FELUCCA SLOOP 2.8", "FELUCCA SLOOP 2.7.1")
+    sloop.same_family("FELUCCA SLOOP 2.8", None)                       # (a file from before firmware was noted)
+    for device, file in (("FELUCCA sloopDX 4.0", "FELUCCA SLOOP 2.8"), ("FELUCCA SLOOP 2.8", "FELUCCA sloopDX 4.0"),
+                         ("HORTATOR 1.0", "FELUCCA SLOOP 2.8"), ("HORTATOR 1.0", None)):
+        try:
+            sloop.same_family(device, file)
+            raise AssertionError((device, file))
+        except sloop.SloopError as e:
+            assert e.code == "family"
+    dev = sloop.Sloop.__new__(sloop.Sloop)
+    dev.info = {"version": "HORTATOR 1.0", "proto": 9, "backup_caps": 3}
+    assert not dev.can_backup()
+    for check in (dev.require_backup, dev.require_sample_slots):
+        try:
+            check()
+            raise AssertionError(check)
+        except sloop.SloopError as e:
+            assert e.code == "family"
+    dev.info["version"] = "FELUCCA sloopDX 4.0"
+    assert dev.can_backup()
 
 
 if __name__ == "__main__":

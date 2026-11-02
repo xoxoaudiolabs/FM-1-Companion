@@ -11,7 +11,7 @@ import time
 import blemidi
 import library
 
-SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate", "auto_backup", "output")
+SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate", "auto_backup", "keep_backups", "output")
 OUTPUTS = ("both", "speaker", "phones")       # the "output" setting: where the sound goes when there's a jack
 
 
@@ -122,6 +122,9 @@ class WebLink:
                 self.last_auto = time.monotonic()
                 self.save_settings()
                 return f"Web: Auto backup {self.auto_label(value)}"
+            if key == "keep_backups" and isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100:
+                gone = self.set_keep(value)
+                return f"Web: Keep {value} backups" + (f", {gone} deleted" if gone else "")
             if key == "output" and value in OUTPUTS:
                 self.state["output"] = value
                 self.save_settings()

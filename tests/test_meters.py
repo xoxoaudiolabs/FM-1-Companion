@@ -514,7 +514,7 @@ def test_colour_themes():
         colour = True
     app = bridge.App(Lcd(), dict(bridge.DEFAULTS, desk_theme="AMBER"))
     app.save_settings = lambda: None
-    app.screen, app.settings_menu = "settings", None
+    app.screen, app.settings_menu = "settings", "box"            # (the Pocket's Box page)
     keys = [r[0] for r in app.settings_rows()]
     assert "theme" in keys and dict((k, v) for k, _, v in app.settings_rows())["theme"] == "XOXO"
     assert app.theme_status() == {"value": "XOXO", "choices": ["follow"] + st.POCKET}   # the web app's list

@@ -28,6 +28,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import battery
+import btadapter
 import device
 import iocard
 import library
@@ -92,6 +93,9 @@ SCAN_SECONDS = 10
 TAP_GAP = 2.0                           # seconds: a longer pause between taps starts a new tap tempo
 BPM_RANGE = (30, 300)
 RECONNECT_EVERY = 20
+ADAPTER_SETTLE = 15         # s: a new USB Bluetooth adapter comes up rfkill-blocked until systemd-rfkill restores
+                            # its port's saved state, a few seconds in (seen on Pocket 2): no verdict before then
+ADAPTER_RETRY = 5           # s: BlueZ refused to power it on after ADAPTER_SETTLE: try again after this
 OWN_CONNECT = 30            # s: a speaker that turns up this soon after the box asked BlueZ to connect it is the box's
 REFRESH_AFTER = 3           # s: a speaker that connected by itself, left to settle before it's reconnected
 REFRESH_GAP = 2             # s: between its disconnect and its connect
@@ -164,7 +168,8 @@ def hardware_fingerprint():
 # ---------------------------------------------------------------- Bluetooth (bluetoothctl)
 
 def bt(*args, timeout=15):
-    return run(["bluetoothctl", *args], timeout)
+    """bluetoothctl args...; a USB adapter in use: the same through D-Bus on it (btadapter)"""
+    return btadapter.bluetoothctl(args, timeout) or run(["bluetoothctl", *args], timeout)
 
 
 def parse_info(mac, text):
@@ -895,6 +900,11 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         self.web_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
+        self.adapter = None                   # (name, on USB): the Bluetooth adapter in use (btadapter)
+        self.adapter_seen = None              # (that, how many adapters, the USB ones blocked): what it was chosen from
+        self.adapter_since = {}               # adapter name -> when it was first seen (ADAPTER_SETTLE)
+        self.adapter_retry = 0.0              # no adapter check before this (ADAPTER_RETRY)
+        self.adapter_warned = set()           # the USB adapters "blocked" was said for, while they're plugged in
         self.loop = Loopback(state["audio_rate"])
         self.mixer = Mixer(state["audio_rate"])        # a second FM-1, or a USB keyboard's sound: mixed
         self.jack, self.jack_set = None, None  # the Studio's 3.5 mm jack (jack_node); (node id, level) last set
@@ -970,6 +980,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         while True:
             now = time.monotonic()
             fingerprint = hardware_fingerprint()
+            self.check_adapter()                            # (sysfs only: an adapter or its rfkill block changed)
             if fingerprint != seen:
                 seen, fast_until = fingerprint, now + 12
                 next_scan = min(next_scan, now + 1.5)       # PipeWire needs a moment to add its nodes
@@ -1421,6 +1432,61 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.connecting = False
             self.bt_lock.release()
             self.post("status", False)
+
+    def check_adapter(self):
+        """A USB Bluetooth adapter takes everything Bluetooth while it's plugged in, the Pi's own when it's
+        unplugged (btadapter); one rfkill has blocked is left out until it's unblocked. Called every second: sysfs
+        only, unless the adapter to use changed."""
+        now = time.monotonic()
+        found = btadapter.adapters()
+        self.adapter_since = {name: self.adapter_since.get(name, now) for name, _ in found}
+        self.adapter_warned &= set(self.adapter_since)
+        if now < self.adapter_retry:
+            return
+        blocked = tuple(name for name, usb in found if usb and btadapter.blocked(name))
+        if any(now - self.adapter_since[name] < ADAPTER_SETTLE for name in blocked):
+            return
+        use = btadapter.choose([a for a in found if a[0] not in blocked])
+        seen = (use, len(found), blocked)
+        if use is None or seen == self.adapter_seen:
+            return
+        before, self.adapter, self.adapter_seen = self.adapter, use, seen
+        threading.Thread(target=self.switch_adapter, args=(found, use, before, blocked), daemon=True).start()
+
+    def switch_adapter(self, found, use, before, blocked=()):
+        with self.bt_lock:
+            own = [name for name, usb in found if not usb]
+            if use[1] and not btadapter.set_powered(use[0], True) and own:   # (refused: try again soon)
+                if time.monotonic() - self.adapter_since.get(use[0], 0.0) < ADAPTER_SETTLE:
+                    # just plugged in: BlueZ has no object for it for a second or so (Pocket 2: ~1.4 s), so not
+                    # ready yet rather than blocked; nothing changed or said, tried again in a second
+                    self.adapter, self.adapter_seen = before, None
+                    self.adapter_retry = time.monotonic() + 1
+                    return
+                blocked = (*blocked, use[0])
+                self.adapter, use = (own[0], False), (own[0], False)
+                self.adapter_seen, self.adapter_retry = None, time.monotonic() + ADAPTER_RETRY
+            for name in own:
+                btadapter.set_powered(name, name == use[0])
+            btadapter.aim(btadapter.address(use[0]) if len(found) > 1 else None)
+            if set(blocked) - self.adapter_warned:
+                self.adapter_warned |= set(blocked)
+                self.say("USB Bluetooth blocked (rfkill): using the Pi's own", 6)
+            if use == before or (not use[1] and before is None):
+                return self.post("status", True)    # (the same adapter, or start-up on the Pi's own: as ever)
+            mac = self.state.get("last_mac")
+            paired = bool(mac) and "Paired: yes" in bt("info", mac, timeout=5)[1]
+            if use[1]:
+                self.say("USB Bluetooth" if paired or not mac else "USB Bluetooth: pair the speaker again", 6)
+            else:
+                self.say("The Pi's own Bluetooth", 4)
+            if paired and self.auto:          # the speaker on the new adapter now, not at the next reconnect try
+                self.connecting = True
+                self.post("status", False)
+                if "Connection successful" in bt("connect", mac, timeout=20)[1]:
+                    self.own_connect_at = time.monotonic()
+                self.connecting = False
+        self.post("status", True)
 
     def reconnect_quietly(self):
         try:

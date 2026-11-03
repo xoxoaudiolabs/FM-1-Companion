@@ -131,6 +131,7 @@ sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/
 echo "== Installing the bridge"
 install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/fm1-bridge/bridge.py
 install -D -m 644 "$DIR/blemidi.py"                             ~/.local/share/fm1-bridge/blemidi.py
+install -D -m 644 "$DIR/btadapter.py"                           ~/.local/share/fm1-bridge/btadapter.py
 install -D -m 644 "$DIR/sloop.py"                               ~/.local/share/fm1-bridge/sloop.py
 install -D -m 644 "$DIR/libui.py"                               ~/.local/share/fm1-bridge/libui.py
 install -D -m 644 "$DIR/meters.py"                              ~/.local/share/fm1-bridge/meters.py

@@ -18,6 +18,12 @@ echo "Screen:      ${SCREEN:-oled}$([ "$SCREEN" = lcd ] && echo ' (the 1.44" LCD
 echo "SPI:         $(yes_no 'ls /dev/spidev0.0')"
 echo "I2C:         $(yes_no 'ls /dev/i2c-1')$(command -v i2cdetect >/dev/null && echo ", answering: $(i2cdetect -y 1 2>/dev/null | tail -n +2 | cut -c5- | tr -s ' -' ' ' | tr '\n' ' ')")"
 echo "Bluetooth:   adapter $(yes_no 'ls /sys/class/bluetooth/hci0'), $(bluetoothctl show 2>/dev/null | grep -m1 Powered | xargs || echo 'bluetoothctl not answering')"
+for h in /sys/class/bluetooth/hci*; do
+  case "${h##*/}" in *:*|'hci*') continue ;; esac
+  where=$(readlink -f "$h/device" | grep -q /usb && echo USB || echo "the Pi's own")
+  echo "             ${h##*/}: $where, $(busctl get-property org.bluez "/org/bluez/${h##*/}" org.bluez.Adapter1 Powered 2>/dev/null | sed 's/^b /powered /' || echo '?')"
+done
+echo "             in use: $(sed 's/^select //' "${XDG_RUNTIME_DIR:-/tmp}/fm1-bt-select" 2>/dev/null || echo 'the default')"
 echo "Speaker:     $(setting last_name || true) $(setting last_mac || true), connected: $(mac=$(setting last_mac); [ -n "$mac" ] && bluetoothctl info "$mac" 2>/dev/null | grep -m1 Connected | awk '{print $2}' || echo '-')"
 echo "Services:    fm1-bridge $(systemctl --user is-active fm1-bridge 2>/dev/null), fm1-web $(systemctl --user is-active fm1-web 2>/dev/null), pipewire $(systemctl --user is-active pipewire 2>/dev/null), bluetooth $(systemctl is-active bluetooth 2>/dev/null)"
 echo "Power:       $(vcgencmd get_throttled 2>/dev/null || echo '?') $(vcgencmd measure_temp 2>/dev/null)"

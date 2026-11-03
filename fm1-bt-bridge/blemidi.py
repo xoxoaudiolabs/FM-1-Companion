@@ -16,6 +16,7 @@ import re
 import threading
 import time
 
+import btadapter                        # which Bluetooth adapter: a USB one while it's plugged in
 import iocard                           # the I/O card's DIN jacks
 import sloop                            # which FM-1 is A and which is B (fm1_cards, port_card)
 
@@ -362,11 +363,15 @@ def start_bluez(bridge):
     central = {"connecting": None, "tries": {}, "scanned": 0.0}   # tries: address -> (next try, wait after it)
 
     def adapter_path():
+        """the adapter the app chose (btadapter.aim), else the first that can serve and advertise"""
         objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
-        for path, ifaces in objects.items():
-            if "org.bluez.GattManager1" in ifaces and "org.bluez.LEAdvertisingManager1" in ifaces:
+        able = [path for path, ifaces in sorted(objects.items())
+                if "org.bluez.GattManager1" in ifaces and "org.bluez.LEAdvertisingManager1" in ifaces]
+        chosen = btadapter.selected()
+        for path in able:
+            if chosen and str(objects[path].get(ADAPTER, {}).get("Address", "")).upper() == chosen:
                 return path
-        return None
+        return able[0] if able else None
 
     def ignore(*args):
         pass
@@ -378,6 +383,14 @@ def start_bluez(bridge):
             unlink(path)
         central["connecting"] = None
         path = adapter_path()
+        old = state["adapter"]
+        if old and old != path:               # moving to another adapter: off the old one (gone already, if unplugged)
+            for iface, method, arg in (("org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement", adv.path),
+                                       ("org.bluez.GattManager1", "UnregisterApplication", app.path)):
+                try:
+                    getattr(dbus.Interface(bus.get_object(BLUEZ, old), iface), method)(arg)
+                except dbus.DBusException:
+                    pass
         state["adapter"] = path
         if not path:
             return
@@ -660,6 +673,20 @@ def start_bluez(bridge):
         if owner:
             GLib.timeout_add(500, try_register)
 
+    watched = {"key": None}
+
+    def follow_adapter():
+        """Every few seconds: the app chose another adapter, or one came or went -> register on the one to use"""
+        key = (btadapter.selected(), tuple(btadapter.adapters()))
+        if key != watched["key"]:
+            watched["key"] = key
+            try:
+                if adapter_path() != state["adapter"]:
+                    try_register()
+            except dbus.DBusException:
+                pass
+        return True
+
     bus.add_signal_receiver(device_changed, dbus_interface=PROPS, signal_name="PropertiesChanged",
                             arg0=DEVICE, path_keyword="path")
     bus.add_signal_receiver(chrc_changed, dbus_interface=PROPS, signal_name="PropertiesChanged",
@@ -672,6 +699,7 @@ def start_bluez(bridge):
                     "scan": keyboard_scan, "connect": keyboard_connect, "forget": keyboard_forget,
                     "set_central": set_central}
     GLib.timeout_add_seconds(5, reconnect)
+    GLib.timeout_add_seconds(3, follow_adapter)
     GLib.MainLoop().run()
 
 

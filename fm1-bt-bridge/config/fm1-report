@@ -11,13 +11,8 @@ echo "=== FM-1 Companion report ($(date '+%Y-%m-%d %H:%M'))"
 echo "Board:       $(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo unknown) ($(nproc) cores)"
 . /etc/os-release 2>/dev/null
 echo "OS:          ${PRETTY_NAME:-unknown}, $(dpkg --print-architecture 2>/dev/null) ($(uname -m)), kernel $(uname -r)"
-BUILD=$(cd "$APP" 2>/dev/null && python3 -c 'import device,json;print(device.detect(json.load(open("'"$SETTINGS"'")).get("build","auto"))["build"])' 2>/dev/null || echo '?')
-if [ "$BUILD" = desk ]; then
-    VERSION=$(cd "$APP" 2>/dev/null && python3 -c 'import deskboot;print(deskboot.VERSION.title())' 2>/dev/null || echo 'Studio ?')
-else
-    VERSION="Pocket $(cd "$APP" 2>/dev/null && python3 -c 'import device;print(device.POCKET_VERSION)' 2>/dev/null || echo '?')"
-fi
-echo "Companion:   $VERSION (build: $BUILD)"
+VERSION="Pocket $(cd "$APP" 2>/dev/null && python3 -c 'import device;print(device.POCKET_VERSION)' 2>/dev/null || echo '?')"
+echo "Companion:   $VERSION"
 SCREEN=$(setting screen)
 echo "Screen:      ${SCREEN:-oled}$([ "$SCREEN" = lcd ] && echo ' (the 1.44" LCD)') (rotate $(setting rotate))"
 echo "SPI:         $(yes_no 'ls /dev/spidev0.0')"

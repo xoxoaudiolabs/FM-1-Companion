@@ -33,15 +33,14 @@ ZERO = "Raspberry Pi Zero Rev 1.3"
 
 def test_boards():
     """any Pi Zero is the Pocket; one without Bluetooth (no W) is told so; the core count is there"""
-    w = device.detect(model=ZERO_W, screen=None, radio=True, cpus=1)
-    two = device.detect(model=ZERO_2W, screen=None, radio=True, cpus=4)
-    plain = device.detect(model=ZERO, screen=None, radio=False, cpus=1)
-    assert w["build"] == two["build"] == plain["build"] == "pocket"
+    w = device.detect(model=ZERO_W, radio=True, cpus=1)
+    two = device.detect(model=ZERO_2W, radio=True, cpus=4)
+    plain = device.detect(model=ZERO, radio=False, cpus=1)
     assert w["cpus"] == 1 and two["cpus"] == 4 and "cores" in two["can"] and "cores" not in w["can"]
     assert device.no_bluetooth_text(w) is None and device.no_bluetooth_text(two) is None
     assert device.no_bluetooth_text(plain)[0] == "No Bluetooth"
-    studio = device.detect(model="Raspberry Pi 3 Model B Plus Rev 1.3", screen=("/dev/fb1", 480, 320), radio=False)
-    assert device.no_bluetooth_text(studio) is None                       # (the Pocket's rule alone)
+    assert "usb_ports" not in w["can"] and "usb_ports" in device.detect(model="Raspberry Pi 4 Model B", radio=True,
+                                                                        cpus=4)["can"]
     with tempfile.TemporaryDirectory() as tmp:
         assert not device.bluetooth(Path(tmp))
         (Path(tmp) / "hci0").mkdir()

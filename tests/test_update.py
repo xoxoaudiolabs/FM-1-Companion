@@ -30,9 +30,9 @@ import web  # noqa: E402
 TAGS = ["v2.12", "v2.11", "v2.8.3", "v2.9", "studio-v1.6", "studio-v1.10", "desk-v1.1", "v3.0-beta"]
 
 
-def cached(tag, which="pocket"):
+def cached(tag):
     """GitHub's answer, as if asked a moment ago (no network in the tests)"""
-    update.CACHE.write_text(json.dumps({"time": time.time(), "build": which, "tag": tag,
+    update.CACHE.write_text(json.dumps({"time": time.time(), "tag": tag,
                                         "version": list(update.version(tag)) if tag else None}))
 
 
@@ -41,9 +41,8 @@ def test_versions():
     assert update.version("STUDIO 1.6") == (1, 6) and update.version("2.8.3") == (2, 8, 3)
     assert update.version("nothing") is None and update.label((2, 12)) == "v2.12"
     assert update.version("v2.9") < update.version("v2.12")          # numbers, not text
-    assert update.newest_of(TAGS, "pocket") == ("v2.12", (2, 12))
-    assert update.newest_of(TAGS, "studio") == ("studio-v1.10", (1, 10))
-    assert update.newest_of(["desk-v1.1"], "pocket") is None
+    assert update.newest_of(TAGS) == ("v2.12", (2, 12))                # (the old Studio's studio-v tags: not the Pocket's)
+    assert update.newest_of(["desk-v1.1", "studio-v1.10"]) is None
 
 
 def test_busy():
@@ -57,28 +56,28 @@ def test_busy():
 
 
 def test_check():
-    was = update.build, update.installed
+    was = update.installed
     try:
-        update.build, update.installed = lambda: "pocket", lambda which=None: (2, 11)
+        update.installed = lambda: (2, 11)
         cached("v2.12")
         info = update.check()
         assert info["installed"] == "v2.11" and info["newest"] == "v2.12" and info["newer"] and not info["error"]
         cached("v2.11")
         assert not update.check()["newer"]                             # up to date
     finally:
-        update.build, update.installed = was
+        update.installed = was
 
 
 def test_run():
     """run(): installs with fm1-update, restarts, waits for the Companion; put back when it doesn't come up"""
     calls = []
-    was = (update.build, update.installed, update.helper, update.restart, update.came_back, update.busy)
+    was = (update.installed, update.helper, update.restart, update.came_back, update.busy)
     try:
-        update.build, update.installed = lambda: "pocket", lambda which=None: (2, 11)
+        update.installed = lambda: (2, 11)
         update.busy = lambda *a, **k: None
         update.helper = lambda *args: (calls.append(("helper",) + args), (True, "Installed v2.12"))[1]
         update.restart = lambda: calls.append(("restart",))
-        update.newest = lambda which=None, fresh=False: (("v2.12", (2, 12)), None)
+        update.newest = lambda fresh=False: (("v2.12", (2, 12)), None)
         update.came_back = lambda within=0: True
         assert update.run() == 0 and calls == [("helper",), ("restart",)]
         assert update.read_state()["state"] == "done" and "v2.12" in update.read_state()["message"]
@@ -91,11 +90,11 @@ def test_run():
         update.helper = lambda *args: (calls.append(("helper",) + args), (False, "No release for this box"))[1]
         assert update.run() == 1 and calls == [("helper",)]            # didn't install: nothing restarted
         assert "Nothing was restarted" in update.read_state()["message"]
-        update.installed = lambda which=None: (2, 12)
+        update.installed = lambda: (2, 12)
         calls.clear()
         assert update.run() == 0 and calls == [] and "up to date" in update.read_state()["message"]
     finally:
-        (update.build, update.installed, update.helper, update.restart, update.came_back, update.busy) = was
+        (update.installed, update.helper, update.restart, update.came_back, update.busy) = was
         update.newest = UPDATE_NEWEST
 
 
@@ -107,10 +106,10 @@ def test_page_asks_the_box():
     server = web.ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
     base = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    was = update.build, update.installed, update.HELPER
+    was = update.installed, update.HELPER
     helper = TMP / "fm1-update"
     try:
-        update.build, update.installed = lambda: "pocket", lambda which=None: (2, 11)
+        update.installed = lambda: (2, 11)
         cached("v2.12")
         page = urllib.request.urlopen(base + "/", timeout=10).read()
         assert b"<h2>Software</h2>" in page and b"function software(" in page
@@ -130,7 +129,7 @@ def test_page_asks_the_box():
         cached("v2.11")
         assert "up to date" in ask()["message"]
     finally:
-        update.build, update.installed, update.HELPER = was
+        update.installed, update.HELPER = was
         server.shutdown()
     assert {"update", "song-load", "dx7-send"} <= set(libui.WRITES)    # the box takes them from the page
 

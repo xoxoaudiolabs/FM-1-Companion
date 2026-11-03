@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# FM-1 Companion installer for Raspberry Pi OS Lite (Bookworm or Trixie, 32- or 64-bit): the Pocket (a Pi Zero W
-# or Zero 2 W with a Waveshare Zero screen HAT) or the Studio (Pi 3/4 + 3.5" SPI touchscreen), told apart by the
-# board.
+# FM-1 Companion Pocket installer for Raspberry Pi OS Lite (Bookworm or Trixie, 32- or 64-bit): a Pi Zero W or
+# Zero 2 W with a Waveshare Zero screen HAT. (The Studio, a Pi 3/4 with a touchscreen, is XOXO Studio now:
+# github.com/xoxoaudiolabs/XOXO-Studio.)
 # Run as your normal user (not with sudo):  bash install.sh
 # The Pocket's screen is asked for; to answer it ahead:  FM1_SCREEN=oled|lcd144|lcd13|ask bash install.sh
 # (The web app's update runs it too, as root for the user: fm1-update, with FM1_UPDATE_USER. Nothing is asked
@@ -25,15 +25,15 @@ else
 fi
 DIR="$(cd "$(dirname "$0")" && pwd)"
 MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
-case "$MODEL" in
-    *Zero*) BUILD=pocket ;;
-    *)      BUILD=desk ;;
-esac
-echo "== $MODEL: the $([ "$BUILD" = desk ] && echo Studio || echo Pocket)"
+echo "== $MODEL"
 
 # Before anything is installed: what the Companion can't run without, said plainly
 stop() { echo; echo "Can't install: $*" >&2; exit 1; }
-if [ "$BUILD" = pocket ] && ! ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
+case "$MODEL" in
+    *Zero*|"") ;;
+    *) stop "this is a $MODEL: the FM-1 Companion is the Pocket, on a Pi Zero W or Zero 2 W. The Studio (a Pi 3/4 with a touchscreen) is XOXO Studio now, with its FM-1 Companion plug-in: github.com/xoxoaudiolabs/XOXO-Studio" ;;
+esac
+if ! ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
     stop "this Pi has no Bluetooth. A Pi Zero, Zero 1.3 or Zero H has no wireless: the Pocket needs a Pi Zero W, \
 Zero WH or Zero 2 W. (On one of those, check Bluetooth isn't switched off with dtoverlay=disable-bt in config.txt.)"
 fi
@@ -48,45 +48,23 @@ esac
 FREE_KB=$(df --output=avail -k / | tail -1)
 [ "$FREE_KB" -ge 1000000 ] || stop "under 1 GB free on the card ($((FREE_KB / 1024)) MB). Use a card of 8 GB or more."
 
-SCREEN_CHOICE=""
-if [ "$BUILD" = pocket ]; then            # the HAT can't be asked which it is (SPI only talks one way)
-    SCREEN_CHOICE="${FM1_SCREEN:-}"
-    if [ -z "$SCREEN_CHOICE" ] && [ -t 0 ]; then
-        echo
-        echo "Which screen HAT is on the Pi?"
-        echo "  1) 1.3\" OLED (black and white, 128x64)"
-        echo "  2) 1.44\" LCD (colour, 128x128)"
-        echo "  3) 1.3\" LCD (colour, 240x240)"
-        echo "  4) Not sure: the box asks on its first start (press KEY1 when you can read it)"
-        read -r -p "1-4 [4]: " answer
-        case "$answer" in 1) SCREEN_CHOICE=oled ;; 2) SCREEN_CHOICE=lcd144 ;; 3) SCREEN_CHOICE=lcd13 ;; *) SCREEN_CHOICE=ask ;; esac
-    fi
-    case "$SCREEN_CHOICE" in oled|lcd144|lcd13|ask|"") ;; *) stop "FM1_SCREEN must be oled, lcd144, lcd13 or ask" ;; esac
+# The screen HAT: asked (the HAT can't be asked which it is: SPI only talks one way)
+SCREEN_CHOICE="${FM1_SCREEN:-}"
+if [ -z "$SCREEN_CHOICE" ] && [ -t 0 ]; then
+    echo
+    echo "Which screen HAT is on the Pi?"
+    echo "  1) 1.3\" OLED (black and white, 128x64)"
+    echo "  2) 1.44\" LCD (colour, 128x128)"
+    echo "  3) 1.3\" LCD (colour, 240x240)"
+    echo "  4) Not sure: the box asks on its first start (press KEY1 when you can read it)"
+    read -r -p "1-4 [4]: " answer
+    case "$answer" in 1) SCREEN_CHOICE=oled ;; 2) SCREEN_CHOICE=lcd144 ;; 3) SCREEN_CHOICE=lcd13 ;; *) SCREEN_CHOICE=ask ;; esac
 fi
-STUDIO_SCREEN=""
-if [ "$BUILD" = desk ]; then              # the Studio's 3.5" touchscreen: on SPI, or on HDMI with its touch on SPI
-    STUDIO_SCREEN="${FM1_STUDIO_SCREEN:-}"
-    if [ -z "$STUDIO_SCREEN" ] && [ -z "$UPDATE" ] && [ -t 0 ]; then
-        echo
-        echo "Which 3.5\" touchscreen is on the Pi?"
-        echo "  1) On the GPIO pins only (the common \"3.5 inch RPi LCD\", ILI9486)"
-        echo "  2) HDMI for the picture, touch on the GPIO pins (UCTRONICS 3.5\" HDMI)"
-        read -r -p "1-2 [1]: " answer
-        case "$answer" in 2) STUDIO_SCREEN=hdmi35 ;; *) STUDIO_SCREEN=spi35 ;; esac
-    fi
-    case "$STUDIO_SCREEN" in spi35|hdmi35|"") ;; *) stop "FM1_STUDIO_SCREEN must be spi35 or hdmi35" ;; esac
-fi
-
-if [ -z "$UPDATE" ]; then
-    echo "== Your password is needed once, for sudo"
-    sudo -v
-    while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &   # keep sudo for the whole install
-fi
+case "$SCREEN_CHOICE" in oled|lcd144|lcd13|ask|"") ;; *) stop "FM1_SCREEN must be oled, lcd144, lcd13 or ask" ;; esac
 
 PACKAGES="pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
     python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools"
-[ "$BUILD" = desk ] && PACKAGES="$PACKAGES udisks2 exfatprogs ntfs-3g"   # USB drives for the DJ decks
 all_installed() {
     for p in $PACKAGES; do
         dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || return 1
@@ -105,82 +83,27 @@ sudo raspi-config nonint do_i2c 0       # a PiSugar 3 battery, if there's one, a
 sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth
 sudo usermod -aG bluetooth,gpio,spi,i2c,audio "$USER"
-# USB at full speed, Pocket only: the Zero's USB can't drive a USB 2 hub at high speed (devices behind it
-# time out), and the FM-1 and USB keyboards are full-speed devices anyway. (A Pi 3/4's built-in ports need
-# none of it.) Takes effect at the next boot.
+# USB at full speed: the Zero's USB can't drive a USB 2 hub at high speed (devices behind it time out), and the
+# FM-1 and USB keyboards are full-speed devices anyway. Takes effect at the next boot.
 CMDLINE=/boot/firmware/cmdline.txt
 [ -f "$CMDLINE" ] || CMDLINE=/boot/cmdline.txt
-if [ "$BUILD" = pocket ] && ! grep -q "dwc_otg.speed=1" "$CMDLINE"; then
+if ! grep -q "dwc_otg.speed=1" "$CMDLINE"; then
     sudo cp "$CMDLINE" "$CMDLINE.bak"
     sudo sed -i '1 s/$/ dwc_otg.speed=1/' "$CMDLINE"
 fi
-# The Studio: no console text on its screens (its boot screen shows from early in boot instead, and HDMI
-# mirrors the screen), no blinking cursor, no logo
-for opt in vt.global_cursor_default=0 fbcon=map:9 logo.nologo; do
-    if [ "$BUILD" = desk ] && ! grep -q "$opt" "$CMDLINE"; then
-        sudo cp "$CMDLINE" "$CMDLINE.bak"
-        sudo sed -i "1 s/\$/ $opt/" "$CMDLINE"
-    fi
-done
-# The Studio's 3.5" touchscreen (ILI9486 display, XPT2046 touch: the common "3.5 inch RPi LCD"): the kernel's
-# own driver, a framebuffer at /dev/fb1 and a touch input device; landscape. Not the seller's LCD-show script,
-# which replaces system files. Takes effect at the next boot.
 CONFIG=/boot/firmware/config.txt
 [ -f "$CONFIG" ] || CONFIG=/boot/config.txt
-# Raspberry Pi OS from 2026 no longer ships waveshare35a: piscreen is the same chips on the same pins (display on
-# CE0, DC GPIO24, reset GPIO25; touch on CE1, its interrupt GPIO17). Its fbtft driver, not its DRM one (drm):
-# on the Hosyond 3.5" the DRM driver's start-up leaves the panel white (tested 2026-10-24). 24 MHz SPI: clean on
-# that panel and half again the frames of 16 MHz (the meters smoother; tested 2026-10-24).
-if [ -f "$(dirname "$CONFIG")/overlays/waveshare35a.dtbo" ]; then
-    SCREEN="dtoverlay=waveshare35a,rotate=90"
-else
-    SCREEN="dtoverlay=piscreen,speed=24000000,rotate=90"
-fi
-# The HDMI one (UCTRONICS 3.5" HDMI): a 480x320 panel on HDMI, sent 720x480 (at 480x320 it shows "no signal":
-# tested 2026-10-29) which it scales down to its panel; the Studio draws its 480x320 1.5x larger and turned round
-# (desk.ScaledFb: the panel is upside down on the Pi). 960x640 (2x: sharper) not tried yet. Its XPT2046 touch on SPI CE0, its interrupt on GPIO25, as
-# the pins under it are marked (tested 2026-10-29).
-VIDEO="video=HDMI-A-1:720x480M@60"
-if [ "$STUDIO_SCREEN" = hdmi35 ]; then
-    SCREEN="dtoverlay=ads7846,cs=0,penirq=25,penirq_pull=2,speed=50000,keep_vref_on=0,swapxy=0,pmax=255,xohms=150"
-    if ! grep -q "$VIDEO" "$CMDLINE"; then
-        sudo cp "$CMDLINE" "$CMDLINE.bak"
-        sudo sed -i -e '1 s/ video=HDMI-A-1:[^ ]*//' -e "1 s/\$/ $VIDEO/" "$CMDLINE"
-    fi
-fi
-if [ "$BUILD" = desk ] && ! grep -q "^dtoverlay=\(waveshare35a\|piscreen\|mipi-dbi-spi\|ads7846\)" "$CONFIG"; then
-    sudo cp "$CONFIG" "$CONFIG.bak"
-    printf '
-[all]
-# FM-1 Companion Studio: the 3.5" touchscreen
-dtparam=spi=on
-%s
-' "$SCREEN" | sudo tee -a "$CONFIG" >/dev/null
-fi
 
 # The Pocket's CPU held at its full speed (force_turbo: no over-voltage, so no warranty bit): with "ondemand" a Zero
 # drops to 700 MHz between bursts, and the audio's next cycle can come before it's back up (not measured; it costs
 # some battery). Takes effect at the next boot.
-if [ "$BUILD" = pocket ] && ! grep -q "^force_turbo=1" "$CONFIG"; then
+if ! grep -q "^force_turbo=1" "$CONFIG"; then
     sudo cp "$CONFIG" "$CONFIG.bak"
     printf '
 [all]
 # FM-1 Companion Pocket: the CPU at full speed
 force_turbo=1
 ' | sudo tee -a "$CONFIG" >/dev/null
-fi
-
-if [ "$BUILD" = desk ]; then              # the boot screen as soon as the touchscreen appears (deskboot.py)
-    echo "== The Studio's boot screen, early in boot"
-    printf 'SUBSYSTEM=="graphics", KERNEL=="fb[0-9]", ATTR{name}=="fb_ili9486|ili9486drmfb", RUN+="/bin/sh -c '"'"'test -f %s && cat %s > /dev/%%k'"'"'"\n' \
-        "$HOME/.local/share/fm1-bridge/splash.raw" "$HOME/.local/share/fm1-bridge/splash.raw" \
-        | sudo tee /etc/udev/rules.d/90-fm1-splash.rules >/dev/null
-fi
-
-if [ "$BUILD" = desk ]; then              # network MIDI for a DAW (Kraken): listed for computers to find
-    echo "== Announcing the Studio's network MIDI (FM-1 Companion, FM-1 Companion MCU)"
-    sudo install -D -m 644 "$DIR/config/fm1-midi.service" /etc/avahi/services/fm1-midi.service
-    sudo install -D -m 644 "$DIR/config/fm1-midi-mcu.service" /etc/avahi/services/fm1-midi-mcu.service
 fi
 
 echo "== The Pocket-Studio link: a link-local address on Ethernet, so one cable between the boxes is enough"
@@ -204,10 +127,6 @@ sudo sysctl -q -w net.ipv4.ip_unprivileged_port_start=80
 
 echo "== Letting PipeWire run its audio threads in real time (no desktop session on a headless Pi)"
 sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/polkit-1/rules.d/50-fm1-bridge-rtkit.rules >/dev/null
-if [ "$BUILD" = desk ]; then
-    echo "== Letting the DJ decks mount a USB drive of music when it's plugged in"
-    sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-usb.rules" | sudo tee /etc/polkit-1/rules.d/50-fm1-bridge-usb.rules >/dev/null
-fi
 
 echo "== Installing the bridge"
 install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/fm1-bridge/bridge.py
@@ -226,16 +145,6 @@ install -D -m 644 "$DIR/screenpick.py"                          ~/.local/share/f
 install -D -m 644 "$DIR/dx7.py"                                 ~/.local/share/fm1-bridge/dx7.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
 install -D -m 644 "$DIR/iocard.py"                              ~/.local/share/fm1-bridge/iocard.py
-install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
-install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
-install -D -m 644 "$DIR/deskmeters.py"                          ~/.local/share/fm1-bridge/deskmeters.py
-install -D -m 644 "$DIR/deskpages.py"                           ~/.local/share/fm1-bridge/deskpages.py
-install -D -m 644 "$DIR/pads.py"                                ~/.local/share/fm1-bridge/pads.py
-install -D -m 644 "$DIR/deskpads.py"                            ~/.local/share/fm1-bridge/deskpads.py
-install -D -m 644 "$DIR/deskdecks.py"                           ~/.local/share/fm1-bridge/deskdecks.py
-install -D -m 644 "$DIR/deskfm1.py"                             ~/.local/share/fm1-bridge/deskfm1.py
-install -D -m 644 "$DIR/padfx.py"                               ~/.local/share/fm1-bridge/padfx.py
-install -D -m 644 "$DIR/deskboot.py"                            ~/.local/share/fm1-bridge/deskboot.py
 install -D -m 644 "$DIR/netmidi.py"                             ~/.local/share/fm1-bridge/netmidi.py
 install -D -m 644 "$DIR/netaudio.py"                            ~/.local/share/fm1-bridge/netaudio.py
 install -D -m 644 "$DIR/sloopstyle.py"                          ~/.local/share/fm1-bridge/sloopstyle.py
@@ -245,9 +154,6 @@ install -D -m 644 "$DIR/sampler.py"                             ~/.local/share/f
 install -D -m 644 "$DIR/sampleui.py"                            ~/.local/share/fm1-bridge/sampleui.py
 install -D -m 755 "$DIR/library.py"                             ~/.local/share/fm1-bridge/library.py
 install -D -m 644 "$DIR/x0x.py"                                 ~/.local/share/fm1-bridge/x0x.py
-install -D -m 644 "$DIR/decks.py"                               ~/.local/share/fm1-bridge/decks.py
-install -D -m 644 "$DIR/djlib.py"                               ~/.local/share/fm1-bridge/djlib.py
-install -D -m 644 "$DIR/fm1map.py"                              ~/.local/share/fm1-bridge/fm1map.py
 install -D -m 755 "$DIR/web.py"                                 ~/.local/share/fm1-bridge/web.py
 install -D -m 755 "$DIR/update.py"                              ~/.local/share/fm1-bridge/update.py
 mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \
@@ -257,8 +163,6 @@ mkdir -p ~/.local/share/fm1-bridge/vendor/fonts
 install -m 644 "$DIR"/vendor/fonts/*                            ~/.local/share/fm1-bridge/vendor/fonts/
 mkdir -p ~/.local/share/fm1-bridge/icons
 install -m 644 "$DIR"/icons/*.png                              ~/.local/share/fm1-bridge/icons/
-mkdir -p ~/.local/share/fm1-bridge/kits/808       # the sampler's ready-made 808 KIT (pads.factory_kits copies it in)
-install -m 644 "$DIR"/kits/808/*                               ~/.local/share/fm1-bridge/kits/808/
 install -D -m 644 "$DIR/config/pipewire-10-fm1-bridge.conf"     ~/.config/pipewire/pipewire.conf.d/10-fm1-bridge.conf
 install -D -m 644 "$DIR/config/wireplumber-51-fm1-bridge.conf"  ~/.config/wireplumber/wireplumber.conf.d/51-fm1-bridge.conf
 if wireplumber --version 2>/dev/null | grep -q "Linked with libwireplumber 0\.4"; then   # Bookworm: Lua config
@@ -268,10 +172,6 @@ else                                                                            
 fi
 install -D -m 644 "$DIR/config/fm1-bridge.service"              ~/.config/systemd/user/fm1-bridge.service
 install -D -m 644 "$DIR/config/fm1-web.service"                 ~/.config/systemd/user/fm1-web.service
-
-if [ "$BUILD" = desk ] && [ ! -f ~/.local/share/fm1-bridge/splash.raw ]; then   # the first boot's picture
-    (cd ~/.local/share/fm1-bridge && python3 -c "import deskboot, sloopstyle; deskboot.save(sloopstyle.Theme())")         || echo "   (the boot screen's picture comes with the first start instead)"
-fi
 
 if [ -n "$UPDATE" ]; then                  # (written as root above: the user's again)
     chown -R "$USER:" ~/.local/share/fm1-bridge ~/.config/pipewire ~/.config/wireplumber ~/.config/systemd
@@ -313,15 +213,9 @@ sync                                    # on the card before anyone pulls the po
 
 echo
 echo "Installed on:  $MODEL ($(nproc) cores), ${PRETTY_NAME:-Raspberry Pi OS} $(dpkg --print-architecture)"
-if [ "$BUILD" = pocket ]; then
-    echo "Screen:        $(fm1-screen 2>/dev/null | sed 's/^screen: //') (change it with: fm1-screen oled|lcd144|lcd13|ask)"
-fi
+echo "Screen:        $(fm1-screen 2>/dev/null | sed 's/^screen: //') (change it with: fm1-screen oled|lcd144|lcd13|ask)"
 echo
 echo "Done. Reboot now:  sudo reboot"
-if [ "$BUILD" = desk ]; then
-    echo "After the reboot: the boot screen, then HOME (on the first install, the touch setup first: four targets)."
-else
-    echo "After the reboot the screen shows the Companion. If it is upside down, see README.md."
-    echo "Once everything works, turn Wi-Fi off on the device: joystick right > Wi-Fi."
-    echo "Trouble? Run fm1-report and send what it prints."
-fi
+echo "After the reboot the screen shows the Companion. If it is upside down, see README.md."
+echo "Once everything works, turn Wi-Fi off on the device: joystick right > Wi-Fi."
+echo "Trouble? Run fm1-report and send what it prints."

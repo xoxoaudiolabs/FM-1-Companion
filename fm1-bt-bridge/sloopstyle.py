@@ -1,4 +1,4 @@
-"""SLOOP's look, for the desk box's touchscreen: its five palettes, its four track colours, its greys, its
+"""SLOOP's look, for the Pocket's colour screens: its five palettes, its four track colours, its greys, its
 pixel font (Terminus, drawn 1x/2x/3x as SLOOP draws its big values), and a theme made in SLOOP's web editor.
 
 The colours are SLOOP's own (isod89/sloop-fm1, firmware/src/gfx.c: PALETTES, TE_COL, TE_G), and the box follows

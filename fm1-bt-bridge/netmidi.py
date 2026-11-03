@@ -1,11 +1,9 @@
-"""Network MIDI (RTP-MIDI, as Apple's "Network MIDI" and the rtpMIDI driver on Windows speak it): the box as a
-MIDI port a computer reaches over Wi-Fi or Ethernet, for a DAW such as Kraken. Lower latency than Bluetooth MIDI,
-and as many ports as there are sessions: one for music (the MIDI routes' NET), one for a control surface (the
-desk box's KRAKEN tab, Mackie Control).
+"""Network MIDI (RTP-MIDI, as Apple's "Network MIDI" and the rtpMIDI driver on Windows speak it), for the Pocket's
+Studio link: the MIDI routes' NET.
 
-The computer starts a session (it sends IN on our control port, then on the data port, the port after it); we
-accept, answer its clock sync (CK) and swap MIDI in RTP packets on the data port. The Studio never starts one
-itself, so a computer chooses it from its network MIDI directory, where avahi lists it (config/fm1-midi.service).
+A session (Session) is what a Studio runs: the side that's invited. It accepts IN on its control port, then on the
+data port (the port after it), answers the clock sync (CK) and swaps MIDI in RTP packets on the data port. The
+tests use it as a stand-in Studio.
 
 The Pocket's Studio link (Invitation) is the other side: the Pocket finds a Studio's music session on the network
 (find_studios: DNS-SD, _apple-midi._udp, as a computer does) and starts a session to it as a computer would, so the
@@ -567,89 +565,3 @@ class Invitation:
                 self.dsock.sendto(packet, peer["data"])
             except OSError:
                 pass
-
-
-# ---------------------------------------------------------------- the control surface (Mackie Control)
-
-MCU = bytes([0xF0, 0x00, 0x00, 0x66, 0x14])      # Mackie Control's SysEx header
-SERIAL = b"FM1CMP1"                                # the surface's serial number (7 ASCII bytes), for the handshake
-
-
-class Mackie:
-    """What a DAW shows on a Mackie Control surface, kept from its messages, and what the surface sends: faders
-    as pitch bend on channels 0-7 (master 8), buttons and LEDs as notes, the 2 x 56 character LCD and the
-    handshake as SysEx, pan knobs (V-pots) as CC 16-23 out and their LED rings as CC 48-55 back, level meters as
-    channel pressure. Kraken uses part of it; Ableton Live's MackieControl uses all of that."""
-
-    BUTTONS = {"rewind": 0x5B, "forward": 0x5C, "stop": 0x5D, "play": 0x5E, "record": 0x5F, "loop": 0x56,
-               "click": 0x59, "bank-": 0x2E, "bank+": 0x2F}
-    TOUCH = 0x68                              # + strip: a finger on a fader (DAWs write automation while it's on)
-    METER_STEP = 0.3                          # seconds a meter takes to fall one of its 12 steps (as the hardware)
-
-    def __init__(self):
-        self.faders = [0] * 9                 # 0..16383
-        self.leds = {}                        # note -> on
-        self.lcd = [" "] * 112
-        self.rings = [0] * 8                  # the pan knobs' positions, 0 (off) .. 11
-        self.meters = [(0, 0.0)] * 8          # (level 0..12, when it was set)
-        self.seen = 0.0
-
-    def feed(self, m, now=None):
-        """a message from the DAW -> the messages to answer it with ([], but for the handshake)"""
-        now = time.monotonic() if now is None else now
-        self.seen = now
-        if len(m) == 3 and m[0] & 0xF0 == 0xE0 and (m[0] & 15) < 9:
-            self.faders[m[0] & 15] = m[1] | (m[2] << 7)
-        elif len(m) == 3 and m[0] == 0x90:
-            self.leds[m[1]] = m[2] > 0
-        elif len(m) == 3 and m[0] == 0xB0 and 0x30 <= m[1] <= 0x37:
-            self.rings[m[1] - 0x30] = m[2] & 0x0F
-        elif len(m) == 2 and m[0] & 0xF0 == 0xD0:          # a meter: strip in the high 4 bits, level the low 4
-            strip, level = m[1] >> 4, m[1] & 0x0F
-            if strip < 8 and level <= 12:
-                self.meters[strip] = (level, now)
-        elif m[:5] == MCU and len(m) > 6:
-            return self.sysex(m[5], m[6:-1])
-        return []
-
-    def sysex(self, cmd, data):
-        if cmd == 0x12:                                    # the LCD: a position, then the characters
-            pos = data[0] if data else 0
-            for k, c in enumerate(data[1:]):
-                if pos + k < 112:
-                    self.lcd[pos + k] = chr(c) if 32 <= c < 127 else " "
-        elif cmd == 0x00:                                  # device query: a surface is here (serial, challenge)
-            return [MCU + b"\x01" + SERIAL + b"\x00\x00\x00\x00\xf7"]
-        elif cmd == 0x02:                                  # the host's reply: connected
-            return [MCU + b"\x03" + SERIAL + b"\xf7"]
-        elif cmd == 0x13:                                  # version request
-            return [MCU + b"\x14" + b"1.0" + b"\xf7"]
-        return []
-
-    def meter_levels(self, now=None):
-        """each strip's meter now (0..12), falling one step every METER_STEP since its last update"""
-        now = time.monotonic() if now is None else now
-        return [max(0, level - int((now - when) / self.METER_STEP)) for level, when in self.meters]
-
-    def state(self):
-        """for the app: {faders, leds (the notes lit), lcd (2 lines), rings, meters}"""
-        text = "".join(self.lcd)
-        return {"faders": list(self.faders), "leds": sorted(n for n, on in self.leds.items() if on),
-                "lcd": [text[:56], text[56:]], "rings": list(self.rings), "meters": self.meter_levels(),
-                "seen": round(self.seen, 1)}
-
-    @staticmethod
-    def fader(strip, value):
-        """a fader moved (strip 0-7, 8 master; value 0..16383) -> its message"""
-        value = max(0, min(16383, int(value)))
-        return bytes([0xE0 | strip, value & 127, value >> 7])
-
-    @staticmethod
-    def press(note, down=True):
-        return bytes([0x90, note, 127 if down else 0])
-
-    @staticmethod
-    def pan(strip, steps):
-        """a pan knob turned (strip 0-7) by steps (+ right, - left) -> its message (relative: 1-63 up, 65-127 down)"""
-        steps = max(-63, min(63, int(steps)))
-        return bytes([0xB0, 0x10 + strip, steps if steps >= 0 else 64 - steps])

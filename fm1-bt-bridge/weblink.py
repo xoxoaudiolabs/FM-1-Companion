@@ -38,15 +38,14 @@ class WebLink:
             "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
                      "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or []),
-                     "usb_b": getattr(midi, "usb_b", None), "net": list(getattr(midi, "net", None) or []),
-                     "pads": bool(getattr(midi, "pads", False))},
+                     "usb_b": getattr(midi, "usb_b", None), "net": list(getattr(midi, "net", None) or [])},
             "matrix": dict(zip(("sources", "dests"), self.matrix_lists())),
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
                              arp=keys["arp"], arp_rate=keys["arp_rate"], chord=keys["chord"]),
             "routes": self.routes(), "presets": self.presets(), "wifi": self.wifi,
-            "link": self.link_status(),       # the Pocket's Studio link (None on the Studio)
+            "link": self.link_status(),       # the Pocket's Studio link
             "theme": self.theme_status(),     # the Pocket's colour screen's theme (None: no colour screen)
             "jack": bool(self.jack),          # a 3.5 mm jack to choose with "output" (the Studio's)
             "speaker_saved": bool(self.state.get("last_mac")),   # one to connect / disconnect
@@ -54,7 +53,7 @@ class WebLink:
 
     def theme_status(self):
         """the Pocket's theme and its choices ("follow": FM-1 A's), or None without a colour screen"""
-        if self.desk or not getattr(self.display, "colour", False):
+        if not getattr(self.display, "colour", False):
             return None
         import sloopstyle
         return {"value": self.theme_pick(), "choices": ["follow", *sloopstyle.POCKET]}
@@ -135,10 +134,10 @@ class WebLink:
                 self.save_settings()
                 self.theme_check = 0.0        # (pocket_theme looks again now)
                 return f"Web: Theme {'FM-1 A' if value == 'follow' else value}"
-            if key in ("studio_link", "link_audio") and isinstance(value, bool) and not self.desk:
+            if key in ("studio_link", "link_audio") and isinstance(value, bool):
                 (self.set_studio_link if key == "studio_link" else self.set_link_audio)(value)
                 return None                   # (they say it)
-            if key == "link_hear" and value in ("studio", "pocket") and not self.desk:
+            if key == "link_hear" and value in ("studio", "pocket"):
                 self.set_link_hear(value)
                 return None
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:

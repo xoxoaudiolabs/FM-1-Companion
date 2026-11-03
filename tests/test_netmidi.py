@@ -1,5 +1,5 @@
 """Network MIDI (RTP-MIDI): packets both ways, a session started from a 'computer' on this machine over UDP, and
-the Mackie Control state a DAW sends. No network beyond localhost needed."""
+the Studio link. No network beyond localhost needed."""
 
 import socket
 import struct
@@ -57,29 +57,6 @@ def test_session():
     mac.sendto(b"\xff\xffBY" + struct.pack(">III", 2, 0xABCD, 0x5151), ("127.0.0.1", 15004))
     time.sleep(0.1)
     assert session.names() == []
-
-
-def test_mackie():
-    m = netmidi.Mackie()
-    m.feed(bytes([0xE2, 0x7F, 0x3F]))                               # strip 3's fader
-    m.feed(bytes([0x90, 0x5E, 0x7F]))                               # Play lit
-    m.feed(bytes([0xF0, 0x00, 0x00, 0x66, 0x14, 0x12, 0x00]) + b"BASS   LEAD" + b"\xf7")
-    m.feed(bytes([0xF0, 0x00, 0x00, 0x66, 0x14, 0x12, 56]) + b"-6.0" + b"\xf7")
-    s = m.state()
-    assert s["faders"][2] == 0x7F | 0x3F << 7 and s["leds"] == [0x5E]
-    assert s["lcd"][0].startswith("BASS   LEAD") and s["lcd"][1].startswith("-6.0") and len(s["lcd"][0]) == 56
-    assert netmidi.Mackie.fader(8, 20000) == bytes([0xE8, 0x7F, 0x7F])
-    # what Ableton Live adds: the handshake, the pan knobs' rings, the level meters
-    query = m.feed(bytes([0xF0, 0x00, 0x00, 0x66, 0x14, 0x00, 0xF7]))
-    assert query == [bytes([0xF0, 0, 0, 0x66, 0x14, 0x01]) + b"FM1CMP1" + bytes(4) + b"\xf7"]
-    assert m.feed(bytes([0xF0, 0, 0, 0x66, 0x14, 0x02]) + b"FM1CMP1" + bytes(4) + b"\xf7") == [
-        bytes([0xF0, 0, 0, 0x66, 0x14, 0x03]) + b"FM1CMP1\xf7"]
-    m.feed(bytes([0xB0, 0x31, 0x16]))                               # strip 2's ring at 6 (the middle)
-    m.feed(bytes([0xD0, 0x2B]), now=100.0)                          # strip 3's meter at 11
-    assert m.state()["rings"][1] == 6
-    assert m.meter_levels(100.0)[2] == 11 and m.meter_levels(101.0)[2] == 11 - 3   # falls 1 step a 0.3 s
-    assert netmidi.Mackie.pan(4, -3) == bytes([0xB0, 0x14, 67]) and netmidi.Mackie.pan(0, 2) == bytes([0xB0, 0x10, 2])
-    assert netmidi.Mackie.press(0x5E, False) == bytes([0x90, 0x5E, 0])
 
 
 def name_bytes(name):

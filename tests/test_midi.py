@@ -35,16 +35,6 @@ def make_bridge():
     return bridge
 
 
-def test_tap_leaves_fm1_clock_out():
-    """FM-1 A's MIDI goes to the Studio app on the screen, but not its clock: the apps follow each other's"""
-    bridge = blemidi.MidiBridge(["felucca"])
-    tapped = []
-    bridge.tap_path, bridge.tap = "/tmp/fm1-x0x-midi", tapped.append
-    for message in ([0xBF, 112, 127], [0xF8], [0xFA], [0x9F, 40, 100], [0xFC]):
-        bridge.from_fm1("FM-1", message)
-    assert tapped == [[0xBF, 112, 127], [0x9F, 40, 100]]
-
-
 def test_midi_recording():
     """while a take records, what's played in is logged a track a source (not clock, not SysEx, not an FM-1's
     REMOTE OUT channel 16) and written as a .mid whose time 0 is the take's first frame"""

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """The FM-1 library: backups, projects, samples and firmware, one job at a time.
 
-  library.py [--studio] COMMAND ...   --studio: SLOOP on the Studio (SLOOP Remote Out's studio program, through
-                                      its FIFOs) instead of an FM-1, for backup, restore, load-project, load-sample
   library.py --fm1 A|B|C COMMAND ...  that FM-1 (A: the lowest USB port) instead of Settings > Sloop's, for a
                                       linked Studio's library (its FM-1 E-G are this Pocket's A-C)
   library.py backup [--auto]          back up the FM-1 (SLOOP 2.3+) into ~/fm1-library/backups
@@ -48,21 +46,18 @@ import sloop  # noqa: E402
 import x0x  # noqa: E402
 
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
-FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x",   # x0x: the Studio's X0X backups
+FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x",   # x0x: X0X's backups (.x0b)
            "songs", "patches")                                                   # SLOOP songs; DX7 .syx
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
-THEME = RUNTIME / "fm1-theme.json"           # FM-1 A's colours (SLOOP MENU > COLOR), for the desk box's screen
-                                             # and the Pocket's LCD (its OLED has one colour: it never asks)
+THEME = RUNTIME / "fm1-theme.json"           # FM-1 A's colours (SLOOP MENU > COLOR), for the Pocket's LCD
+                                             # (its OLED has one colour: it never asks)
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20                               # the box's own backups kept unless Settings says (keep_backups, 1-100)
 BOX_MADE = re.compile(r"_(studio-)?(auto|before-[a-z-]+)\.json$")   # write_backup's kinds but "manual" (Back up now)
-X0X_MADE = re.compile(r"_X0X_(auto|before-[a-z-]+)\.x0b$")          # the same of X0X's (an FM-1's or the Studio's)
-STUDIO = False                               # --studio: the jobs work on SLOOP on the Studio, not an FM-1
-STUDIO_MIDI, STUDIO_SYSEX = RUNTIME / "fm1-sloop-midi", RUNTIME / "fm1-sloop-sysex"   # its FIFOs (deskui.start_app)
-STUDIO_JOBS = ("backup", "restore", "load-project", "load-sample")
+X0X_MADE = re.compile(r"_X0X_(auto|before-[a-z-]+)\.x0b$")          # the same of X0X's
 FM1_LETTERS = "ABC"                          # the FM-1s the library works on, by USB port (sloop.fm1_cards)
 FM1 = None                                   # --fm1: one of them, else Settings > Sloop's (library_fm1)
 FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmwares, both based on Felucca
@@ -278,28 +273,18 @@ def chosen_fm1():
     return which if isinstance(which, str) and len(which) == 1 and which in FM1_LETTERS else "A"
 
 
-def desk_box():
-    """True on the desk box (Pi 3/4 + touchscreen: device.py), the only one with themes"""
-    import device
-    try:
-        setting = json.loads(SETTINGS.read_text()).get("build", "auto")
-    except (OSError, ValueError, AttributeError):
-        setting = "auto"
-    return device.detect(setting)["build"] == "desk"
-
-
 def colour_screen():
-    """True with a screen in colour: the desk box's, or the Pocket's 1.44" LCD (Settings: "screen")"""
+    """True with a screen in colour: the Pocket's 1.44" LCD (Settings: "screen")"""
     try:
         lcd = json.loads(SETTINGS.read_text()).get("screen") == "lcd"
     except (OSError, ValueError, AttributeError):
         lcd = False
-    return lcd or desk_box()
+    return lcd
 
 
 def read_theme(dev=None):
     """FM-1 A's colours as SLOOP shows them (its palette, or the theme made in SLOOP's web editor when that's
-    chosen), saved in THEME for the desk box's screen. dev: an open FM-1 A, else it's opened here"""
+    chosen), saved in THEME for the Pocket's LCD. dev: an open FM-1 A, else it's opened here"""
     import sloopstyle
     cards = sloop.fm1_cards()
     if dev is None or (len(cards) > 1 and target_card() != cards[0]):
@@ -316,8 +301,6 @@ def read_theme(dev=None):
 
 
 def connect():
-    if STUDIO:                                # (what FM-1 A runs, for the screens, is left as it is)
-        return sloop.Sloop(sloop.FifoLink(str(STUDIO_MIDI), str(STUDIO_SYSEX)))
     dev = sloop.Sloop(sloop.Link(card=target_card()))
     try:
         FIRMWARE.write_text(json.dumps({"firmware": str(dev.version)}))
@@ -376,8 +359,6 @@ def safety_backup(dev, job, why):
 
 def write_backup(data, kind):
     when = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    if STUDIO:                                # SLOOP on the Studio's: told apart by its name
-        kind = "studio" if kind == "manual" else f"studio-{kind}"
     path = folder("backups") / f"{when}_{slug(data.get('firmware'))}_{kind}.json"
     sloop.save_json(path, data)
     if kind != "manual":
@@ -443,14 +424,14 @@ def job_backup(auto=False):
         try:
             dev = connect()
         except sloop.SloopError as e:
-            if e.code != "noreply" or STUDIO:
+            if e.code != "noreply":
                 raise
             return fm1va_backup(job, auto)     # (no SLOOP protocol: Baud Girl's FM-1+VA, if it's that)
         if sloop.family(dev.version) == "x0x":
             return x0x_fm1_backup(job, dev, "auto" if auto else "manual")
         dev.require_backup()
         data = dev.backup(job.progress("Backing up"))
-        if colour_screen() and not STUDIO:     # and FM-1 A's colours, for a screen in colour: the boot backup
+        if colour_screen():     # and FM-1 A's colours, for a screen in colour: the boot backup
             try:                               # learns what it runs, so "identify" (which reads them) isn't asked
                 read_theme(dev)
             except sloop.SloopError:
@@ -466,7 +447,7 @@ def job_backup(auto=False):
 
 
 def x0x_fm1_backup(job, dev, kind):
-    """an FM-1 running X0X: its project as a .x0b in the x0x folder (mvave.py), the Studio's X0X backups' format"""
+    """an FM-1 running X0X: its project as a .x0b in the x0x folder (mvave.py), X0X's own backup format"""
     import mvave
     image, flags = mvave.x0x_backup(dev.link, job.progress("Backing up"))
     try:
@@ -727,25 +708,6 @@ def job_dx7_read():
         job.done(f"Saved {name} ({ident.text})", file=path.name)
 
 
-def x0x_backup(kind="manual", state=x0x.STATE):
-    """the Studio's X0X project (what it has saved) as a .x0b in ~/fm1-library/x0x: X0X's own backup format, so it
-    restores onto an FM-1 running X0X too"""
-    path = folder("x0x") / f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_X0X_{kind}.x0b"
-    return x0x.backup(path, state)
-
-
-def x0x_restore(file, state=x0x.STATE):
-    """a .x0b into the Studio's X0X (not running: the caller stops it), what it held backed up first (when it
-    held anything). -> the safety backup's path, or None"""
-    x0x.read_backup(Path(file).read_bytes())  # damaged files stop here, before anything is written
-    try:
-        before = x0x_backup("before-restore", state)
-    except x0x.X0XError:                      # nothing saved yet: nothing to keep
-        before = None
-    x0x.restore(file, state)
-    return before
-
-
 def job_save_project(file, source, name):
     backup = sloop.load_json(file)
     data = sloop.project_from(backup, source)
@@ -977,17 +939,12 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 2
-    global STUDIO, FM1
+    global FM1
     if argv[0] == "--fm1":
         if len(argv) < 3 or argv[1] not in FM1_LETTERS or len(argv[1]) != 1:
             print(f"--fm1 is {', '.join(FM1_LETTERS)}", file=sys.stderr)
             return 2
         FM1, argv = argv[1], argv[2:]
-    if argv[0] == "--studio":
-        STUDIO, argv = True, argv[1:]
-        if not argv or argv[0] not in STUDIO_JOBS:
-            print(__doc__)
-            return 2
     command, args = argv[0], argv[1:]
     try:
         if command == "backup":
@@ -1030,7 +987,7 @@ def main(argv=None):
                 try:
                     dev = connect()
                 except sloop.SloopError as e:
-                    if e.code != "noreply" or STUDIO:
+                    if e.code != "noreply":
                         raise
                     import mvave              # (no SLOOP protocol: stock or Baud Girl's, by M-VAVE's handshake)
                     link = sloop.Link(card=target_card())

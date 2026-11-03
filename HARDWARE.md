@@ -15,8 +15,8 @@ other hardware? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues
 - **SPI** (the screens) and **I2C** (a PiSugar battery, the OLED switched to I2C): `install.sh` turns both on.
 - **Raspberry Pi OS Lite**, Bookworm or Trixie. Everything comes from its own packages (`python3-*`, PipeWire,
   BlueZ), so 32- and 64-bit are the same to the Companion.
-- **Any Pi Zero is the Pocket** (`device.detect`: the board's name has "Zero" in it); a Pi 3 or 4 with a 3.5"
-  touchscreen is the Studio.
+- **A Pi Zero** (`install.sh` checks the board's name has "Zero" in it). A Pi 3 or 4 with a 3.5" touchscreen is
+  [XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now.
 
 ## The screen
 

@@ -1,10 +1,9 @@
 # Setting up the FM-1 Companion
 
-This guide is written for **the Pocket**: a Raspberry Pi Zero W (or Zero 2 W) with a Waveshare Zero screen HAT
-([which ones](#compatibility)). **The Studio**
-(a Pi 3 B+ with a 3.5" touchscreen) installs the same way, and `install.sh` works out which build it's on; its
-touch screens, the sampler, SLOOP and X0X on the Studio and the DJ decks are in the
-[main README](../README.md).
+This guide is for **the Pocket**: a Raspberry Pi Zero W (or Zero 2 W) with a Waveshare Zero screen HAT
+([which ones](#compatibility)). The Studio (a Pi 3 with a 3.5" touchscreen) is
+[XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now, with its own guide; `install.sh` here stops on a
+Pi 3 or 4.
 
 The Pocket gives the M-VAVE FM-1 Bluetooth:
 
@@ -278,8 +277,7 @@ Bluetooth row and column, and what goes to Bluetooth reaches each of them. *Not 
 
 **Keyboards that wait to be connected to** (v2.9; *not tried with a real keyboard yet*). Some Bluetooth MIDI
 keyboards (a Korg microKEY Air, a CME WIDI) never connect to anything themselves: something has to connect to
-them. Turn the keyboard on, open Settings → Bluetooth › **BT keys** (on the Studio, MORE › MIDI SETTINGS › BT KEYS),
-and the Companion scans for about 8 seconds for anything that advertises Bluetooth MIDI. Press one to connect;
+them. Turn the keyboard on, open Settings → Bluetooth › **BT keys**, and the Companion scans for about 8 seconds for anything that advertises Bluetooth MIDI. Press one to connect;
 it's saved (up to four) and connected again by itself whenever it's on, trying less often while it's off (from
 every 5 seconds to once a minute) so the headphones keep their share of the radio. Press a saved one to forget it.
 Saved keyboards show *on* while connected. BLE MIDI off lets them go until it's on again.
@@ -307,8 +305,8 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   to the right one, a full reel every 30 minutes.
 - **MIDI too:** each take gets a `.mid` of the same name beside it, of what was played into the box while it
   recorded, a track a source (FM-1 A, FM-1 B, each USB keyboard, Bluetooth MIDI, Network MIDI), lined up with
-  the WAV. Clock, SysEx and an FM-1's channel 16 (its REMOTE OUT) are left out. Tried on the Studio; not yet on
-  the Pocket.
+  the WAV. Clock, SysEx and an FM-1's channel 16 (its REMOTE OUT) are left out. Tried on the FM-1 Companion Studio
+  (the same code); not yet on the Pocket.
 - **Record parts** (Settings → Mixer, with two FM-1s or a keyboard's synth plugged in): each take also
   keeps every source as a file of its own, at full level: `…_fm1-a.wav`, `…_fm1-b.wav`, `…_fm1-usb0.wav`
   next to the mix `…_fm1.wav`. They're recorded as one many-channel take (one recorder costs the Pi far less
@@ -649,7 +647,7 @@ Then pair again with KEY1.
 
 ## Files
 
-The main files; the [main README](../README.md) lists every one, the Studio's included.
+The main files; the [main README](../README.md) lists every one.
 
 | File | Installed to | Purpose |
 |---|---|---|

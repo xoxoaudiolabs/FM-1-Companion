@@ -16,7 +16,7 @@ import blemidi
 SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "NET": "Network", "FM-1": "FM-1", "FM-1 B": "FM-1 B",
                 "Box": "Box clock"}
 SHORT_NAMES = {"BT": "BT", "USB": "USB", "NET": "NET", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}
-SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET", "SMP": "SMP"}
+SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET"}
 VELOCITY = (["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
             + [f"scale {v}" for v in (50, 75, 125, 150, 200)])     # scale: in * v / 100
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
@@ -42,7 +42,7 @@ class MidiScreens:
     # ---- state
 
     def usb_devices(self):
-        """the USB MIDI devices with a row and column each (the Studio), or None (the Pocket: USB, as one)"""
+        """the USB MIDI devices with a row and column each (split), or None (USB, as one)"""
         if not getattr(self.midi, "split", False):
             return None
         return list(getattr(self.midi, "controllers", None) or [])
@@ -77,13 +77,11 @@ class MidiScreens:
 
     def matrix_lists(self):
         """(sources, destinations) on the matrix: FM-1 B's row and column only while a second FM-1 is in, NET's
-        while a computer is connected over network MIDI (the desk box)"""
+        while linked to a Studio"""
         hide = set() if self.two_fm1s() else {"FM-1 B"}
         if not getattr(self.midi, "net", None):
             hide.add("NET")
-        if not getattr(self.midi, "pads", False):          # the sampler: the Studio's
-            hide.add("SMP")
-        sources, dests = blemidi.matrix(self.usb_devices())     # (the Studio: each USB device, by name)
+        sources, dests = blemidi.matrix(self.usb_devices())
         return [s for s in sources if s not in hide], [d for d in dests if d not in hide]
 
     def cell(self):

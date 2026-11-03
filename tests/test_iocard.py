@@ -13,7 +13,6 @@ import blemidi  # noqa: E402
 import bridge  # noqa: E402
 import iocard  # noqa: E402
 import sloop  # noqa: E402
-from test_desk import RgbCapture  # noqa: E402
 
 # as Linux should show the card (from its USB descriptors; not yet seen on a real one)
 CARD_PORTS = ["Companion I/O:Companion I/O MIDI 1 28:0", "Companion I/O:Companion I/O MIDI 2 28:1"]
@@ -37,6 +36,16 @@ CARD_SINK = node(30, "Audio/Sink", "alsa_output.usb-xoxoaudiolabs_Companion_I_O_
 JACK = node(9, "Audio/Sink", "alsa_output.platform-bcm2835_audio.stereo-fallback",
             **{"alsa.card_name": "bcm2835 Headphones"})
 SPEAKER = node(5, "Audio/Sink", "bluez_output.AA_BB_CC_DD_EE_FF.1", **{"node.description": "Speaker"})
+
+
+class RgbCapture:
+    """a colour screen's stand-in: keeps the last full-colour frame"""
+
+    def __init__(self):
+        self.image, self.theme = None, None
+
+    def show_rgb(self, img):
+        self.image = img.copy()
 
 
 def test_found_by_name_never_an_fm1():

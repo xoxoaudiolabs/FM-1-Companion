@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The web app's one-click update: the newest FM-1 Companion release for this box, from the project's GitHub
-(xoxoaudiolabs/FM-1-Companion: tags v2.x for the Pocket, studio-v1.x for the Studio).
+"""The web app's one-click update: the newest Pocket release, from the project's GitHub
+(xoxoaudiolabs/FM-1-Companion: its tags v2.x, v3.x ...; the old Companion Studio's studio-v1.x aren't the Pocket's).
 
 What's yours stays as it is: an update replaces the Companion's code (~/.local/share/fm1-bridge) and its system
 files, never the settings and pairings (~/.config/fm1-bridge), the library (~/fm1-library: backups, projects,
-songs, samples, recordings, kits, patches) or the Studio apps' own saves. It won't start while a recording or a
+songs, samples, recordings, patches). It won't start while a recording or a
 library job (a backup, a load, a firmware install) is running.
 
 The web page asks for it (Library > Software); the box asks for the hold-press, as for anything that writes to
@@ -41,15 +41,6 @@ CACHE_FOR = 600                 # s: GitHub answers 60 unauthenticated asks an h
 BACK_WITHIN = 120               # s: the Companion's status has to come back within this after the restart
 
 
-def build():
-    """"pocket" (a Pi Zero) or "studio", as install.sh tells them apart"""
-    try:
-        model = Path("/proc/device-tree/model").read_text().replace("\0", "")
-    except OSError:
-        model = ""
-    return "pocket" if "Zero" in model else "studio"
-
-
 def version(text):
     """"v2.12", "studio-v1.6", "STUDIO 1.6", "2.8.3" -> (2, 12) ...; None if there's no version in it"""
     m = re.search(r"(\d+(?:\.\d+)+)", text or "")
@@ -60,18 +51,15 @@ def label(v):
     return "v" + ".".join(map(str, v)) if v else "?"
 
 
-def installed(which=None):
-    """the version installed here: the Pocket's device.POCKET_VERSION, the Studio's deskboot.VERSION"""
-    if (which or build()) == "pocket":
-        import device
-        return version(device.POCKET_VERSION)
-    import deskboot
-    return version(deskboot.VERSION)
+def installed():
+    """the version installed here: device.POCKET_VERSION"""
+    import device
+    return version(device.POCKET_VERSION)
 
 
-def newest_of(tags, which):
-    """the newest release tag of this build among GitHub's tags -> (tag, version) or None"""
-    pattern = re.compile(r"^v(\d+(?:\.\d+)+)$" if which == "pocket" else r"^studio-v(\d+(?:\.\d+)+)$")
+def newest_of(tags):
+    """the newest Pocket release tag among GitHub's tags -> (tag, version) or None"""
+    pattern = re.compile(r"^v(\d+(?:\.\d+)+)$")
     found = [(version(t), t) for t in tags if pattern.match(t)]
     if not found:
         return None
@@ -79,14 +67,13 @@ def newest_of(tags, which):
     return tag, v
 
 
-def newest(which=None, fresh=False):
+def newest(fresh=False):
     """the newest release for this box, asked of GitHub (kept CACHE_FOR s) -> (tag, version), or None, and an
     error message when GitHub couldn't be asked"""
-    which = which or build()
     if not fresh:
         try:
             cached = json.loads(CACHE.read_text())
-            if time.time() - cached["time"] < CACHE_FOR and cached["build"] == which:
+            if time.time() - cached["time"] < CACHE_FOR:
                 return (cached["tag"], tuple(cached["version"])) if cached["tag"] else None, None
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -97,10 +84,10 @@ def newest(which=None, fresh=False):
             tags = [t["name"] for t in json.load(reply)]
     except (OSError, ValueError, KeyError, TypeError) as e:
         return None, f"couldn't ask GitHub ({str(e)[:60]}): is the box online?"
-    found = newest_of(tags, which)
+    found = newest_of(tags)
     try:
         CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps({"time": time.time(), "build": which, "tag": found and found[0],
+        CACHE.write_text(json.dumps({"time": time.time(), "tag": found and found[0],
                                      "version": found and list(found[1])}))
     except OSError:
         pass
@@ -145,11 +132,10 @@ def busy(status=None, job=None):
 def check(fresh=False):
     """for the web page: the installed version, the newest, whether there's one to install, and how the last
     update went"""
-    which = build()
-    have = installed(which)
-    found, error = newest(which, fresh)
+    have = installed()
+    found, error = newest(fresh)
     newer = bool(found and have and found[1] > have)
-    return {"build": which, "installed": label(have), "newest": found and label(found[1]),
+    return {"installed": label(have), "newest": found and label(found[1]),
             "tag": found and found[0], "newer": newer, "error": error, "notes": NOTES,
             "helper": Path(HELPER).exists(), "last": read_state(), "busy": busy()}
 
@@ -207,9 +193,8 @@ def restart():
 
 def run():
     """the update itself (its own systemd unit): install, restart, check it came back, else go back"""
-    which = build()
-    have = installed(which)
-    found, error = newest(which, fresh=True)
+    have = installed()
+    found, error = newest(fresh=True)
     if error or not found:
         write_state("error", error or "no release found for this box")
         return 1

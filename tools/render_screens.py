@@ -1,6 +1,6 @@
 """Render the bridge's OLED screens to PNG files with bridge.py's own drawing code, for the README.
 
-  python tools/render_screens.py OUTDIR [--fonts DIR] [--desk] [--lcd]
+  python tools/render_screens.py OUTDIR [--fonts DIR] [--lcd]
 
 --lcd adds the same screens on the Pocket's 1.44" colour LCD (lcd-*.png: pocketui.py, pocketmeters.py), the
 meters on one sheet and HOME in every theme.
@@ -127,9 +127,6 @@ def scenes(app):
     def settings_midi():
         app.screen, app.setting, app.settings_menu = "settings", 0, "midi"      # Studio link first
 
-    def settings_fm1():
-        app.screen, app.setting, app.settings_menu = "settings", 0, "fm1"
-
     def settings_library():                   # 3.0: Library, its first row named after what the FM-1 runs
         app.fw_label = "SLOOP 2.8"
         app.screen, app.setting, app.settings_menu = "settings", 0, "library"
@@ -195,10 +192,10 @@ def scenes(app):
         voice = [50] * 126 + [50] * 8 + [4, 3, 1, 35, 0, 0, 0, 1, 0, 3, 24]
         bank = [dx7.pack(bytes(voice + list(n.ljust(10).encode()))) for n in names]
         (lib.folder("patches") / "my-bank.syx").write_bytes(dx7.bank_message(bank))
-        app.screen, app.settings_menu = "settings", "fm1"
+        app.screen, app.settings_menu = "settings", "library"
         app.setting = [r[0] for r in app.settings_rows()].index("dx7")
         app.change_setting()
-        app.pick["on"](app.pick["items"][0][2])
+        app.pick["on"](next(i[2] for i in app.pick["items"] if "my-bank" in str(i[2])))   # (after Save FM-1 sound)
         app.pick["cursor"] = 6
 
     def player():
@@ -236,7 +233,7 @@ def scenes(app):
         app.screen, app.scan_kind, app.cursor = "scan", "midi", 0
 
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
-            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-library", settings_library),
+            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-library", settings_library),
             ("settings-firmware", settings_firmware), ("settings-box", settings_box), ("settings-midi", settings_midi), ("settings-bt", settings_bt), ("status-volume", volume),
             ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings), ("bt-keys", bt_keys),
@@ -271,7 +268,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("outdir")
     parser.add_argument("--fonts", default="/usr/share/fonts/truetype/dejavu")
-    parser.add_argument("--desk", action="store_true", help="also the desk box's touch screens and meters (desk-*.png)")
     parser.add_argument("--lcd", action="store_true", help="also the Pocket's 1.44\" LCD screens (lcd-*.png)")
     args = parser.parse_args()
     fonts = Path(args.fonts)
@@ -304,170 +300,6 @@ def main():
     meters_sheet(state, out)
     if args.lcd:
         lcd_screens(state, out)
-    if args.desk:
-        desk_screens(state, out)
-
-
-class RgbCapture:
-    """the desk box's touchscreen stand-in: keeps the last full-colour frame"""
-
-    def __init__(self):
-        self.image, self.theme = None, None
-
-    def show_rgb(self, img):
-        self.image = img.copy()
-
-    def show(self, img):
-        pass
-
-
-def desk_screens(state, out):
-    """The Studio's touch screens (desk-ui-NAME.png), in SLOOP's GREEN and in a custom theme like FM-1 A's
-    (desk-ui-NAME-theme.png), as the real Studio runs: two FM-1s, an SMK-37 running Clipper, a K.O. Sidekick
-    (EP-136), the sampler with a kit and a beat, the headphone jack, a speaker. The tabs, then the sampler's pages
-    (SEQ, FX, the sample editor), the recorder and the boot screen"""
-    import deskboot
-    import sloopstyle
-    meters.load_numpy()
-    custom = sloopstyle.Theme("MY THEME", [(8, 36, 48), (24, 76, 96), (40, 124, 168), (56, 180, 240),
-                                           (144, 212, 248)], None, (40, 60, 64), (248, 252, 248))
-    samples = studio_samples()
-    pages = [("home", "HOME", {}), ("mix", "MIX", {}), ("pads", "PADS", {}), ("rec", "REC", {}),
-             ("midi", "MIDI", {}), ("more", "MORE", {}), ("seq", "PADS", {"seq_open": True}),
-             ("fx", "PADS", {"fx_open": True, "fx_on": 1, "fx_latch": True}), ("editor", "PADS", {"editor": True})]
-    for suffix, theme in (("", sloopstyle.Theme("GREEN")), ("-theme", custom)):
-        for name, tab, attrs in pages:
-            attrs = dict(attrs)                       # (each theme's pass: its own copy)
-            display = RgbCapture()
-            app, ui = studio_app(state, display, theme, samples)
-            ui.open_tab(tab)
-            if attrs.pop("editor", False):
-                ui.browse_edit(samples[9], "samples")
-                while app.ed["loading"]:
-                    time.sleep(0.05)
-            for key, value in attrs.items():
-                setattr(ui, key, value)
-            for _ in range(4 if tab in ("METER", "REC") else 1):
-                ui.render(time.monotonic(), force=True)
-                time.sleep(0.1)
-            display.image.save(out / f"desk-ui-{name}{suffix}.png", optimize=True)
-            print("wrote", out / f"desk-ui-{name}{suffix}.png")
-        boot = deskboot.frame(theme, 3)
-        boot.save(out / f"desk-ui-boot{suffix}.png", optimize=True)
-        print("wrote", out / f"desk-ui-boot{suffix}.png")
-    desk_meters_sheet(state, out, custom)
-
-
-def studio_samples():
-    """a kit's worth of short samples in the (empty) library: their names show on the pads and in the editor"""
-    import numpy as np
-    import wave
-    import library as lib
-    names = ["kick_C2", "snare", "clap", "chat", "ohat", "rim", "tom-lo", "tom-hi", "crash", "vox-chop_A3",
-             "stab_C3", "bass_E1"]
-    t = np.arange(24000) / 48000
-    for i, name in enumerate(names):
-        path = lib.folder("samples") / f"{name}.wav"
-        if not path.exists():
-            with wave.open(str(path), "wb") as w:
-                w.setnchannels(1)
-                w.setsampwidth(2)
-                w.setframerate(48000)
-                tone = np.sin(2 * np.pi * (60 + 40 * i) * t * (1 + t)) * np.exp(-t * (4 + i))
-                w.writeframes((tone * 20000).astype("<i2").tobytes())
-    return [f"{n}.wav" for n in names]
-
-
-def studio_app(state, display, theme, samples):
-    import deskui
-    import library as lib
-    import pads
-
-    class Pads:
-        sounding, step = [0, 5], 6
-
-        def send(self, *msg):
-            pass
-    app = bridge.App(display, dict(state, rec_parts=True, cues=["u-clipper"], cue_mix=50, desk_theme="follow"))
-    app.loop, app.midi, app.wifi = Loop(), Midi(), True
-    app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
-    app.midi.split, app.midi.pads, app.midi.net = True, True, []
-    app.midi.controllers = ["Clipper", "EP-136"]
-    app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
-    app.source_b = {"id": 3, "name": "alsa_input.usb-Felucca.2", "label": "Felucca"}
-    app.others = [{"id": 4, "name": "alsa_input.usb-Clipper", "label": "Clipper"},
-                  {"id": 5, "name": "alsa_input.usb-EP-136", "label": "EP-136", "ports": [f"capture_AUX{i}" for i in range(8)]},
-                  {"id": 6, "name": "fm1-sampler", "label": "SAMPLER"}]
-    app.jack = {"id": 9, "name": "alsa_output.bcm2835", "label": "PHONES"}
-    app.fw_label = "SLOOP 2.8"
-    app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
-    app.volume, app.playing = 64, True
-    app.battery = {"percent": 78, "mv": 3818, "plugged": False}
-    app.levels = Levels()
-    app.recorder, app.tape_done = Recording(), 0.35
-    app.library_state = lambda now=None: None
-    app.save_settings = lambda: None
-    app.pads = Pads()
-    kit = pads.empty_kit("BOOM BAP")
-    for i, name in enumerate(samples):
-        kit["pads"][i]["sample"] = str(lib.folder("samples") / name)
-    seq = kit["seq"]
-    seq["len"], seq["swing"] = 32, 55
-    for i in range(0, 32, 4):
-        seq["steps"][i].append([0, 0, 1])
-    for i in range(2, 32, 2):
-        seq["steps"][i].append([3, 1 if i % 4 else 0, 1])
-    for i in (4, 12, 20, 28):
-        seq["steps"][i].append([2, 0, 1])
-    seq["steps"][14] = sorted(seq["steps"][14] + [[0, 1, 2]])
-    app.state["kit"] = kit
-    app.state["routes"] = {"U:EP-136>FM-1": {"on": False}, "U:EP-136>FM-1 B": {"transpose": 12}}
-    deskui.APPS = {k: (n, Path(__file__)) for k, (n, _) in deskui.APPS.items()}   # the Studio apps installed:
-                                                    # MORE's PLAY SLOOP and PLAY X0X, MIX's SLOOP and X0X
-    ui = deskui.DeskUI(app, display)
-    ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
-    ui.theme = theme
-    return app, ui
-
-
-def desk_meters_sheet(state, out, theme):
-    """The desk box's eleven meters (desk-meter-NAME.png) and all of them on one sheet (desk-meters.png)"""
-    import deskui
-    frames = []
-    for i, name in enumerate(meters.METERS):
-        if name in deskui.HIDDEN_METERS:              # (the Studio leaves these out)
-            continue
-        display = RgbCapture()
-        app = bridge.App(display, dict(state, meter=i))
-        app.loop, app.midi, app.wifi = Loop(), Midi(), False
-        app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
-        app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
-        app.levels = Levels()
-        app.library_state = lambda now=None: None
-        if name == "Tape":
-            app.recorder, app.tape_done = Recording(), 0.35
-        ui = deskui.DeskUI(app, display)
-        ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
-        ui.theme = theme
-        ui.open_tab("METER")
-        if name == "History":
-            ui.meters.hist = [-6 - 18 * abs(((k % 32) - 16) / 16) - (8 if k % 7 == 0 else 0) for k in range(160)]
-            ui.meters.hnext = time.monotonic() + 60
-        count = 60 if name == "Waterfall" else 5
-        for _ in range(count):
-            ui.render(time.monotonic(), force=True)
-            if name != "Waterfall":
-                time.sleep(0.1)
-        frames.append(display.image)
-        display.image.save(out / f"desk-meter-{name.lower()}.png", optimize=True)
-        print("wrote", out / f"desk-meter-{name.lower()}.png")
-    w, h, gap, cols = 480, 320, 12, 3
-    rows = (len(frames) + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap), (255, 255, 255))
-    for k, f in enumerate(frames):
-        sheet.paste(f, ((k % cols) * (w + gap), (k // cols) * (h + gap)))
-    sheet.save(out / "desk-meters.png", optimize=True)
-    print("wrote", out / "desk-meters.png")
 
 
 class Levels:

@@ -17,8 +17,6 @@ body:
         - Pi Zero W
         - Pi Zero WH
         - Pi Zero 2 W / 2 WH
-        - Pi 3 B+ (Studio)
-        - Pi 4 (Studio)
         - Other (say in the notes)
     validations:
       required: true
@@ -31,7 +29,6 @@ body:
         - Waveshare 1.3" OLED HAT (switched to I2C)
         - Waveshare 1.44" LCD HAT
         - Waveshare 1.3" LCD HAT
-        - 3.5" touchscreen (Studio)
         - Other (say in the notes)
     validations:
       required: true

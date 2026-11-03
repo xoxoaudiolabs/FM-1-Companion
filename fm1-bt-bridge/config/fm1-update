@@ -1,8 +1,8 @@
 #!/bin/bash
 # fm1-update: the web app's one-click update (update.py runs it with sudo, no password: install.sh's sudoers).
-# Installs the newest FM-1 Companion release for this box from the project's GitHub (xoxoaudiolabs/FM-1-Companion:
-# tags v* for the Pocket, studio-v* for the Studio) with that release's own install.sh, keeping the code in use to
-# go back to. Nothing of the user's is touched (settings, the library, the apps' saves live elsewhere).
+# Installs the newest Pocket release from the project's GitHub (xoxoaudiolabs/FM-1-Companion: its tags v*) with
+# that release's own install.sh, keeping the code in use to go back to. Nothing of the user's is touched (settings
+# and the library live elsewhere).
 #   fm1-update           install the newest release
 #   fm1-update --back    put back the code from before the last update
 # It takes no other input: what runs as root comes only from the project's GitHub. (FM1_UPDATE_TARBALL, a local
@@ -31,8 +31,7 @@ case "${1:-}" in
     *) echo "Usage: fm1-update [--back]" >&2; exit 2 ;;
 esac
 
-MODEL="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
-case "$MODEL" in *Zero*) PATTERN='^v([0-9]+(\.[0-9]+)+)$' ;; *) PATTERN='^studio-v([0-9]+(\.[0-9]+)+)$' ;; esac
+PATTERN='^v([0-9]+(\.[0-9]+)+)$'      # (the old Companion Studio's studio-v* tags aren't the Pocket's)
 
 rm -rf "$WORK/new"
 mkdir -p "$WORK/new"

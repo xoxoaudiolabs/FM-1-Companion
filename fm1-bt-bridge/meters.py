@@ -2,8 +2,10 @@
 
 From the status screen, joystick left opens the meters; up/down picks one (remembered); right goes back;
 press starts and stops a recording (Recorder: a WAV in the library's recordings folder).
-While the meter screen is open, LevelReader records the FM-1's input at 16 kHz with pw-cat (a second,
-read-only stream next to the headphone loopback). The sums run in numpy once per frame: plain Python
+While the meter screen is open, LevelReader records the FM-1's input with pw-cat (a second, read-only stream next
+to the headphone loopback) at its own 48 kHz and averages each three samples into one: the meters work at 16 kHz.
+Asking pw-cat for 16 kHz instead made PipeWire convert, which took 11% of a Zero W, dropped blocks and was heard
+as Bluetooth dropouts while a meter was open (2026-11-03: 2% at 48 kHz). The sums run in numpy once per frame: plain Python
 manages ~2 us a sample on a Zero W, too slow for 32,000 samples a second. numpy is imported the first time
 the meters open (it takes a few seconds on a Zero W), so it doesn't slow the bridge's start-up.
 """
@@ -22,7 +24,8 @@ import library
 
 METERS = ("Bars", "VU", "Spectrum", "Scope", "Tape", "Tuner", "MIDI", "Waterfall", "Stereo", "History", "Beat")
 NO_AUDIO = ("MIDI", "Beat")             # meters drawn from MIDI alone: no audio stream while they show
-RATE, BLOCK = 16000, 512                # frames per second and per read (32 ms)
+RATE, BLOCK = 16000, 512                # frames per second and per read (32 ms), as the meters see them
+CAPTURE, DOWN = 48000, 3                # what pw-cat records (the FM-1's rate: nothing to convert), averaged 3 to 1
 FULL = 32768.0
 FLOOR = -60.0                           # dBFS shown as nothing
 VU_REF = -18.0                          # dBFS (RMS) that reads 0 VU, the usual digital alignment
@@ -231,7 +234,7 @@ class LevelReader:
         self.pending, self.recent = bytearray(), b""
         try:
             self.proc = subprocess.Popen(
-                ["pw-cat", "--record", "--raw", *capture(target), "--rate", str(RATE), "--channels", "2",
+                ["pw-cat", "--record", "--raw", *capture(target), "--rate", str(CAPTURE), "--channels", "2",
                  "--format", "s16", "--latency", "32ms", "-"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError:
@@ -241,11 +244,13 @@ class LevelReader:
         threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
 
     def read(self, proc):
-        size = BLOCK * 4
+        import numpy as np
+        size = BLOCK * DOWN * 4
         while True:
             data = proc.stdout.read(size)
             if len(data) < size:
                 return
+            data = np.frombuffer(data, dtype="<i2").reshape(BLOCK, DOWN, 2).mean(axis=1).astype("<i2").tobytes()
             with self.lock:
                 self.pending += data
                 del self.pending[:-RATE * 4]                    # at most a second if nobody takes it

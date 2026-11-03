@@ -545,6 +545,23 @@ def test_colour_themes():
     assert "theme" not in [r[0] for r in oled.settings_rows()]
 
 
+
+def test_reader_records_at_48k():
+    """LevelReader takes pw-cat's 48 kHz and keeps 16 kHz for the meters, each three samples averaged"""
+    import io
+    import struct
+    left = [3000, 3003, 3006] * meters.BLOCK                  # three samples a step: their mean on the left
+    right = [-90, -90, -90] * meters.BLOCK
+    raw = b"".join(struct.pack("<hh", a, b) for a, b in zip(left, right))
+
+    class Proc:
+        stdout = io.BytesIO(raw)
+    reader = meters.LevelReader()
+    reader.read(Proc)
+    got, recent = reader.take()
+    assert got.shape == (meters.BLOCK, 2) and (got[:, 0] == 3003).all() and (got[:, 1] == -90).all()
+    assert len(recent) == meters.BLOCK
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

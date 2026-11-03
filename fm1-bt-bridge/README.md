@@ -151,6 +151,9 @@ airtime.
 
 - **"FM-1 Companion" isn't in my phone's Bluetooth list.** That's normal: connect from the music app instead.
 - **The speaker connects but there's no sound.** Settings → Mixer › Audio rate, press (twice to keep the rate).
+- **The FM-1's own speaker plays too (and it's ahead of the headphones).** On the FM-1, set its USB audio to
+  **Full**, then turn its **Master** to 0: its speaker goes quiet and the Pocket still gets the full sound (a Pocket
+  user's tip, tried with Beats Fit Pro).
 - **Audio crackles or drops.** Turn Wi-Fi off first. Then see Troubleshooting.
 
 ## Using it
@@ -241,6 +244,7 @@ a half.
 | · **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
 | · **Theme ›** | On a colour LCD: the screens' colours, FM-1 A's or one picked (it shows each as you scroll). |
 | · **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
+| · **About ›** | The version, what the FM-1 runs, the Pocket's name and address, its board and screen. The version is on the start-up screen too. |
 
 ### Headphones
 

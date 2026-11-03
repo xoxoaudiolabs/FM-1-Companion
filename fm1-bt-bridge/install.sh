@@ -158,6 +158,18 @@ dtparam=spi=on
 ' "$SCREEN" | sudo tee -a "$CONFIG" >/dev/null
 fi
 
+# The Pocket's CPU held at its full speed (force_turbo: no over-voltage, so no warranty bit): with "ondemand" a Zero
+# drops to 700 MHz between bursts, and the audio's next cycle can come before it's back up (not measured; it costs
+# some battery). Takes effect at the next boot.
+if [ "$BUILD" = pocket ] && ! grep -q "^force_turbo=1" "$CONFIG"; then
+    sudo cp "$CONFIG" "$CONFIG.bak"
+    printf '
+[all]
+# FM-1 Companion Pocket: the CPU at full speed
+force_turbo=1
+' | sudo tee -a "$CONFIG" >/dev/null
+fi
+
 if [ "$BUILD" = desk ]; then              # the boot screen as soon as the touchscreen appears (deskboot.py)
     echo "== The Studio's boot screen, early in boot"
     printf 'SUBSYSTEM=="graphics", KERNEL=="fb[0-9]", ATTR{name}=="fb_ili9486|ili9486drmfb", RUN+="/bin/sh -c '"'"'test -f %s && cat %s > /dev/%%k'"'"'"\n' \
@@ -295,6 +307,8 @@ echo "== Starting at boot without a login"
 sudo loginctl enable-linger "$USER"
 as_user systemctl --user daemon-reload
 as_user systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service fm1-web.service
+# PipeWire's filter-chain (no chains here) and BlueZ's media-player proxy (no player here): off, for the Zero's CPU
+as_user systemctl --user disable --now filter-chain.service mpris-proxy.service 2>/dev/null || true
 sync                                    # on the card before anyone pulls the power
 
 echo

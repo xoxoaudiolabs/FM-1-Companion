@@ -954,6 +954,15 @@ function preset(slot, action) {
 const run = (c) => post("/api/run", {cmd:c}).then(() => { refresh(); setTimeout(update, 300); });
 const ask = (body) => post("/api/ask", body).then(() => setTimeout(update, 300));
 async function del(folder, name) { if (confirm(`Delete ${name}?`)) { await post("/api/delete", {folder, name}); refresh(); } }
+// a project inside a backup: it goes with its backup (the backup's other projects too, so it says which)
+async function delBackup(name) {
+  const b = lib.backups.find((x) => x.name === name) || {};
+  const all = (b.projects || []).map((p) => "project " + p).join(", ");
+  if (confirm(`This project is in the backup of ${when(b.date)}. Delete that backup?` + (all ? `
+It holds ${all}: they all go.` : ""))) {
+    await post("/api/delete", {folder: "backups", name}); refresh();
+  }
+}
 async function upload(folder, input) {
   for (const f of input.files) {
     toast(`Uploading ${f.name}…`);
@@ -983,7 +992,7 @@ function renderLibrary() {
   const all = [...files, ...fromBackups];
   $("projects").innerHTML = all.length ? all.map((p, i) => `<div class="item"><div><div class="name">${esc(p.label)}</div><div class="meta">${p.meta}</div></div>
     <div class="row">${targetSelect("t" + i)}<button onclick="ask({cmd:'load-project', folder:${q(p.folder)}, file:${q(p.file)}, source:${q(p.source)}, target:$('t${i}').value})">Load…</button>
-    ${p.folder === "backups" ? `<a href="/api/project?backup=${encodeURIComponent(p.file)}&source=${p.source}" download><button>Download</button></a>` : `<a href="/files/projects/${encodeURIComponent(p.file)}" download><button>Download</button></a><button class="danger" onclick="del('projects',${q(p.file)})">Delete</button>`}</div></div>`).join("")
+    ${p.folder === "backups" ? `<a href="/api/project?backup=${encodeURIComponent(p.file)}&source=${p.source}" download><button>Download</button></a><button class="danger" onclick="delBackup(${q(p.file)})">Delete</button>` : `<a href="/files/projects/${encodeURIComponent(p.file)}" download><button>Download</button></a><button class="danger" onclick="del('projects',${q(p.file)})">Delete</button>`}</div></div>`).join("")
     : `<p class="empty">No projects yet: make a backup, or upload a project file.</p>`;
   const older = lib.backups.filter((b) => (b.projects || []).length).length - newest.length;   // (every boot backup added five: a Pocket user's list, 2026-11-02)
   if (older > 0 || olderProjects) $("projects").innerHTML += `<div class="row" style="margin-top:8px"><button onclick="olderProjects = !olderProjects; renderLibrary()">${olderProjects ? "Newest backup only" : `Show older backups' projects (${older})`}</button></div>`;

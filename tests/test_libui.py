@@ -202,7 +202,14 @@ def test_flows():
     keys(app, "left")                                      # back to the top list, on Library
     assert app.settings_menu is None and app.setting == top.index("g_library") and app.screen == "settings"
     keys(app, "down", "press")                             # Box ›: the Pocket's own
-    assert app.settings_menu == "box" and [r[0] for r in app.settings_rows()] == ["sd", "wifi"]
+    assert app.settings_menu == "box" and [r[0] for r in app.settings_rows()] == ["sd", "wifi", "about"]
+    at_row(app, "box", "about")
+    keys(app, "press")                                     # About: the version first, then what it runs on
+    assert app.screen == "pick" and app.pick["title"] == "About" and app.pick["items"][0][1] == "Version"
+    assert [i[1] for i in app.pick["items"]] == ["Version", "FM-1", "Name", "Address", "Board", "Screen"]
+    snap(app, "about")
+    keys(app, "press", "left")                             # (pressing a row does nothing)
+    app.screen, app.settings_menu = "settings", "box"
     snap(app, "settings-box")
     keys(app, "left", "up", "press", "press")              # Library › Sloop ›: what only works on SLOOP
     assert app.settings_menu == "sloop" and [r[0] for r in app.settings_rows()] == [

@@ -215,8 +215,8 @@ def draw_box(img, t, lines, bar=None):
     return img
 
 
-def draw_splash(t, size=128):
-    """the LCD at start-up, as soon as it's open (the rest takes a while on a Zero W)"""
+def draw_splash(t, size=128, version=None):
+    """the LCD at start-up, as soon as it's open (the rest takes a while on a Zero W), with the version under it"""
     use_size(size)
     up = (128 - H) // 2                           # (the 120 one a little higher)
     img = Image.new("RGB", (W, H), t.bg)
@@ -225,6 +225,8 @@ def draw_splash(t, size=128):
     text(d, ((W - width("Companion")) // 2, 70 - up), "Companion", t.c[4])
     d.line((24, 88 - up, W - 24, 88 - up), fill=t.c[1])
     text(d, ((W - width("Starting...")) // 2, 94 - up), "Starting...", t.c[2])
+    if version:
+        text(d, ((W - width(version)) // 2, 110 - up), version, t.c[1])
     return img
 
 

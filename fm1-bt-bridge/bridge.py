@@ -1762,7 +1762,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             return which + [r for r in rows if r[0] in keys]
         if menu == "box":                     # the Pocket's own
             theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
-            return [("sd", "Import SD card", "")] + theme + [("wifi", "Wi-Fi", wifi)]
+            return ([("sd", "Import SD card", "")] + theme + [("wifi", "Wi-Fi", wifi)]
+                    + [("about", "About", "v" + device.POCKET_VERSION)])
         return [("g_mixer", "Mixer", "›"), ("g_play", "Playing", "›"), ("g_midi", "MIDI", "›"),
                 ("g_bt", "Bluetooth", "›"), ("g_link", "Studio link", self.link_label()),
                 ("g_library", "Library", "›"), ("g_box", "Box", "›")]
@@ -1780,6 +1781,25 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
     def fm1_page_name(self):
         """Library's row for the FM-1: its firmware's name ("SLOOP", "Felucca", "X0X" ...), "FM-1" when unknown"""
         return FM1_PAGE_NAMES.get(self.fm1_kind(), "FM-1")
+
+    def about_rows(self):
+        """Settings > Box > About: [(what, its name, None)] (asked by a Pocket user, 2026-11-03)"""
+        import socket
+        try:                                  # (the address the Pocket is reached at: no packet is sent)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("192.0.2.1", 9))
+                address = s.getsockname()[0]
+        except OSError:
+            address = "no network"
+        screens = {"oled": "1.3\" OLED", "lcd144": "1.44\" LCD", "lcd": "1.44\" LCD", "lcd13": "1.3\" LCD"}
+        board = (self.box.get("board") or "Pi").replace("Raspberry ", "").split(" Rev")[0]
+        rows = [("v" + device.POCKET_VERSION, "Version"), (self.fw_label or "none", "FM-1"),
+                (socket.gethostname(), "Name"), (address, "Address"), (board, "Board"),
+                (screens.get(self.state.get("screen"), "OLED"), "Screen")]
+        return [(what, name, None) for what, name in rows]    # (a picker's rows: shown, nothing to pick)
+
+    def open_about(self):
+        self.open_pick("About", self.about_rows(), lambda _: None, "")
 
     def settings_parent(self):
         """the list a Settings page is in: the Pocket's Library for its Sloop, else the top list (None)"""
@@ -1829,6 +1849,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.library_choose(key)
         elif key == "theme":                  # the LCD's colours (pocketui)
             self.open_theme_pick()
+        elif key == "about":
+            self.open_about()
         elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
@@ -2414,11 +2436,12 @@ def splash(display, state=None):
         import sloopstyle as st
         pick = (state or {}).get("desk_theme", "follow")
         display.show(pocketui.draw_splash(st.Theme(pick) if pick in st.POCKET else st.Theme("XOXO"),
-                                          getattr(display, "size", 128)))
+                                          getattr(display, "size", 128), "v" + device.POCKET_VERSION))
         return
     img = Image.new("1", (128, 64))
     d = ImageDraw.Draw(img)
-    for y, text, f in ((16, "FM-1 Companion", font(12, True)), (38, "Starting...", font(11))):
+    for y, text, f in ((10, "FM-1 Companion", font(12, True)), (30, "Starting...", font(11)),
+                       (48, "v" + device.POCKET_VERSION, font(10))):     # (the version: asked for, 2026-11-03)
         d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
     display.show(img)
 

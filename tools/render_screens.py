@@ -275,7 +275,8 @@ def main():
         str(fonts / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")), size)
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
-    state = dict(bridge.DEFAULTS, last_name="JBL Go 3", last_mac="00:00:00:00:00:00", clock_mode="box")
+    state = dict(bridge.DEFAULTS, last_name="JBL Go 3", last_mac="00:00:00:00:00:00", clock_mode="box",
+                 desk_theme="XOXO")                  # (the colour screens in the default theme, XOXO)
     global TAKE
     import library as lib
     meters.load_numpy()

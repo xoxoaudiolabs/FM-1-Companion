@@ -7,11 +7,13 @@ a small screen HAT, with no computer needed once it's set up. By [XOXO Audio Lab
 **[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
 · [Web app launcher](https://xoxoaudiolabs.com/app/) · [What's new](docs/CHANGELOG.md)
 
-[![The Pocket demo: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
+[![The Pocket demo: its colour screen in the XOXO theme, the meters moving with the FM-1, each key press lit](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-pocket-v3.0.2.mp4)
 
-**[▶ Pocket demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
-(1:46, with sound). Drawn by the box's own screen code on a computer, with each button press shown; it isn't
-filmed. Its audio is real: played on the FM-1 and recorded by the box.
+**[▶ Pocket demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-pocket-v3.0.2.mp4)**
+(1:46, with sound): HOME, the eleven meters, Settings, the library, DX7 patches, the MIDI routes, the sample
+editor, the mixer and the themes, on the 1.44" LCD in the XOXO theme. Drawn by the box's own screen code on a
+computer, pressing the keys a user would (each one lit); it isn't filmed. Its sound is real: the FM-1, recorded by
+the box, and the meters are fed it. Made with `tools/render_video.py`.
 
 <img src="docs/images/device-with-fm1.jpg" width="560" alt="The Pocket on its PiSugar battery, cabled to the FM-1 running SLOOP">
 
@@ -307,8 +309,9 @@ Girl next to two FM-1s).
 | `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi, Ethernet and SD-card configuration |
 | `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for everything else (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
 | `tools/render_screens.py` | Draws the screens as PNG files for this README, without a Pi |
+| `tools/render_video.py` | Makes the demo video from the box's own screens and a recording of the FM-1, without a Pi |
 | `tools/midi_timing.py` | Analyses the Bluetooth MIDI timing log |
-| `docs/` | The images and video on this page |
+| `docs/` | The images and the video on this page |
 </details>
 
 ## License

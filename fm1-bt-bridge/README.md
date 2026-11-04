@@ -26,12 +26,12 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 
 ## Compatibility
 
-**Tested by us** (on the real Pocket), and what should work but hasn't been tried yet:
+**Tested by us** on the real Pocket, **user tested** by builders, and what should work but hasn't been tried yet:
 
 | Board | |
 |---|---|
 | Pi Zero W (v1.1) | Tested |
-| Pi Zero WH | Should work: the same board as the Zero W with its header soldered on |
+| Pi Zero WH | User tested |
 | Pi Zero 2 W / 2 WH | Should work: not tried by us yet. It's quad-core; the Companion keeps the Zero W's settings on it |
 | Pi Zero, Zero 1.3, Zero H | **Won't work:** no wireless, so no Bluetooth. The installer stops and says so |
 
@@ -51,7 +51,7 @@ All three use the same pins for the keys and joystick (KEY1 21, KEY2 20, KEY3 16
 | Trixie, 64-bit (Zero 2 W only) | Should work: everything comes from Raspberry Pi OS's own packages; not tried |
 | Bookworm, 32- or 64-bit | Should work: the installer handles its older WirePlumber; not tried for this release |
 
-**Reported by builders:** none yet. Built one on different hardware, or had trouble? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml) (it asks
+**Reported by builders:** a Pi Zero WH with the 1.3" OLED HAT, updated online to v3.0.1, all working. Built one on different hardware, or had trouble? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues/new?template=hardware-report.yml) (it asks
 for what `fm1-report` prints). What a replacement part needs, and how to add a screen:
 [HARDWARE.md](../HARDWARE.md).
 

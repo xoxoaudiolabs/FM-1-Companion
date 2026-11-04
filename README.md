@@ -222,17 +222,20 @@ Girl next to two FM-1s).
   `library.py`, read back the same, a backup made first each time. The DX7 loader refusing that SLOOP FM-1 (SLOOP
   doesn't take DX7 patches).
 
+**User tested** (on a Pocket with a Pi Zero WH with the 1.3" OLED HAT)
+- The Pi Zero WH.
+- The OLED HAT on a current release: everything works.
+- A whole online update from the Pocket's web page, to v3.0.1: no trouble, 2–3 minutes.
+- Playing notes through v2.13's key ranges, splits, velocity % and the new arp rates and hold.
+
 **Not tested on the real Pocket yet**
 - From v2.9: connecting to Bluetooth MIDI keyboards (BT keys) and several Bluetooth MIDI devices at once. v2.9 runs
   on the Pocket, but no such keyboard has been tried.
-- v2.10 on the OLED HAT: its screens are compared as pictures on a computer only.
 - Following FM-1 A's colours on the LCD as they change: the theme is read, but the screen hasn't been watched
   following a change.
 - The HUB HAT's extra USB ports.
 - The Studio link with Wi-Fi off (the cable only), the Pocket's Ethernet coming up by itself after a restart, and
   the Pocket handing its Bluetooth speaker over to the Studio while linked.
-- A whole online update to a newer release: v2.12 is the first release with the updater, so the first real one is
-  the next release. A box on v2.11 or older needs one update over SSH to get it.
 - A Pi Zero 2 W, 64-bit Raspberry Pi OS, and Bookworm (for this release).
 - The 1.3" LCD HAT (ST7789), and the OLED HAT switched to I2C.
 - Sending DX7 patches to a firmware that takes them (M-VAVE's own, FM-1+VA): automated tests only.
@@ -240,9 +243,7 @@ Girl next to two FM-1s).
   data).
 - The safe shutdown at 5% battery.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
-- Playing notes through v2.13's key ranges, splits, velocity % and the new arp rates and hold: saved and shown
-  on the box, but not yet played on a keyboard. The Studio link inviting itself again after the Studio restarts
-  (v2.13): automated tests only.
+- The Studio link inviting itself again after the Studio restarts (v2.13): automated tests only.
 - The rest, with automated tests only: the MIDI matrix's route options and presets, the other seven meters,
   auto backup, SD card import and the Wi-Fi switch.
 

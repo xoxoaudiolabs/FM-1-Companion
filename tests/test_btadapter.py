@@ -94,6 +94,98 @@ def test_info_text():
     assert bridge.is_audio(info) and info["name"] == "JBL Go 3"
 
 
+def test_speaker_scan_lists_only_heard():
+    """the speaker scan lists what was heard during it ([NEW], or a fresh RSSI), not every device BlueZ remembers:
+    a paired JBL that's off was listed while the speaker being paired wasn't to be seen (the Studio, 2026-11-03)"""
+    scan = ("Discovery started\n[CHG] Controller B8:27:EB:15:77:0A Discovering: yes\n"
+            "[CHG] Device 7C:64:56:3F:84:6B RSSI: 0xffffffbf (-65)\n"
+            "[CHG] Device 20:18:5B:EF:AA:B0 Connected: no\n"
+            "[NEW] Device 11:FF:27:5A:21:89 AG-04\n")
+    known = {"20:18:5B:EF:AA:B0": "JBL Go 3", "11:FF:27:5A:21:89": "AG-04", "7C:64:56:3F:84:6B": "[TV] Samsung"}
+
+    def bt(*args, timeout=15):
+        if "scan" in args:
+            return 0, scan
+        if args[0] == "devices":
+            return 0, "".join(f"Device {mac} {name}\n" for mac, name in known.items())
+        return 0, f"\tName: {known[args[1]]}\n\tIcon: audio-card\n\tPaired: no"
+
+    old = bridge.bt
+    bridge.bt = bt
+    try:
+        assert bridge.scan_seen(scan) == {"7C:64:56:3F:84:6B", "11:FF:27:5A:21:89"}
+        assert [d["name"] for d in bridge.bt_scan(1)] == ["[TV] Samsung", "AG-04"]
+    finally:
+        bridge.bt = old
+
+
+def test_pairing_removes_and_scans_only_when_needed():
+    """pairing a speaker: removed first only if it's paired already (a stale pairing), scanned for only if BlueZ
+    doesn't know it (an AG-04 that advertises now and then was removed, missed by the scan, "Not found" each time)"""
+    mac = "11:FF:27:5A:21:89"
+    state = {"info": "\tName: AG-04\n\tPaired: no"}
+    calls = []
+
+    def bt(*args, timeout=15):
+        calls.append(["scan"] if args[0] == "--timeout" else list(args[:2]))
+        if args[0] == "info":
+            return 0, state["info"]
+        if args[0] == "remove":
+            state["info"] = f"Device {mac} not available"
+        if "pair" in args:
+            return 0, "Pairing successful"
+        return 0, "Connection successful" if "connect" in args else ""
+
+    old = bridge.bt
+    bridge.bt = bt
+    try:
+        assert bridge.bt_pair(mac)[0]
+        assert ["remove", mac] not in calls and ["scan"] not in calls       # known, not paired: at once
+        calls.clear()
+        state["info"] = f"Device {mac} not available"                       # forgotten since the scan
+        bridge.bt_pair(mac)
+        assert ["scan"] in calls and ["remove", mac] not in calls
+        calls.clear()
+        state["info"] = "\tName: AG-04\n\tPaired: yes"                      # stale: removed, seen again
+        bridge.bt_pair(mac)
+        assert calls.index(["remove", mac]) < calls.index(["scan"])
+    finally:
+        bridge.bt = old
+
+
+def test_dbus_scan_says_what_it_heard():
+    """on a USB adapter the scan goes through D-Bus: it prints the devices heard (an RSSI) as bluetoothctl would,
+    so bt_scan's heard-only list works there too; a paired speaker that's off (no RSSI) and the Pi's own aren't"""
+    class DBusException(Exception):
+        pass
+
+    fake = type(sys)("dbus")
+    fake.DBusException, fake.ObjectPath, fake.Boolean = DBusException, str, bool
+    hci1, called = "/org/bluez/hci1", []
+
+    class Ctl(btadapter.Bluetoothctl):
+        def objects(self):
+            return {hci1: {self.ADAPTER: {"Address": DONGLE}},
+                    hci1 + "/dev_11_FF_27_5A_21_89": {self.DEVICE: {"Address": "11:FF:27:5A:21:89", "RSSI": -60}},
+                    hci1 + "/dev_20_18_5B_EF_AA_B0": {self.DEVICE: {"Address": "20:18:5B:EF:AA:B0"}},
+                    "/org/bluez/hci0/dev_7C_64_56_3F_84_6B": {self.DEVICE: {"Address": "7C:64:56:3F:84:6B",
+                                                                            "RSSI": -65}}}
+
+        def call(self, path, iface, method, *args, timeout=25):
+            called.append(method)
+
+    old = sys.modules.get("dbus")
+    sys.modules["dbus"] = fake
+    try:
+        code, out = Ctl(DONGLE, bus=object()).run(["--timeout", "0.01", "scan", "on"])
+    finally:
+        sys.modules.pop("dbus")
+        if old:
+            sys.modules["dbus"] = old
+    assert code == 0 and called == ["StartDiscovery", "StopDiscovery"], called
+    assert bridge.scan_seen(out) == {"11:FF:27:5A:21:89"}, out
+
+
 class Box:
     """the app's adapter switch, without the app"""
     check_adapter = bridge.App.check_adapter

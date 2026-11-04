@@ -200,11 +200,22 @@ def parse_devices(text):
     return found
 
 
+def scan_seen(text):
+    """bluetoothctl's scan output -> the addresses heard during it ([NEW], or a fresh RSSI)"""
+    found = re.findall(r"\[NEW\] Device ([0-9A-F:]{17})|\[CHG\] Device ([0-9A-F:]{17}) RSSI", text)
+    return {new or rssi for new, rssi in found}
+
+
 def bt_scan(seconds=SCAN_SECONDS):
-    bt("--timeout", str(seconds), "scan", "on", timeout=seconds + 10)
+    """the speakers (or, none, anything) heard during a scan: not every one BlueZ remembers (a paired speaker
+    that's off was listed, found on the Studio 2026-11-03)"""
+    _, heard = bt("--timeout", str(seconds), "scan", "on", timeout=seconds + 10)
+    seen = scan_seen(heard)
     _, out = bt("devices", timeout=5)
     devices = []
     for mac, name in parse_devices(out):
+        if mac not in seen:
+            continue
         info = parse_info(mac, bt("info", mac, timeout=5)[1])
         info.setdefault("name", name)
         devices.append(info)
@@ -236,9 +247,13 @@ def bt_pair(mac):
     # bonding and forgets the keys on disconnect: be pairable just while pairing
     bt("pairable", "on", timeout=5)
     try:
-        bt("remove", mac, timeout=10)          # a stale, unbonded pairing would make "pair" a no-op
-        # BlueZ forgets unpaired devices about 30 s after a scan, and "remove" just did: see it again
-        bt("--timeout", "6", "scan", "on", timeout=16)
+        if "Paired: yes" in bt("info", mac, timeout=5)[1]:
+            bt("remove", mac, timeout=10)      # a stale, unbonded pairing would make "pair" a no-op
+        if "not available" in bt("info", mac, timeout=5)[1]:
+            # BlueZ forgets unpaired devices about 30 s after a scan (and "remove" just did): see it again. Not
+            # removed and scanned for each time: a speaker that advertises only now and then (an AG-04) was missed
+            # by a 6 s scan, and its pairing failed "Not found" every time (the Studio, 2026-11-03)
+            bt("--timeout", "10", "scan", "on", timeout=20)
         _, out = bt("--agent", "NoInputNoOutput", "pair", mac, timeout=40)
     finally:
         bt("pairable", "off", timeout=5)
@@ -1619,6 +1634,56 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
 
         self.job("Disconnecting", work)
 
+    def bt_devices(self):
+        """[{"mac", "name", "kind", "on"}]: what the adapter in use has paired or connected (speakers, keyboards,
+        phones on Bluetooth MIDI), and the saved keyboards it doesn't know yet; kind "spkr", "keys" or "misc"
+        """
+        keys = {k[0].upper(): k[1] for k in getattr(self.midi, "ble_keys", None) or []}
+        rows = []
+        _, out = bt("devices", timeout=5)
+        for line in out.splitlines():
+            m = re.match(r"\s*Device ([0-9A-F:]{17}) (.+)", line)
+            if not m:
+                continue
+            info = parse_info(m.group(1), bt("info", m.group(1), timeout=5)[1])
+            on = info.get("connected") == "yes"
+            if not (on or info.get("paired") == "yes" or m.group(1) in keys):
+                continue                      # (seen in a scan, never paired)
+            kind = "keys" if m.group(1) in keys else "spkr" if is_audio(info) else "misc"
+            rows.append({"mac": m.group(1), "name": info.get("alias") or info.get("name") or m.group(2).strip(),
+                         "kind": kind, "on": on})
+        listed = {r["mac"] for r in rows}
+        rows += [{"mac": a, "name": n, "kind": "keys", "on": False} for a, n in keys.items() if a not in listed]
+        return sorted(rows, key=lambda r: (not r["on"], r["name"].lower()))
+
+    def open_bt_devices(self):
+        """Settings > Bluetooth > BT devices: a list of them; one chosen is forgotten (hold to confirm)"""
+        def work():
+            items = [(r["name"][:14], r["kind"] + (" on" if r["on"] else ""), r) for r in self.bt_devices()]
+            self.open_pick("BT devices", items, self.ask_forget, "No Bluetooth devices", back="settings")
+            return True, None
+
+        self.job("Looking", work)
+
+    def ask_forget(self, device):
+        what = {"spkr": "speaker or headphones", "keys": "a MIDI keyboard"}.get(device["kind"], "Bluetooth device")
+        self.ask("Forget?", [device["name"][:20], what, "pair again to use it"], lambda: self.forget(device))
+
+    def forget(self, device):
+        """forget a paired device: a keyboard through the MIDI side (its saved list too), the rest bluetoothctl
+        remove; the saved speaker is cleared so the box stops reconnecting to it"""
+        self.screen = "settings"
+        mac = device["mac"]
+        if mac == (self.state.get("last_mac") or "").upper():
+            self.auto = False
+            self.state.update(last_mac=None, last_name=None)
+            save_state(self.state)
+        if device["kind"] == "keys" and self.midi:
+            self.midi.ble_forget(mac)
+            self.say(f"Forgot {device['name']}", 2)
+            return
+        self.job("Forgetting", lambda: (bt("remove", mac, timeout=10), (True, f"Forgot {device['name']}"))[1])
+
     def volume_step(self, step):
         if not self.sink:
             return
@@ -1669,7 +1734,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         linked = sum(1 for k in bt_keys if k[2])
         return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("midi", "BLE MIDI", midi),
                 ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
-                ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›")]
+                ("btkeys", "BT keys", f"{linked} of {len(bt_keys)}" if bt_keys else "add ›"),
+                ("btdevices", "BT devices", "›")]
 
     def pocket_settings_rows(self, wifi, rate):
         """the Pocket's Settings: seven pages (tidied 2026-11-02: the backup settings were hard to find, MIDI routes
@@ -1867,6 +1933,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.midi.set_enabled(on)
             self.state["midi_enabled"] = on
             save_state(self.state)
+        elif key == "btdevices":               # what's paired: forget one
+            self.open_bt_devices()
         elif key == "btkeys":                  # Bluetooth MIDI keyboards: the box connects to them
             self.start_scan("midi")
         elif key == "link" and self.midi:     # the Pocket's Studio link: MIDI both ways, the Studio's clock

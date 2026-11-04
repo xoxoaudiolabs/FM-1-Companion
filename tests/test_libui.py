@@ -188,7 +188,7 @@ def test_flows():
     assert app.screen == "settings" and app.settings_menu == "midi" and app.setting == 0
     keys(app, "left", "down", "press")                     # Bluetooth ›: the speaker, Bluetooth MIDI
     assert app.settings_menu == "bt" and [r[0] for r in app.settings_rows()] == [
-        "speaker", "audio", "midi", "pairing", "btkeys"]
+        "speaker", "audio", "midi", "pairing", "btkeys", "btdevices"]
     keys(app, "left", "down", "press")                     # Studio link ›
     assert app.settings_menu == "link" and [r[0] for r in app.settings_rows()] == ["link", "link_audio", "link_hear"]
     assert app.settings_rows()[0][2] == "looking"                  # (on out of the box, no Studio here)
@@ -1179,6 +1179,82 @@ def test_bt_keyboards():
     bridge.bt_scan = lambda: []
     app.on_key("key1")
     assert app.scan_kind == "audio"
+
+
+def test_bt_devices():
+    """Settings > Bluetooth > BT devices: what's paired or connected, tagged; a press asks, holding forgets it (a
+    keyboard through the MIDI side, the rest bluetoothctl remove); the saved speaker is cleared too."""
+    class Midi:
+        enabled, error, peer, pairing_until, controllers = True, None, None, 0.0, []
+        ble_found, ble_scanning = [], False
+
+        def __init__(self):
+            self.ble_keys, self.sent = [["AA:00:00:00:00:01", "microKEY Air", True],
+                                        ["DD:00:00:00:00:04", "WIDI Master", False]], []
+
+        def usb_label(self):
+            return "Felucca"
+
+        def activity(self):
+            return 0.0
+
+        def ble_forget(self, address):
+            self.sent.append(("forget", address))
+
+    devices = {"20:18:5B:EF:AA:B0": "Name: JBL Go 3\nPaired: yes\nConnected: yes\nIcon: audio-headset\n",
+               "AA:00:00:00:00:01": "Name: microKEY Air\nPaired: no\nConnected: yes\n",
+               "BB:00:00:00:00:02": "Name: iPad\nAlias: Pat's iPad\nPaired: yes\nConnected: no\n",
+               "CC:00:00:00:00:03": "Name: Someone's TV\nPaired: no\nConnected: no\n"}   # (a scan saw it)
+    calls = []
+
+    def bt(*args, timeout=15):
+        calls.append(args)
+        if args[0] == "devices":
+            return 0, "".join(f"Device {mac} x\n" for mac in devices)
+        if args[0] == "info":
+            return 0, devices[args[1]]
+        return 0, "Device has been removed"
+
+    old, old_save = bridge.bt, bridge.save_state
+    bridge.bt, bridge.save_state = bt, lambda state: None
+    try:
+        app = make_app()
+        app.midi = Midi()
+        app.state.update(last_mac="20:18:5B:EF:AA:B0", last_name="JBL Go 3")
+        app.screen, app.settings_menu = "settings", "bt"
+        app.setting = [r[0] for r in app.settings_rows()].index("btdevices")
+        app.on_key("press")
+        for _ in range(100):                               # (looked up in the background)
+            if app.screen == "pick" and not app.busy:
+                break
+            time.sleep(0.02)
+        assert [i[:2] for i in app.pick["items"]] == [("JBL Go 3", "spkr on"), ("microKEY Air", "keys on"),
+                                                     ("Pat's iPad", "misc"), ("WIDI Master", "keys")]
+        snap(app, "bt-devices")
+        app.on_key("down")
+        app.on_key("press")                                # a keyboard: asks first
+        assert app.screen == "confirm" and app.midi.sent == []
+        app.on_key("press")
+        assert app.screen == "confirm" and app.midi.sent == []        # a press alone doesn't forget
+        app.on_key("press", True)
+        assert app.midi.sent == [("forget", "AA:00:00:00:00:01")] and app.screen == "settings"
+        assert app.state["last_mac"] == "20:18:5B:EF:AA:B0"            # the speaker kept
+        app.screen, app.pick["cursor"] = "pick", 0
+        app.on_key("press")
+        snap(app, "bt-devices-forget")
+        app.on_key("press", True)                          # the saved speaker: removed, not reconnected to
+        for _ in range(100):
+            if not app.busy:
+                break
+            time.sleep(0.02)
+        assert ("remove", "20:18:5B:EF:AA:B0") in calls and app.state["last_mac"] is None and not app.auto
+        assert app.settings_rows()[0][2] == "none"
+        app.screen, app.pick["cursor"] = "pick", 2
+        app.on_key("press")
+        app.on_key("left")                                 # not this one: back to the list
+        assert app.screen == "pick" and ("remove", "BB:00:00:00:00:02") not in calls
+    finally:
+        bridge.bt, bridge.save_state = old, old_save
 
 
 if __name__ == "__main__":

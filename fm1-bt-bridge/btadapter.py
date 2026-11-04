@@ -165,11 +165,17 @@ class Bluetoothctl:
         if verb == "scan":
             self.call(adapter, self.ADAPTER, "StartDiscovery")
             time.sleep(seconds or 5)
+            # what was heard, as bluetoothctl shows it (bridge.scan_seen): a device has an RSSI only while it's
+            # heard during discovery (BlueZ drops it when discovery stops, so it's read first)
+            heard = "".join(f"[CHG] Device {d.get('Address')} RSSI: {int(d['RSSI'])}\n"
+                            for path, ifaces in sorted(self.objects().items())
+                            for d in [ifaces.get(self.DEVICE)]
+                            if d and "RSSI" in d and str(path).startswith(adapter + "/"))
             try:
                 self.call(adapter, self.ADAPTER, "StopDiscovery")
             except dbus.DBusException:
                 pass
-            return 0, "Discovery stopped"
+            return 0, heard + "Discovery stopped"
         if verb == "pairable":
             self.call(adapter, self.PROPS, "Set", self.ADAPTER, "Pairable", dbus.Boolean(rest[0] == "on"))
             return 0, f"Changing pairable {rest[0]} succeeded"

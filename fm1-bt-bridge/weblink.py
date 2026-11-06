@@ -11,7 +11,8 @@ import time
 import blemidi
 import library
 
-SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate", "auto_backup", "keep_backups", "output")
+SETTINGS = ("metronome", "bpm", "clock_mode", "click", "audio_rate", "auto_backup", "keep_backups", "output",
+            "library_fm1")                    # (the FM-1 the library works on: the web page's FM-1 A/B starts there)
 OUTPUTS = ("both", "speaker", "phones")       # the "output" setting: where the sound goes when there's a jack
 
 

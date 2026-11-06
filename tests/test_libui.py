@@ -2,6 +2,7 @@
 
   python tests/test_libui.py [PNG_DIR]     (needs Pillow and mido; PNG_DIR gets a picture of each screen)
 """
+import json
 import os
 import sys
 import tempfile
@@ -342,29 +343,56 @@ def test_auto_backup_schedule():
     assert len([p for p in backups.glob("*.json") if library.BOX_MADE.search(p.name)]) == 1
     keys(app, "press")
     assert app.state["keep_backups"] == 2
-    # at start: one backup, then none
+    # at start: one backup of every FM-1; it failed, so again a minute later (not at once), three times at most
+    def ended(state):
+        library.STATE.parent.mkdir(parents=True, exist_ok=True)
+        library.STATE.write_text(json.dumps({"job": "backup", "state": state, "started": time.time(), "pid": 0}))
+        app.job_read = 0
+
     app.started.clear()
     app.auto_backup()
+    app.auto_backup()                                      # (still running: nothing new)
+    assert app.started == [["backup", "--auto", "--all"]]
+    ended("error")
     app.auto_backup()
-    assert app.started == [["backup", "--auto"]]
+    assert len(app.started) == 1 and not app.autobackup_flag.exists()
+    app.auto_retry = 0
+    app.auto_backup()
+    assert len(app.started) == 2
+    ended("done")
+    app.auto_backup()                                      # done: once this boot
+    app.auto_backup()
+    assert len(app.started) == 2 and app.boot_backed_up() == 1
     # every 2 minutes
     app.state["auto_backup"] = 2
     app.last_auto -= 60
     app.auto_backup()
-    assert len(app.started) == 1                           # only 1 minute so far
+    assert len(app.started) == 2                           # only 1 minute so far
     app.last_auto -= 61
     app.auto_backup()
-    assert len(app.started) == 2
+    assert len(app.started) == 3
     # off: nothing, not even at start-up
     app.state["auto_backup"] = "off"
     app.autobackup_flag.unlink()
     app.last_auto -= 1000
     app.auto_backup()
-    assert len(app.started) == 2
+    assert len(app.started) == 3
     # no FM-1: nothing
     app.state["auto_backup"], app.midi = 5, None
     app.auto_backup()
-    assert len(app.started) == 2
+    assert len(app.started) == 3
+    # a start-up backup that never succeeds: tried three times, then it waits (no backup every minute forever)
+    app.midi, app.auto_job, app.auto_tries = Midi(), None, 0
+    app.autobackup_flag.unlink(missing_ok=True)
+    for _ in range(3):
+        app.auto_retry = 0
+        app.auto_backup()
+        ended("error")
+        app.auto_backup()
+    assert len(app.started) == 6 and app.autobackup_flag.exists()
+    app.auto_retry, app.last_auto = 0, time.monotonic()
+    app.auto_backup()
+    assert len(app.started) == 6
 
 
 def test_job_screen_and_status():
@@ -756,7 +784,8 @@ def test_two_fm1s():
     app.midi.net = ["XOXO Studio"]
     assert "NET" in app.matrix_lists()[0] and "NET" in app.matrix_lists()[1]
     app.midi.net = []
-    app.mx = [3, 0]
+    assert app.matrix_lists()[0][:2] == ["FM-1", "FM-1 B"] == app.matrix_lists()[1][:2]   # same order both ways
+    app.mx = [1, 0]
     assert app.cell() == "FM-1 B>FM-1"
     snap(app, "matrix-two")
     app.on_key("press")
@@ -975,7 +1004,7 @@ def test_midi_matrix():
     app.on_key("press")
     assert [r[0] for r in app.route_rows()] == ["on"]
     app.on_key("left")
-    app.mx = [0, 1]                                       # BT > BT: no such route
+    app.mx = [1, 1]                                       # BT > BT: no such route
     app.on_key("press")
     assert app.screen == "matrix"
 

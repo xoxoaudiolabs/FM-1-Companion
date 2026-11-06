@@ -3,7 +3,8 @@
 
   library.py --fm1 A|B|C COMMAND ...  that FM-1 (A: the lowest USB port) instead of Settings > Sloop's, for a
                                       linked Studio's library (its FM-1 E-G are this Pocket's A-C)
-  library.py backup [--auto]          back up the FM-1 (SLOOP 2.3+) into ~/fm1-library/backups
+  library.py backup [--auto] [--all]  back up the FM-1 (SLOOP 2.3+) into ~/fm1-library/backups; --all: every
+                                      FM-1 plugged in, each in turn (one that fails doesn't stop the others)
   library.py restore FILE             a whole backup back onto the FM-1 (backs up first)
   library.py load-project FILE SRC TARGET
                                       a project into the FM-1: SRC working/A-D in a backup (ignored for a
@@ -24,7 +25,8 @@
   library.py import-sd                copy new files from the SD card's fm1-library folder
   library.py list                     the library as JSON
   library.py info                     what the FM-1 runs
-  library.py identify                 the same, quietly, for the screens ("SLOOP 2.8", not its USB name)
+  library.py identify                 the same, quietly, for the screens ("SLOOP 2.8", not its USB name): every
+                                      FM-1 plugged in, each noted on its own
 
 Progress and the result go to $XDG_RUNTIME_DIR/fm1-library.json (the screen and the web page read it);
 one job runs at a time. Exit code 0 when the job worked.
@@ -90,6 +92,7 @@ class Job:
         self.name, self.lock = name, None
         self.status = {"job": name, "state": "running", "step": "", "percent": None, "message": "",
                        "started": time.time(), "pid": os.getpid(), "fm1": FM1}
+        self.prefix = ""                       # "FM-1 B: " while a job goes through each FM-1 (each_fm1)
 
     def __enter__(self):
         RUNTIME.mkdir(parents=True, exist_ok=True)
@@ -118,6 +121,7 @@ class Job:
         tmp.replace(STATE)
 
     def step(self, step, percent=None, message=""):
+        step = self.prefix + step
         self.status.update(step=step, percent=percent, message=message)
         self.write()
         print(f"{step} {'' if percent is None else f'{percent:3.0f}% '}{message}".rstrip(), flush=True)
@@ -302,11 +306,43 @@ def read_theme(dev=None):
 
 def connect():
     dev = sloop.Sloop(sloop.Link(card=target_card()))
+    save_firmware({"firmware": str(dev.version)})
+    return dev
+
+
+def letter():
+    """the FM-1 the library works on now, as target_card picks it: --fm1's, else Settings > Sloop's while it's
+    plugged in, else A (the only one, or Settings' choice left over from an FM-1 since unplugged)"""
+    if FM1:
+        return FM1
+    which = chosen_fm1()
+    return which if FM1_LETTERS.index(which) < len(sloop.fm1_cards()) else "A"
+
+
+def plugged_letters():
+    """the FM-1s plugged in, by USB port: "A", "B", "C" ([] without any)"""
+    return list(FM1_LETTERS[:len(sloop.fm1_cards())])
+
+
+def seen_firmware():
+    """{letter: what that FM-1 last said it runs}: each FM-1 on its own, so FM-1 B's never shows as A's"""
     try:
-        FIRMWARE.write_text(json.dumps({"firmware": str(dev.version)}))
+        seen = json.loads(FIRMWARE.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(seen, dict):
+        return {}
+    return {k: v for k, v in seen.items() if k in FM1_LETTERS and isinstance(v, dict)}
+
+
+def save_firmware(entry):
+    """what the FM-1 the library works on now (letter) says it runs"""
+    seen = seen_firmware()
+    seen[letter()] = entry
+    try:
+        FIRMWARE.write_text(json.dumps(seen))
     except OSError:
         pass
-    return dev
 
 
 def forget_firmware():
@@ -316,16 +352,21 @@ def forget_firmware():
         pass
 
 
-def firmware_label():
-    """"SLOOP 2.8" from what the FM-1 last said ("FELUCCA SLOOP 2.8"); None if nothing has asked it yet. Its
-    USB name says Felucca whatever it runs. One without SLOOP's protocol: its handshake's ("FM-1+VA 102",
-    "Stock 15": note_firmware)"""
+def firmware_labels():
+    """{letter: firmware_label} of each FM-1 plugged in (None: not asked yet)"""
+    return {x: firmware_label(x) for x in plugged_letters()}
+
+
+def firmware_label(which=None):
+    """"SLOOP 2.8" from what the FM-1 (which: A-C, else the one the library works on) last said ("FELUCCA SLOOP
+    2.8"); None if nothing has asked it yet. Its USB name says Felucca whatever it runs. One without SLOOP's
+    protocol: its handshake's ("FM-1+VA 102", "Stock 15": note_firmware)"""
     try:
-        seen = json.loads(FIRMWARE.read_text())
+        seen = seen_firmware()[which or letter()]
         if seen.get("label"):
             return str(seen["label"])
         words = str(seen["firmware"]).split()
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError):
         return None
     if len(words) > 1 and words[0].upper() == "FELUCCA" and not any(c.isdigit() for c in words[1]):
         words = words[1:]
@@ -341,10 +382,7 @@ def note_firmware(ident):
     if kind not in ("baudgirl", "stock"):
         return None
     label = f"{'FM-1+VA' if kind == 'baudgirl' else 'Stock'} {ident.version}"
-    try:
-        FIRMWARE.write_text(json.dumps({"firmware": ident.text, "label": label}))
-    except OSError:
-        pass
+    save_firmware({"firmware": ident.text, "label": label})
     return label
 
 
@@ -357,9 +395,15 @@ def safety_backup(dev, job, why):
     return write_backup(data, why)
 
 
+def fm1_tag():
+    """"_fm1-b" in a backup's name while two or more FM-1s are plugged in (which one it came from, and two backups
+    in the same second don't share a name); "" with one"""
+    return f"_fm1-{letter().lower()}" if len(sloop.fm1_cards()) > 1 else ""
+
+
 def write_backup(data, kind):
     when = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    path = folder("backups") / f"{when}_{slug(data.get('firmware'))}_{kind}.json"
+    path = folder("backups") / f"{when}_{slug(data.get('firmware'))}{fm1_tag()}_{kind}.json"
     sloop.save_json(path, data)
     if kind != "manual":
         prune_auto()
@@ -418,21 +462,59 @@ def import_sd():
 
 # ---------------------------------------------------------------- the jobs
 
-def job_backup(auto=False):
+def each_fm1(job, work):
+    """work(job) on every FM-1 plugged in, in turn (--fm1 set to each): one that fails doesn't stop the others.
+    -> (lines, failed letters); with one FM-1 (or none, or --fm1 given), work(job) just once"""
+    global FM1
+    letters = [] if FM1 else plugged_letters()
+    if len(letters) < 2:
+        work(job)
+        return None, []
+    lines, failed = [], []
+    try:
+        for x in letters:
+            FM1, job.prefix = x, f"FM-1 {x}: "
+            try:
+                work(job)
+                lines.append(f"FM-1 {x}: {job.status['message']}")
+            except (sloop.SloopError, OSError, ValueError) as e:
+                lines.append(f"FM-1 {x}: {e}")
+                failed.append(x)
+            job.status.update(state="running", result=None)
+    finally:
+        FM1, job.prefix = None, ""
+    if len(failed) == len(letters):
+        raise sloop.SloopError("rc", "; ".join(lines))
+    return lines, failed
+
+
+def job_backup(auto=False, every=False):
+    """every: each FM-1 plugged in (the auto backups), else the one the library works on"""
     with Job("backup") as job:
-        job.step("Connecting")
-        try:
-            dev = connect()
-        except sloop.SloopError as e:
-            if e.code != "noreply":
-                raise
-            return fm1va_backup(job, auto)     # (no SLOOP protocol: Baud Girl's FM-1+VA, if it's that)
+        if every:
+            lines, failed = each_fm1(job, lambda j: backup_one(j, auto))
+            if lines:
+                job.done("; ".join(lines), failed=failed)
+        else:
+            backup_one(job, auto)
+
+
+def backup_one(job, auto=False):
+    """the FM-1 the library works on, backed up in its firmware's own way"""
+    job.step("Connecting")
+    try:
+        dev = connect()
+    except sloop.SloopError as e:
+        if e.code != "noreply":
+            raise
+        return fm1va_backup(job, auto)         # (no SLOOP protocol: Baud Girl's FM-1+VA, if it's that)
+    try:
         if sloop.family(dev.version) == "x0x":
             return x0x_fm1_backup(job, dev, "auto" if auto else "manual")
         dev.require_backup()
         data = dev.backup(job.progress("Backing up"))
-        if colour_screen():     # and FM-1 A's colours, for a screen in colour: the boot backup
-            try:                               # learns what it runs, so "identify" (which reads them) isn't asked
+        if colour_screen() and letter() == "A":   # and FM-1 A's colours, for a screen in colour: the boot
+            try:                                   # backup learns what it runs, so "identify" isn't asked
                 read_theme(dev)
             except sloop.SloopError:
                 pass
@@ -444,6 +526,8 @@ def job_backup(auto=False):
                 return
         path = write_backup(data, "auto" if auto else "manual")
         job.done(f"Backed up {dev.version}", file=path.name)
+    finally:
+        dev.link.close()                       # (each_fm1: the next FM-1 opens its own)
 
 
 def x0x_fm1_backup(job, dev, kind):
@@ -543,7 +627,8 @@ def fm1va_restore(job, file, data):
 
 
 def newest_auto():
-    autos = sorted(folder("backups").glob("*_auto.json"))
+    """the newest auto backup of this FM-1 (with two plugged in, its own: A's and B's would never match)"""
+    autos = sorted(folder("backups").glob(f"*{fm1_tag()}_auto.json"))
     return autos[-1] if autos else None
 
 
@@ -758,8 +843,10 @@ def job_load_sample(slot, name, wavs):
 def job_flash(package):
     import fm1_install
     with Job("flash") as job:
-        if len(sloop.fm1_cards()) > 1:         # mid-update the FM-1 restarts as another device: the installer
-            raise sloop.SloopError("two", "Unplug the other FM-1 first")    # could pick up the wrong one
+        letters = plugged_letters()
+        if len(letters) > 1:                   # mid-update the FM-1 restarts as another device: the installer
+            others = " and ".join(f"FM-1 {x}" for x in letters if x != letter())   # could pick up the wrong one
+            raise sloop.SloopError("two", f"One FM-1 at a time: unplug {others} first")
         job.step("Checking the package")       # (~30 s on a Zero W)
         product, image = fm1_install.load_package(package, False)   # a bad package stops here
         job.step("Connecting")
@@ -934,6 +1021,34 @@ def listing():
     return out
 
 
+def identify_one(job):
+    """what the FM-1 the library works on runs, noted for the screens (firmware_label)"""
+    try:
+        dev = connect()
+    except sloop.SloopError as e:
+        if e.code != "noreply":
+            raise
+        import mvave                           # (no SLOOP protocol: stock or Baud Girl's, by M-VAVE's handshake)
+        link = sloop.Link(card=target_card())
+        try:
+            label = note_firmware(mvave.identity(link))
+        finally:
+            link.close()
+        if not label:
+            raise
+        job.done(label)
+        return
+    try:
+        if colour_screen() and letter() == "A":   # and FM-1 A's colours, for a screen in colour
+            try:
+                read_theme(dev)
+            except sloop.SloopError:
+                pass
+        job.done(firmware_label() or str(dev.version))
+    finally:
+        dev.link.close()
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv or argv[0] in ("-h", "--help"):
@@ -948,7 +1063,7 @@ def main(argv=None):
     command, args = argv[0], argv[1:]
     try:
         if command == "backup":
-            job_backup(auto="--auto" in args)
+            job_backup(auto="--auto" in args, every="--all" in args)
         elif command == "restore" and len(args) == 1:
             job_restore(args[0])
         elif command == "load-project" and len(args) == 3:
@@ -982,29 +1097,11 @@ def main(argv=None):
             print(json.dumps(import_sd()))
         elif command == "list":
             print(json.dumps(listing(), indent=1))
-        elif command == "identify":
+        elif command == "identify":          # every FM-1 plugged in (--fm1: that one), each noted on its own
             with Job("identify") as job:
-                try:
-                    dev = connect()
-                except sloop.SloopError as e:
-                    if e.code != "noreply":
-                        raise
-                    import mvave              # (no SLOOP protocol: stock or Baud Girl's, by M-VAVE's handshake)
-                    link = sloop.Link(card=target_card())
-                    try:
-                        label = note_firmware(mvave.identity(link))
-                    finally:
-                        link.close()
-                    if not label:
-                        raise
-                    job.done(label)
-                    return 0
-                if colour_screen():           # and FM-1 A's colours, for a screen in colour
-                    try:
-                        read_theme(dev)
-                    except sloop.SloopError:
-                        pass
-                job.done(firmware_label() or str(dev.version))
+                lines, failed = each_fm1(job, identify_one)
+                if lines:
+                    job.done("; ".join(lines), failed=failed)
         elif command == "info":
             dev = connect()
             print(json.dumps({**dev.info, "can_backup": dev.can_backup()}))

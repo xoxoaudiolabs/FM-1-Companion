@@ -76,12 +76,41 @@ def test_firmware_label():
         assert library.firmware_label() is None
         for said, shown in (("FELUCCA SLOOP 2.8", "SLOOP 2.8"), ("FELUCCA CLIPPER 0.3", "Clipper 0.3"),
                             ("FELUCCA 1.4", "Felucca 1.4")):
-            library.FIRMWARE.write_text(json.dumps({"firmware": said}))
+            library.save_firmware({"firmware": said})
             assert library.firmware_label() == shown, (said, library.firmware_label())
         library.forget_firmware()
         assert library.firmware_label() is None
+        library.FIRMWARE.write_text(json.dumps({"firmware": "FELUCCA SLOOP 2.8"}))   # a box from before: no letters
+        assert library.firmware_label() is None
     finally:
         library.FIRMWARE = saved
+
+
+def test_two_fm1s():
+    """Two FM-1s on a hub: each one's firmware on its own (B's never shown as A's), each one's backups named so,
+    and an auto backup compared with its own FM-1's last one."""
+    saved = library.FIRMWARE, sloop.fm1_cards, library.FM1
+    library.FIRMWARE, sloop.fm1_cards = TMP / "fm1-firmware-two.json", lambda: [3, 4]
+    try:
+        library.forget_firmware()
+        assert library.plugged_letters() == ["A", "B"] and library.firmware_labels() == {"A": None, "B": None}
+        library.FM1 = "A"
+        library.save_firmware({"firmware": "FELUCCA SLOOP 2.8.4"})
+        library.FM1 = "B"
+        library.save_firmware({"firmware": "FM-1+VA 102", "label": "FM-1+VA 102"})
+        assert library.firmware_labels() == {"A": "SLOOP 2.8.4", "B": "FM-1+VA 102"}
+        assert library.firmware_label() == "FM-1+VA 102" and library.fm1_tag() == "_fm1-b"
+        b = library.write_backup({"firmware": "x", "objects": {}}, "auto")
+        assert b.name.endswith("_fm1-b_auto.json") and library.BOX_MADE.search(b.name)
+        library.FM1 = "A"
+        assert library.newest_auto() != b      # A's own, not B's
+        library.FM1 = "B"
+        assert library.newest_auto() == b
+        b.unlink()
+        sloop.fm1_cards = lambda: [3]          # one FM-1: no letter in the name
+        assert library.fm1_tag() == ""
+    finally:
+        library.FIRMWARE, sloop.fm1_cards, library.FM1 = saved
 
 
 def test_encodings():

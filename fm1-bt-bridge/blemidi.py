@@ -940,7 +940,8 @@ class UsbControllers:
 
 # ---------------------------------------------------------------- the MIDI matrix
 
-SOURCES, DESTINATIONS = ("BT", "USB", "NET", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB", "NET")
+# the same order down and across (the box's clock only sends, so it's last, down only)
+SOURCES, DESTINATIONS = ("FM-1", "FM-1 B", "BT", "USB", "NET", "Box"), ("FM-1", "FM-1 B", "BT", "USB", "NET")
 # NET: network MIDI (netmidi.py): the Studio the Pocket is linked to
 FM1S = ("FM-1", "FM-1 B")               # FM-1 A (the only one, usually) and a second FM-1 on the hub
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop

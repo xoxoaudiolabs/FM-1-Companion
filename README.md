@@ -227,6 +227,11 @@ Girl next to two FM-1s).
 - The OLED HAT on a current release: everything works.
 - A whole online update from the Pocket's web page, to v3.0.1: no trouble, 2–3 minutes.
 - Playing notes through v2.13's key ranges, splits, velocity % and the new arp rates and hold.
+- Sending DX7 patches to a firmware that takes them: Baud Girl's FM-1+VA.
+- Bluetooth audio to earbuds (Beats Fit Pro), a Bluetooth speaker (iHome66) and a Bluetooth
+  receiver/transmitter (C28).
+- Two FM-1s on a USB hub (one on SLOOP, one on FM-1+VA). A short cable (6 inches) can reset the Pi when an FM-1
+  is plugged in while it runs; a 3 ft cable doesn't ([HARDWARE.md](HARDWARE.md)).
 
 **Not tested on the real Pocket yet**
 - From v2.9: connecting to Bluetooth MIDI keyboards (BT keys) and several Bluetooth MIDI devices at once. v2.9 runs
@@ -238,7 +243,7 @@ Girl next to two FM-1s).
   the Pocket handing its Bluetooth speaker over to the Studio while linked.
 - A Pi Zero 2 W, 64-bit Raspberry Pi OS, and Bookworm (for this release).
 - The 1.3" LCD HAT (ST7789), and the OLED HAT switched to I2C.
-- Sending DX7 patches to a firmware that takes them (M-VAVE's own, FM-1+VA): automated tests only.
+- Sending DX7 patches to M-VAVE's own firmware: automated tests only (FM-1+VA: user tested).
 - The new web app's Studio link, theme, auto backup and speaker controls (tried only in a browser with sample
   data).
 - The safe shutdown at 5% battery.

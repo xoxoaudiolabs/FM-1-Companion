@@ -12,6 +12,10 @@ other hardware? [Tell us](https://github.com/xoxoaudiolabs/FM-1-Companion/issues
 - **A USB port that can be the host**, for the FM-1 (and a hub with keyboards and a second FM-1). On a Pi Zero
   that's the port labelled USB, through an OTG adapter. The installer sets it to full speed (`dwc_otg.speed=1` in
   `cmdline.txt`), so a hub works: the FM-1 and USB MIDI keyboards are full-speed devices anyway.
+- **USB cables of about 1 m (3 ft) or longer**, or a hub with its own power supply, to plug an FM-1 in while the box
+  runs. On a 6-inch cable the FM-1's surge of current as it's plugged in can reset the Pi; a longer cable's
+  resistance softens it. A replug that leaves an FM-1 not answering needs a power cycle, not `sudo reboot` (which
+  keeps the USB powered).
 - **SPI** (the screens) and **I2C** (a PiSugar battery, the OLED switched to I2C): `install.sh` turns both on.
 - **Raspberry Pi OS Lite**, Bookworm or Trixie. Everything comes from its own packages (`python3-*`, PipeWire,
   BlueZ), so 32- and 64-bit are the same to the Companion.

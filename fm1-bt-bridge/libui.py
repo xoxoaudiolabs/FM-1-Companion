@@ -4,6 +4,7 @@ Jobs are library.py commands run as their own systemd user units, so a flash car
 restarts; their progress comes back through library.py's state file. Mixed into bridge.App, which provides the
 fonts, fit(), say(), draw_box() and the screen machinery.
 """
+import json
 import os
 import time
 from datetime import datetime
@@ -62,8 +63,9 @@ class LibraryScreens:
         self.job_state, self.job_read = None, 0.0
         self.autobackup_flag = Path(library.RUNTIME) / "fm1-autobackup.done"
         self.last_auto = time.monotonic()     # the interval counts from start-up (or the last auto backup)
+        self.auto_job, self.auto_tries, self.auto_retry = None, 0, 0.0   # (FM-1s, monotonic, wall) of the last
         self.fw_label = library.firmware_label() or self.state.get("fw_label")
-        self.fw_seen, self.fw_asked = None, False
+        self.fw_seen, self.fw_asked, self.fw_count = None, False, None
 
     # ---- jobs
     def library_state(self, now=None):
@@ -90,44 +92,95 @@ class LibraryScreens:
         mode = self.state.get("auto_backup", "boot")
         return mode if mode in AUTO_CHOICES else "boot"
 
+    def boot_backed_up(self):
+        """how many FM-1s the start-up backup has backed up this boot (the flag, in RAM: gone at a reboot); a
+        flag from before it counted them: 1"""
+        try:
+            text = self.autobackup_flag.read_text()
+        except OSError:
+            return 0
+        try:
+            return int(json.loads(text).get("fm1s", 1))
+        except (ValueError, AttributeError, TypeError):
+            return 1
+
+    def auto_ended(self, now):
+        """the auto backup started last has ended: the start-up one counts as done only when every FM-1 was
+        backed up; a failure is tried again a minute later, three times (then it waits for another FM-1)"""
+        count, started, wall = self.auto_job
+        state = self.library_state(now) or {}
+        if state.get("job") != "backup" or state.get("started", 0) < wall - 1:
+            if now - started < 30:             # (not started yet: its process writes its state first)
+                return False
+            state = {}                         # it never ran
+        self.auto_job = None
+        ok = state.get("state") == "done" and not (state.get("result") or {}).get("failed")
+        if ok or self.auto_tries >= 2:
+            try:
+                self.autobackup_flag.parent.mkdir(parents=True, exist_ok=True)
+                self.autobackup_flag.write_text(json.dumps({"fm1s": count, "ok": ok, "time": time.time()}))
+            except OSError:
+                pass
+            self.auto_tries = 0
+        else:
+            self.auto_tries += 1
+            self.auto_retry = now + 60
+        return True
+
     def auto_backup(self):
         """At start-up (once per boot) unless off, then every N minutes if set: when the FM-1's MIDI is there
-        and no other job runs. library.py saves no new file when nothing changed."""
+        and no other job runs. Every FM-1 plugged in (library.py backup --all), and again when one more is
+        plugged in. library.py saves no new file when nothing changed."""
         mode = self.auto_mode()
         if mode == "off" or not (self.midi and self.midi.usb_label()) or self.job_busy():
             return
         now = time.monotonic()
-        if not self.autobackup_flag.exists():
-            try:
-                self.autobackup_flag.parent.mkdir(parents=True, exist_ok=True)
-                self.autobackup_flag.write_text(str(time.time()))
-            except OSError:
+        if self.auto_job and not self.auto_ended(now):
+            return
+        count = len(library.plugged_letters()) or 1
+        if self.boot_backed_up() < count:
+            if now < self.auto_retry:
                 return
         elif not (isinstance(mode, int) and now - self.last_auto >= mode * 60):
             return
         self.last_auto = now
-        self.start_job(["backup", "--auto"], "Auto backup", show=False)
+        self.auto_job = (count, now, time.time())
+        self.start_job(["backup", "--auto", "--all"], "Auto backup", show=False)
 
     def identify_fm1(self):
         """Keep fw_label ("SLOOP 2.8") for the screens. Any job that talks to the FM-1 notes what it runs; if
         none has 5 s after the FM-1 shows up (the boot backup usually has), ask it once. Until then the screens
         show what it ran last time (kept in the settings), so the home screen isn't "Felucca" for the first
-        seconds after a boot. Asked again whenever it comes back: a firmware update or another FM-1."""
+        seconds after a boot. Asked again whenever it comes back: a firmware update or another FM-1. Every FM-1
+        plugged in is asked (each its own label, for the web page); one more or one fewer, all again. If the
+        asking found nothing, last time's label goes: a stale one would name another FM-1's firmware."""
         if not (self.midi and self.midi.usb_label()):
             if self.fw_seen is not None:
                 library.forget_firmware()
-            self.fw_label, self.fw_seen, self.fw_asked = None, None, False
+            self.fw_label, self.fw_seen, self.fw_asked, self.fw_count = None, None, False, None
             return
         now = time.monotonic()
+        count = len(library.plugged_letters())
+        if self.fw_count is not None and count != self.fw_count:   # an FM-1 plugged in or out: A and B may
+            library.forget_firmware()                                # be other FM-1s now
+            self.fw_seen, self.fw_asked = now, False
+        self.fw_count = count
         self.fw_seen = self.fw_seen or now
+        labels = library.firmware_labels()
         label = library.firmware_label()
-        self.fw_label = label or self.state.get("fw_label")
+        if label or not self.fw_asked or self.job_busy() or now - self.fw_asked < 30:
+            self.fw_label = label or self.state.get("fw_label")
+        else:                                  # asked, and no answer: not last time's (another FM-1's) label
+            self.fw_label = None
+            if self.state.get("fw_label"):
+                self.state["fw_label"] = None
+                self.save_settings()
         if label and label != self.state.get("fw_label"):
             self.state["fw_label"] = label
             self.save_settings()
-        if label or self.fw_asked or now - self.fw_seen < 5 or self.job_busy():
+        if (label and all(labels.values())) or self.fw_asked or now - self.fw_seen < 5 or self.job_busy():
             return
-        self.fw_asked = True
+        self.fw_asked = now
         self.start_job(["identify"], "Identify", show=False)
 
     def cycle_auto(self):

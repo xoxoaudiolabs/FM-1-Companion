@@ -35,6 +35,7 @@ PRESETS = ("1", "2", "3", "4")
 class MidiScreens:
     def midi_init(self):
         self.mx = [0, 0]                      # matrix cursor: source row, destination column
+        self.mx_fresh = True                  # (open_matrix puts it on BT > FM-1 the first time)
         self.route_key, self.route_row, self.route_edit = None, 0, None
         self.chan_row, self.chan_edit = 0, False
         self.preset_row, self.preset_menu = 0, None     # Route presets: the slot, and its actions while open
@@ -91,6 +92,11 @@ class MidiScreens:
         return f"{source}>{dest}" if source != dest else None
 
     def open_matrix(self):
+        """the grid; the first time, the cursor on Bluetooth > FM-1 (the FM-1s' rows come first now, and FM-1 >
+        FM-1 is no route)"""
+        if self.mx_fresh:
+            sources = self.matrix_lists()[0]
+            self.mx, self.mx_fresh = [sources.index("BT") if "BT" in sources else 0, 0], False
         self.screen = "matrix"
 
     def keys_route(self):

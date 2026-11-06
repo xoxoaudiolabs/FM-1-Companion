@@ -199,6 +199,32 @@ def test_writes_wait_for_the_box():
     assert jcall("/api/ask", {"cmd": "dx7-send", "file": "bank.syx", "voice": 40})[0] == 400
 
 
+def test_two_fm1s():
+    """Two FM-1s on the hub: the status names what each runs; a DX7 patch goes to the one picked; firmware waits
+    until the other is unplugged (the installer can't tell them apart mid-update)"""
+    saved = sloop.fm1_cards
+    sloop.fm1_cards = lambda: [3, 4]
+    try:
+        library.forget_firmware()
+        library.FM1 = "B"
+        library.save_firmware({"firmware": "FM-1+VA 102", "label": "FM-1+VA 102"})
+        library.FM1 = None
+        library.write_status({"live": True, "settings": {"library_fm1": "A"}})
+        st = jcall("/api/status")[1]
+        assert st["fm1s"] == ["A", "B"] and st["fm1_labels"] == {"A": None, "B": "FM-1+VA 102"}
+        jcall("/api/ask", {"cmd": "dx7-send", "file": "bank.syx", "voice": None, "fm1": "B"})
+        assert library.take_request()["fm1"] == "B"
+        (library.folder("firmware") / "sloop.fwsc").write_bytes(b"x")
+        status, reply = jcall("/api/ask", {"cmd": "flash", "file": "sloop.fwsc", "fm1": "B"})
+        assert status == 400 and "unplug FM-1 A" in reply["message"] and library.take_request() is None
+        assert jcall("/api/ask", {"cmd": "dx7-send", "file": "bank.syx", "voice": None, "fm1": "C"})[0] == 400
+        page = urllib.request.urlopen(BASE + "/", timeout=10).read().decode()
+        assert "Back up all" in page and 'id="l-fm1"' in page
+    finally:
+        sloop.fm1_cards, library.FM1 = saved, None
+        library.forget_firmware()
+
+
 def test_run_and_delete():
     (TMP / "sd" / "samples").mkdir(parents=True, exist_ok=True)
     write_wav(TMP / "sd" / "samples" / "pad_C3.wav", 0.1)

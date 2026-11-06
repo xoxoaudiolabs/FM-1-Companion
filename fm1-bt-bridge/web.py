@@ -188,7 +188,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, library.listing())
         elif url.path == "/api/status":
             status = library.read_status()
-            self.send(200, dict(status, fm1s=fm1_letters()) if status else {"offline": True})
+            self.send(200, dict(status, fm1s=fm1_letters(), fm1_labels=library.firmware_labels())
+                      if status else {"offline": True})
         elif url.path == "/api/state":
             state = library.read_state() or {}
             if state.get("state") == "running" and not library.running():
@@ -247,14 +248,15 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError as e:
                     return self.fail(str(e))
                 return self.send(200, {"ok": True, "message": f"{len(copied)} new file(s) from the SD card"})
-            jobs = {"backup": ["backup"], "fetch-sloop": ["fetch", "sloop"], "fetch-clipper": ["fetch", "clipper"],
-                    "song-backup": ["song-backup"], "dx7-read": ["dx7-read"]}
+            jobs = {"backup": ["backup"], "backup-all": ["backup", "--all"], "fetch-sloop": ["fetch", "sloop"],
+                    "fetch-clipper": ["fetch", "clipper"], "song-backup": ["song-backup"], "dx7-read": ["dx7-read"]}
             if command not in jobs:
                 return self.fail("unknown command")
             fm1 = request.get("fm1")
             if fm1 is not None and fm1 not in fm1_letters():
                 return self.fail(f"no FM-1 {fm1}"[:40])
-            error = library.spawn((["--fm1", fm1] if fm1 and not command.startswith("fetch") else []) + jobs[command])
+            one = fm1 and not command.startswith("fetch") and command != "backup-all"   # (those aren't one FM-1's)
+            error = library.spawn((["--fm1", fm1] if one else []) + jobs[command])
             return self.send(200, {"ok": not error, "message": error or "started"})
         if url.path == "/api/ask":
             return self.ask(request)
@@ -400,6 +402,10 @@ class Handler(BaseHTTPRequestHandler):
             path = safe_path("firmware", r.get("file"))
             if not path or not path.is_file():
                 return self.fail("no such firmware")
+            letters = fm1_letters()
+            if len(letters) > 1:                  # (the installer can't tell two FM-1s apart mid-update: job_flash)
+                others = " and ".join(f"FM-1 {x}" for x in letters if x != (fm1 or "A"))
+                return self.fail(f"One FM-1 at a time: unplug {others}, then install")
             warning = "Experimental: see its README" if sloop.family(path.name) == "clipper" else "Keep the FM-1 plugged in"
             asked = (["flash", str(path)], "Install?", [path.stem[:20], warning])
         else:
@@ -581,7 +587,9 @@ details summary{cursor:pointer}
 <div class="tab" id="tab-library">
 <div class="chips" id="libnav"><button onclick="jump('lib-backups')">Backups<b id="n-backups"></b></button><button onclick="jump('lib-projects')">Projects<b id="n-projects"></b></button><button onclick="jump('lib-songs')">Songs<b id="n-songs"></b></button><button onclick="jump('lib-patches')">DX7<b id="n-patches"></b></button><button onclick="jump('lib-samples')">Samples<b id="n-samples"></b></button><button onclick="jump('lib-firmware')">Firmware<b id="n-firmware"></b></button><button onclick="jump('lib-software')">Software</button></div>
 <section id="lib-now"><h2>Now</h2><div class="job"><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div></div>
-<div class="row" style="margin-top:12px"><button class="primary" onclick="run('backup')">Back up now</button>
+<div id="l-fm1line" hidden style="margin-top:12px"><div class="line"><span class="k">FM-1</span><div class="seg" id="l-fm1"></div></div>
+<p class="meta" style="margin:0">Two FM-1s on the hub: backups, loads, samples, DX7 patches and firmware go to the one picked here (A: the lower hub port).</p></div>
+<div class="row" style="margin-top:12px"><button class="primary" onclick="run('backup')">Back up now</button><button id="l-all" onclick="run('backup-all')" hidden>Back up all</button>
 <button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('fetch-clipper')" title="isod89's synthesizer firmware, experimental">Get Clipper (exp.)</button><button onclick="run('import-sd')">Import SD card</button></div>
 <p class="meta" style="margin:12px 0 0">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. Restores, projects, songs and firmware back the FM-1 up first; a sample only replaces its slot.</p></section>
 
@@ -597,7 +605,7 @@ details summary{cursor:pointer}
 <div id="songs"></div>
 <div class="row" style="margin-top:8px"><button class="primary" onclick="run('song-backup')">Back up song</button><label class="file"><input type="file" accept=".json" onchange="upload('songs',this)"><button onclick="this.previousElementSibling.click()">Upload a song…</button></label></div></section>
 
-<section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank or one voice. On M-VAVE's stock firmware a whole bank replaces 32 presets, and its factory reset doesn't bring the factory ones back. Not for SLOOP, Clipper or Felucca, which have their own patches. On stock firmware, Save the FM-1's sound keeps the sound it plays now as a voice here. <i>Not tried on an FM-1 yet.</i></p>
+<section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank or one voice. On M-VAVE's stock firmware a whole bank replaces 32 presets, and its factory reset doesn't bring the factory ones back. Not for SLOOP, Clipper or Felucca, which have their own patches. On stock firmware, Save the FM-1's sound keeps the sound it plays now as a voice here. <i>Tried by a builder on FM-1+VA; not yet on stock firmware.</i></p>
 <div id="patches"></div>
 <div class="row" style="margin-top:8px"><button onclick="run('dx7-read')">Save the FM-1's sound</button><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
 
@@ -702,7 +710,9 @@ function renderStatus() {
   for (const id of ["s-rec", "r-rec"]) { $(id).classList.toggle("on", rec); $(id).textContent = rec ? `■ Stop recording  ${mins(st.recording)}` : "● Record"; $(id).disabled = off; }
   if (off) return;
   const s = st.settings;
-  $("s-fm1").textContent = st.fm1 || "not found";
+  const fm1s = st.fm1s || [], fl = st.fm1_labels || {};
+  $("s-fm1").textContent = fm1s.length > 1 ? fm1s.map((x) => `${x}: ${fl[x] || "?"}`).join(" · ") : st.fm1 || "not found";
+  renderFm1s(st);
   $("s-srcline").hidden = !st.sources; $("s-src-in").textContent = (st.sources || []).join(", ") || "none";
   $("s-pocketline").hidden = !st.pocket;
   if (st.pocket) $("s-pocket").textContent = "linked over " + (st.pocket === "cable" ? "the cable" : "the network") + " · POCKET in the mixer";
@@ -774,7 +784,7 @@ function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "s
 // ---------------------------------------------------------------- MIDI tab
 // FM-1 B's row and column only while a second FM-1 is plugged in (then the first is FM-1 A)
 // NET (network MIDI: the Studio the Pocket is linked to) only while linked
-const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET"];
+const ALL_SOURCES = {"FM-1":"FM-1", "FM-1 B":"FM-1 B", "BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET"];
 let twoFm1 = false, netOn = false, SOURCES = {}, DESTS = [];
 // split: each USB MIDI device its own row and column ("U:" + its name), as st.matrix lists them
 let matrixKey = "";
@@ -867,8 +877,21 @@ function preset(slot, action) {
 }
 
 // ---------------------------------------------------------------- library and recordings
-const run = (c) => post("/api/run", {cmd:c}).then(() => { refresh(); setTimeout(update, 300); });
-const ask = (body) => post("/api/ask", body).then(() => setTimeout(update, 300));
+// with two FM-1s: the one the Library works on (FM-1 A/B above it; it starts at the box's Settings > Sloop FM-1)
+let libFm1 = null;
+const fm1For = (c) => libFm1 && !String(c).startsWith("fetch") && c !== "update" && c !== "import-sd" && c !== "backup-all" ? {fm1: libFm1} : {};
+const run = (c) => post("/api/run", {cmd:c, ...fm1For(c)}).then(() => { refresh(); setTimeout(update, 300); });
+const ask = (body) => post("/api/ask", {...fm1For(body.cmd), ...body}).then(() => setTimeout(update, 300));
+function renderFm1s(st) {                          // the Library's FM-1 A/B, each with what it runs
+  const letters = (st && !st.offline && st.fm1s) || [], labels = (st && st.fm1_labels) || {};
+  const two = letters.length > 1;
+  $("l-fm1line").hidden = !two; $("l-all").hidden = !two;
+  if (!two) { libFm1 = null; return; }
+  if (!letters.includes(libFm1)) libFm1 = letters.includes(st.settings && st.settings.library_fm1) ? st.settings.library_fm1 : "A";
+  const html = letters.map((x) => `<button data-v="${x}">FM-1 ${x}${labels[x] ? " · " + esc(labels[x]) : ""}</button>`).join("");
+  if ($("l-fm1").innerHTML !== html) $("l-fm1").innerHTML = html;
+  seg("l-fm1", libFm1, (v) => { libFm1 = v; renderFm1s(st); });
+}
 async function del(folder, name) { if (confirm(`Delete ${name}?`)) { await post("/api/delete", {folder, name}); refresh(); } }
 // a project inside a backup: it goes with its backup (the backup's other projects too, so it says which)
 async function delBackup(name) {

@@ -386,6 +386,12 @@ FM-1 and the keyboards instead of the Pi. Each keyboard is found within a few se
 plays the FM-1 at once, alongside a Bluetooth one. The home screen names it (or shows "1 USB + " in front of
 the Bluetooth device), and Settings → MIDI › **USB keys** lists them.
 
+**Plugging in while it runs:** an FM-1 draws a surge of current the moment it's plugged in. On a short USB cable
+(6 inches, say) that surge can pull the Pi's 5 V down far enough to reset it, or leave the FM-1 half-connected.
+Use a cable of about 1 m (3 ft) or longer between the hub and each FM-1 (its resistance softens the surge), or a
+hub with its own power supply. If an FM-1 still stops working after a replug, switch the box and the hub off and
+on again: `sudo reboot` doesn't cut the USB power, so it doesn't clear it.
+
 All the keyboards together are the *USB keys* row and the *USB* column of the MIDI matrix (below): USB keys →
 FM-1 is on at first; sending the FM-1's, Bluetooth's or the box's MIDI to the keyboards (for their lights,
 or to drive a keyboard's own sounds) and USB keys → Bluetooth are off until you switch them on.
@@ -501,7 +507,7 @@ the rows below that its firmware has. **DX7 patches**, **Sample editor**, **Reco
 
 | Library › | What it does |
 |---|---|
-| **DX7 patches ›** | For firmwares that take DX7 patches: pick a `.syx` from the `patches` folder, then the whole bank or one voice by name. With two FM-1s it goes to the one that takes it. *Not tried on such a firmware yet.* |
+| **DX7 patches ›** | For firmwares that take DX7 patches: pick a `.syx` from the `patches` folder, then the whole bank or one voice by name. With two FM-1s it goes to the one that takes it (on the web page: to the FM-1 picked there). *User tested on FM-1+VA.* |
 | **Firmware ›** | Shows what the FM-1 runs; press to install a firmware file. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
 
 ![Job screen](../docs/images/screen-job.png)

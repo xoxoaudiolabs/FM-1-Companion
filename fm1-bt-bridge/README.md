@@ -508,6 +508,7 @@ the rows below that its firmware has. **DX7 patches**, **Sample editor**, **Reco
 | Library › | What it does |
 |---|---|
 | **DX7 patches ›** | For firmwares that take DX7 patches: pick a `.syx` from the `patches` folder, then the whole bank or one voice by name. With two FM-1s it goes to the one that takes it (on the web page: to the FM-1 picked there). *User tested on FM-1+VA.* |
+| **MIDI files ›** | Pick a `.mid` from the `midi` folder: it plays into the FM-1 at the file's own tempo (with two FM-1s, into the one picked in Library › the FM-1's page › FM-1). Notes, controllers and program changes go out on the file's own channels; its SysEx doesn't, so a file can't change the FM-1's patches. While one plays the row shows ▶, and the list starts with it: press it to stop. Stopped or at its end, every note is let go. The web page also plays one on a loop. |
 | **Firmware ›** | Shows what the FM-1 runs; press to install a firmware file. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
 
 ![Job screen](../docs/images/screen-job.png)
@@ -534,14 +535,17 @@ does, plus:
   project of a backup as its own project file to share;
 - load **several WAVs into one slot**: each becomes a key zone, with its root note taken from the file
   name (`bass_C2.wav`, `lead_A4.wav`). A slot holds about 7 seconds in all;
-- **download or delete recordings** made on the box.
+- **download or delete recordings** made on the box;
+- **upload and play MIDI files**, once or on a loop, and stop them.
 
 Anything on the page that writes to the FM-1 still has to be **confirmed on the box** (hold press), so
-nothing on your network can change the FM-1 without you.
+nothing on your network can change the FM-1 without you. (Playing a MIDI file only plays notes, like a
+keyboard, so it starts at once.)
 
 **Using the SD card:** the card's **bootfs** drive (the one you see on a computer) has an
-`fm1-library` folder with `backups`, `firmware`, `projects` and `samples`. Drop files into those
-folders from a computer and choose *Import SD card*; backups are copied there too, so you can take
+`fm1-library` folder with `backups`, `firmware`, `projects`, `samples` and `midi` (MIDI files to play;
+on a box updated from before it, the folder appears with the next backup, or make it yourself). Drop files into those folders from a computer and
+choose *Import SD card*; backups are copied there too, so you can take
 them off the card.
 
 **Over SSH,** the same jobs run from the command line:
@@ -664,6 +668,7 @@ The main files; the [main README](../README.md) lists every one.
 | `screenpick.py` | `~/.local/share/fm1-bridge/` | The screen setting and the screen picker |
 | `oledi2c.py` | `~/.local/share/fm1-bridge/` | The OLED HAT switched to I2C |
 | `dx7.py` | `~/.local/share/fm1-bridge/` | DX7 banks and voices: read, named, sent |
+| `midifile.py` | `~/.local/share/fm1-bridge/` | MIDI files played into the FM-1 |
 | `netaudio.py` | `~/.local/share/fm1-bridge/` | The Studio link's sound to the Studio |
 | `update.py` | `~/.local/share/fm1-bridge/` | The web app's one-click update |
 | `config/fm1-update` | `/usr/local/sbin/` | Installs the newest release for an update (root helper, run through sudo) |

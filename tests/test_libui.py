@@ -198,7 +198,7 @@ def test_flows():
     snap(app, "settings")
     keys(app, "down", "press")                             # Library ›: the FM-1's files and firmware
     assert app.settings_menu == "library" and [r[0] for r in app.settings_rows()] == [
-        "g_sloop", "dx7", "editor", "recording", "firmware"]
+        "g_sloop", "dx7", "editor", "recording", "midifile", "firmware"]
     snap(app, "settings-library")
     keys(app, "left")                                      # back to the top list, on Library
     assert app.settings_menu is None and app.setting == top.index("g_library") and app.screen == "settings"
@@ -445,7 +445,15 @@ class FakeMidi:
     enabled, error, pairing_until, peer = True, None, 0.0, None
 
     def __init__(self):
-        self.commands, self.clock = [], None
+        self.commands, self.clock, self.file = [], None, None
+
+    def play_file(self, path, dest="FM-1", loop=False):
+        self.commands.append(("file", "play", Path(path).name, dest, loop))
+        self.file = {"name": Path(path).name, "pos": 0.0, "length": 2.0, "loop": loop, "dest": dest}
+
+    def stop_file(self):
+        self.commands.append(("file", "stop"))
+        self.file = None
 
     def set_clock(self, mode, bpm):
         self.commands.append(("clock", mode, bpm))
@@ -461,6 +469,44 @@ class FakeMidi:
 
     def activity(self):
         return 0.0
+
+
+def test_midi_files():
+    """Library › MIDI files: a .mid picked plays into the FM-1 (FM-1 B when Settings › Sloop's FM-1 is B and
+    there are two); while it plays, the list starts with it, to stop it. The web page's play and stop the same."""
+    import mido
+    mid = mido.MidiFile(type=0)
+    mid.tracks.append(mido.MidiTrack([mido.Message("note_on", note=60, velocity=90, time=0),
+                                      mido.Message("note_off", note=60, velocity=0, time=480)]))
+    mid.save(str(library.folder("midi") / "tune.mid"))
+    (library.folder("midi") / "broken.mid").write_bytes(b"MThd")   # (can't be played: not in the box's list)
+    app = make_app()
+    app.midi = FakeMidi()
+    at_row(app, "library", "midifile")
+    assert app.settings_rows()[app.setting][2] == "›"
+    keys(app, "press")
+    assert app.screen == "pick" and [i[0] for i in app.pick["items"]] == ["tune"]
+    snap(app, "midi-files")
+    keys(app, "press")
+    assert app.midi.commands[-1] == ("file", "play", "tune.mid", "FM-1", False) and app.screen == "settings"
+    assert app.settings_rows()[app.setting][2] == "▶"
+    keys(app, "press")
+    assert app.pick["items"][0][2] == ("stop",)
+    keys(app, "press")
+    assert app.midi.commands[-1] == ("file", "stop") and app.midifile_playing() is None
+    app.midi.usb_b, app.state["library_fm1"] = "Felucca:Felucca MIDI 1 28:0", "B"     # two FM-1s, B picked
+    app.web_command({"cmd": "midifile", "action": "play", "file": "tune.mid", "fm1": None, "loop": True})
+    assert app.midi.commands[-1] == ("file", "play", "tune.mid", "FM-1 B", True)
+    app.web_command({"cmd": "midifile", "action": "play", "file": "tune.mid", "fm1": "A", "loop": False})
+    assert app.midi.commands[-1][3] == "FM-1"
+    app.web_command({"cmd": "midifile", "action": "stop"})
+    assert app.midi.commands[-1] == ("file", "stop")
+    try:
+        app.web_command({"cmd": "midifile", "action": "play", "file": "../../etc/passwd", "fm1": None})
+        raise AssertionError("played a file outside the library")
+    except ValueError:
+        pass
+    assert app.web_status()["midifile"] is None
 
 
 def test_clock():

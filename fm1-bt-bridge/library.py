@@ -49,7 +49,7 @@ import x0x  # noqa: E402
 
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
 FOLDERS = ("backups", "projects", "samples", "firmware", "recordings", "x0x",   # x0x: X0X's backups (.x0b)
-           "songs", "patches")                                                   # SLOOP songs; DX7 .syx
+           "songs", "patches", "midi")                               # SLOOP songs; DX7 .syx; MIDI files to play
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
@@ -66,7 +66,8 @@ FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmw
              "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
 RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
 SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",),
-            "recordings": (".wav",), "x0x": (".x0b",), "songs": (".json",), "patches": (".syx",)}
+            "recordings": (".wav",), "x0x": (".x0b",), "songs": (".json",), "patches": (".syx",),
+            "midi": (".mid", ".midi")}
 
 
 def folder(name):
@@ -1010,6 +1011,12 @@ def listing():
                     entry.update(dx7.describe(path))
                 except (OSError, dx7.DX7Error):
                     entry["damaged"] = True
+            elif name == "midi":
+                import midifile
+                try:
+                    entry.update(midifile.describe(path))
+                except midifile.MidiFileError as e:
+                    entry.update(damaged=True, error=str(e))
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)

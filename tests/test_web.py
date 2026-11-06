@@ -225,6 +225,41 @@ def test_two_fm1s():
         library.forget_firmware()
 
 
+def test_midi_files():
+    """MIDI files: uploaded (checked: a damaged one refused), listed with their length, played and stopped through
+    the box's command queue (only a file in the library, only FM-1 A or B)"""
+    import io
+    import mido
+    mid = mido.MidiFile(type=0, ticks_per_beat=480)
+    mid.tracks.append(mido.MidiTrack([mido.Message("note_on", channel=1, note=64, velocity=80, time=0),
+                                      mido.Message("note_off", channel=1, note=64, velocity=0, time=960)]))
+    buf = io.BytesIO()
+    mid.save(file=buf)
+    assert jcall("/api/upload?folder=midi&name=tune.mid", raw=buf.getvalue())[1]["ok"]
+    assert jcall("/api/upload?folder=midi&name=junk.mid", raw=b"MThd junk")[0] == 400
+    assert not (library.folder("midi") / "junk.mid").exists()
+    entry = jcall("/api/library")[1]["midi"][0]
+    assert entry["name"] == "tune.mid" and entry["seconds"] == 1.0 and entry["notes"] == 1 and entry["channels"] == [2]
+    status, body, headers = call("/files/midi/tune.mid")
+    assert status == 200 and body == buf.getvalue() and headers["Content-Type"] == "audio/midi"
+    library.write_status({"live": True})
+    assert jcall("/api/command", {"cmd": "midifile", "action": "play", "file": "tune.mid", "fm1": "B", "loop": True})[1]["ok"]
+    library.write_status({"live": True})
+    assert jcall("/api/command", {"cmd": "midifile", "action": "stop"})[1]["ok"]
+    for bad in ({"cmd": "midifile", "action": "play", "file": "../tune.mid"},
+                {"cmd": "midifile", "action": "play", "file": "nope.mid"},
+                {"cmd": "midifile", "action": "play", "file": "tune.mid", "fm1": "C"},
+                {"cmd": "midifile", "action": "rewind"}):
+        library.write_status({"live": True})
+        assert jcall("/api/command", bad)[0] == 400, bad
+    queued = library.take_commands()
+    assert queued[0] == {"cmd": "midifile", "action": "play", "file": "tune.mid", "fm1": "B", "loop": True,
+                         "time": queued[0]["time"]}
+    assert [c["action"] for c in queued] == ["play", "stop"]
+    page = urllib.request.urlopen(BASE + "/", timeout=10).read().decode()
+    assert 'id="lib-midi"' in page and "playMidi" in page
+
+
 def test_run_and_delete():
     (TMP / "sd" / "samples").mkdir(parents=True, exist_ok=True)
     write_wav(TMP / "sd" / "samples" / "pad_C3.wav", 0.1)

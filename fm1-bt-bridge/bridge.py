@@ -1766,6 +1766,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         if menu == "library":                 # the FM-1's files, and what it runs
             return [("g_sloop", self.fm1_page_name(), "›"), ("dx7", "DX7 patches", "›"),
                             ("editor", "Sample editor", "›"), ("recording", "Recordings", "›"),
+                            ("midifile", "MIDI files", "▶" if self.midifile_playing() else "›"),
                             ("firmware", "Firmware", self.fw_label or "›")]
         if menu == "sloop":                   # Library > (the FM-1's firmware): what the library does for it
             which = ([("library_fm1", "FM-1", self.state["library_fm1"])]       # only with two FM-1s plugged in

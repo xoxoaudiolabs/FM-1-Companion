@@ -43,6 +43,7 @@ class WebLink:
             "matrix": dict(zip(("sources", "dests"), self.matrix_lists())),
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
+            "midifile": getattr(midi, "file", None) if midi else None,   # the MIDI file playing (midifile.py)
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
                              arp=keys["arp"], arp_rate=keys["arp_rate"], chord=keys["chord"]),
             "routes": self.routes(), "presets": self.presets(), "wifi": self.wifi,
@@ -165,6 +166,12 @@ class WebLink:
             if self.midi:
                 self.midi.set_routes(self.routes())
             return "Web: MIDI routes"
+        if cmd == "midifile" and c.get("action") == "stop":
+            self.stop_midifile()
+            return None                       # (it says it)
+        if cmd == "midifile" and c.get("action") == "play":
+            self.play_midifile(c["file"], c.get("fm1"), c.get("loop") is True)
+            return None
         if cmd == "preset" and c.get("slot") in ("1", "2", "3", "4") and c.get("action") in ("load", "save", "clear"):
             name = c.get("name")
             self.preset_apply(c["slot"], c["action"], name if isinstance(name, str) else None)

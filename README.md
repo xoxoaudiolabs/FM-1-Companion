@@ -247,6 +247,7 @@ Girl next to two FM-1s).
 - The new web app's Studio link, theme, auto backup and speaker controls (tried only in a browser with sample
   data).
 - The safe shutdown at 5% battery.
+- Playing MIDI files from the SD card into an FM-1 (Library › MIDI files): automated tests only.
 - Installing Clipper: downloaded and accepted by SLOOP's installer, never flashed to an FM-1.
 - The Studio link inviting itself again after the Studio restarts (v2.13): automated tests only.
 - The rest, with automated tests only: the MIDI matrix's route options and presets, the other seven meters,
@@ -292,6 +293,7 @@ Girl next to two FM-1s).
 | `fm1-bt-bridge/pocketui.py` | The Pocket's screens on the LCD, in colour, and Settings › Theme |
 | `fm1-bt-bridge/pocketmeters.py` | The eleven meters on the LCD |
 | `fm1-bt-bridge/dx7.py` | DX7 banks and voices for firmwares that take them: read, named, sent |
+| `fm1-bt-bridge/midifile.py` | MIDI files (.mid) played into FM-1 A or B at their own tempo, in the MIDI process |
 | `fm1-bt-bridge/netaudio.py` | The Pocket's Studio link: its sound to the Studio over the network (PipeWire RTP) |
 | `fm1-bt-bridge/update.py` | The web app's one-click update |
 | `fm1-bt-bridge/config/fm1-update` | Installs the newest release for the update (root helper, run through sudo) |

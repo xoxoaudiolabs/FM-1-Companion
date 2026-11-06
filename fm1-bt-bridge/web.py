@@ -97,6 +97,15 @@ def check_command(c):
         return {"cmd": cmd, "value": c["value"]}
     if cmd == "routes":
         return {"cmd": cmd, "routes": blemidi.clean_routes(c.get("routes"))}
+    if cmd == "midifile":                     # a MIDI file from the library into an FM-1, or the one playing stopped
+        if c.get("action") == "stop":
+            return {"cmd": cmd, "action": "stop"}
+        path, fm1 = safe_path("midi", c.get("file")), c.get("fm1")
+        if c.get("action") != "play" or not path or not path.is_file():
+            raise ValueError("pick a MIDI file")
+        if fm1 is not None and fm1 not in ("A", "B"):
+            raise ValueError("FM-1 A or B")
+        return {"cmd": cmd, "action": "play", "file": path.name, "fm1": fm1, "loop": c.get("loop") is True}
     if cmd == "preset":
         name = c.get("name")
         if c.get("slot") not in ("1", "2", "3", "4") or c.get("action") not in ("load", "save", "clear") \
@@ -131,6 +140,9 @@ def check_upload(folder, path):
             sloop.objects_of(sloop.load_json(path))
         elif folder == "projects":
             sloop.project_from(sloop.load_json(path))
+        elif folder == "midi":
+            import midifile
+            midifile.load(path)
         elif folder == "samples":
             import sampleio
             rate, samples = sampleio.read_any_wav(path)
@@ -201,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             path = safe_path(folder, urllib.parse.unquote(name))
             if not path or not path.is_file():
                 return self.fail("no such file", 404)
-            ctype = {"samples": "audio/wav", "recordings": "audio/wav",
+            ctype = {"samples": "audio/wav", "recordings": "audio/wav", "midi": "audio/midi",
                      "firmware": "application/octet-stream"}.get(folder, "application/json")
             self.send_file(path, ctype, inline=query.get("inline") == "1")
         elif url.path == "/api/edit-info":            # what the sample editor opens a take or sample with
@@ -585,7 +597,7 @@ details summary{cursor:pointer}
 
 <!-- ======================= LIBRARY ======================= -->
 <div class="tab" id="tab-library">
-<div class="chips" id="libnav"><button onclick="jump('lib-backups')">Backups<b id="n-backups"></b></button><button onclick="jump('lib-projects')">Projects<b id="n-projects"></b></button><button onclick="jump('lib-songs')">Songs<b id="n-songs"></b></button><button onclick="jump('lib-patches')">DX7<b id="n-patches"></b></button><button onclick="jump('lib-samples')">Samples<b id="n-samples"></b></button><button onclick="jump('lib-firmware')">Firmware<b id="n-firmware"></b></button><button onclick="jump('lib-software')">Software</button></div>
+<div class="chips" id="libnav"><button onclick="jump('lib-backups')">Backups<b id="n-backups"></b></button><button onclick="jump('lib-projects')">Projects<b id="n-projects"></b></button><button onclick="jump('lib-songs')">Songs<b id="n-songs"></b></button><button onclick="jump('lib-patches')">DX7<b id="n-patches"></b></button><button onclick="jump('lib-midi')">MIDI files<b id="n-midi"></b></button><button onclick="jump('lib-samples')">Samples<b id="n-samples"></b></button><button onclick="jump('lib-firmware')">Firmware<b id="n-firmware"></b></button><button onclick="jump('lib-software')">Software</button></div>
 <section id="lib-now"><h2>Now</h2><div class="job"><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div></div>
 <div id="l-fm1line" hidden style="margin-top:12px"><div class="line"><span class="k">FM-1</span><div class="seg" id="l-fm1"></div></div>
 <p class="meta" style="margin:0">Two FM-1s on the hub: backups, loads, samples, DX7 patches and firmware go to the one picked here (A: the lower hub port).</p></div>
@@ -608,6 +620,11 @@ details summary{cursor:pointer}
 <section id="lib-patches"><h2>DX7 patches</h2><p class="meta" style="margin:0 0 6px">Yamaha DX7 banks (.syx, 32 voices) and single voices, for FM-1 firmwares that take them (by others' research: M-VAVE's own, and Baud Girl's FM-1+VA before FM-1_079): a whole bank or one voice. On M-VAVE's stock firmware a whole bank replaces 32 presets, and its factory reset doesn't bring the factory ones back. Not for SLOOP, Clipper or Felucca, which have their own patches. On stock firmware, Save the FM-1's sound keeps the sound it plays now as a voice here. <i>Tried by a builder on FM-1+VA; not yet on stock firmware.</i></p>
 <div id="patches"></div>
 <div class="row" style="margin-top:8px"><button onclick="run('dx7-read')">Save the FM-1's sound</button><label class="file"><input type="file" accept=".syx" onchange="upload('patches',this)"><button onclick="this.previousElementSibling.click()">Upload a .syx…</button></label></div></section>
+
+<section id="lib-midi"><h2>MIDI files</h2><p class="meta" style="margin:0 0 6px">Standard MIDI files (.mid) played into the FM-1 at their own tempo: notes, controllers and program changes, on the channels in the file. With two FM-1s, into the one picked above. A file's SysEx isn't sent, so it can't change the FM-1's patches. Put them on the SD card in <i>fm1-library/midi</i> (then Import SD card), or upload them here.</p>
+<div class="job" id="midi-now" hidden><div class="row" style="justify-content:space-between"><span id="midi-now-t" class="meta"></span><button onclick="cmd({cmd:'midifile', action:'stop'}, false)">■ Stop</button></div></div>
+<div id="midifiles"></div>
+<div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".mid,.midi" multiple onchange="upload('midi',this)"><button onclick="this.previousElementSibling.click()">Upload MIDI files…</button></label></div></section>
 
 <section id="lib-samples"><h2>Samples</h2><p class="meta" style="margin:0 0 6px" id="smp-fm1">Tick one or more WAVs (each becomes a key zone, root note from the name, e.g. <i>bass_C2.wav</i>), then load them into a slot. A slot holds about 7 seconds.</p>
 <div id="samples"></div>
@@ -670,7 +687,7 @@ const when = (t) => new Date(t * 1000).toLocaleString([], {month:"short", day:"n
 const fw = (s) => esc((s || "?").split(" ").pop());
 const mins = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 let olderProjects = false;                // the Projects list: the newest backup's only, or every backup's
-let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[], songs:[], patches:[]};
+let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[], songs:[], patches:[], midi:[]};
 let st = null;                                     // the box's status
 let tab = "status";
 // ---------------------------------------------------------------- basics
@@ -713,6 +730,9 @@ function renderStatus() {
   const fm1s = st.fm1s || [], fl = st.fm1_labels || {};
   $("s-fm1").textContent = fm1s.length > 1 ? fm1s.map((x) => `${x}: ${fl[x] || "?"}`).join(" · ") : st.fm1 || "not found";
   renderFm1s(st);
+  const mf = st.midifile;                          // the MIDI file playing
+  $("midi-now").hidden = !mf;
+  if (mf) $("midi-now-t").textContent = `▶ ${mf.name} · ${mins(mf.pos)} / ${mins(mf.length)}${mf.loop ? " · looped" : ""} · on ${mf.dest === "FM-1 B" ? "FM-1 B" : (st.fm1s || []).length > 1 ? "FM-1 A" : "the FM-1"}`;
   $("s-srcline").hidden = !st.sources; $("s-src-in").textContent = (st.sources || []).join(", ") || "none";
   $("s-pocketline").hidden = !st.pocket;
   if (st.pocket) $("s-pocket").textContent = "linked over " + (st.pocket === "cable" ? "the cable" : "the network") + " · POCKET in the mixer";
@@ -882,6 +902,7 @@ let libFm1 = null;
 const fm1For = (c) => libFm1 && !String(c).startsWith("fetch") && c !== "update" && c !== "import-sd" && c !== "backup-all" ? {fm1: libFm1} : {};
 const run = (c) => post("/api/run", {cmd:c, ...fm1For(c)}).then(() => { refresh(); setTimeout(update, 300); });
 const ask = (body) => post("/api/ask", {...fm1For(body.cmd), ...body}).then(() => setTimeout(update, 300));
+const playMidi = (file, loop) => cmd({cmd:"midifile", action:"play", file, loop, ...(libFm1 ? {fm1: libFm1} : {})}, false);
 function renderFm1s(st) {                          // the Library's FM-1 A/B, each with what it runs
   const letters = (st && !st.offline && st.fm1s) || [], labels = (st && st.fm1_labels) || {};
   const two = letters.length > 1;
@@ -916,8 +937,13 @@ function targetSelect(id) {
 }
 const jump = (id) => $(id).scrollIntoView({behavior:"smooth", block:"start"});   // the Library's chips
 function renderLibrary() {
-  for (const k of ["backups", "projects", "samples", "firmware", "recordings", "songs", "patches"]) lib[k] = lib[k] || [];
-  for (const k of ["backups", "songs", "patches", "samples", "firmware"]) $("n-" + k).textContent = (lib[k] || []).length || "";
+  for (const k of ["backups", "projects", "samples", "firmware", "recordings", "songs", "patches", "midi"]) lib[k] = lib[k] || [];
+  for (const k of ["backups", "songs", "patches", "midi", "samples", "firmware"]) $("n-" + k).textContent = (lib[k] || []).length || "";
+  $("midifiles").innerHTML = lib.midi.length ? lib.midi.map((m) => `<div class="item"><div><div class="name">${esc(m.name)}</div>
+    <div class="meta">${m.damaged ? "can't be played: " + esc(m.error || "damaged") : `${mins(m.seconds || 0)} · ${m.notes || 0} notes · channel${(m.channels || []).length === 1 ? "" : "s"} ${esc((m.channels || []).join(" "))}`}</div></div>
+    <div class="row">${m.damaged ? "" : `<button class="primary" onclick="playMidi(${q(m.name)}, false)">▶ Play</button><button onclick="playMidi(${q(m.name)}, true)">Loop</button>`}
+    <a href="/files/midi/${encodeURIComponent(m.name)}" download><button>Download</button></a><button class="danger" onclick="del('midi',${q(m.name)})">Delete</button></div></div>`).join("")
+    : `<p class="empty">No MIDI files yet: upload a .mid, or put some in the SD card's fm1-library/midi.</p>`;
   const newest = lib.backups.filter((b, i) => (b.projects || []).length && lib.backups.findIndex((o) => (o.projects || []).length && fw(o.firmware) === fw(b.firmware)) === i);   // each firmware's newest backup (newest first)
   const shown = olderProjects ? lib.backups : newest;
   $("n-projects").textContent = lib.projects.length + shown.reduce((n, b) => n + (b.projects || []).length, 0) || "";

@@ -6,7 +6,7 @@ user="${SUDO_USER:?run through sudo}"
 home="$(getent passwd "$user" | cut -d: -f6)"
 src="$home/fm1-library/backups"
 sd=/boot/firmware/fm1-library
-for d in backups firmware projects samples; do
+for d in backups firmware projects samples midi; do      # (midi: MIDI files to play, Library › MIDI files)
     mkdir -p "$sd/$d"
 done
 for f in "$src"/*.json; do

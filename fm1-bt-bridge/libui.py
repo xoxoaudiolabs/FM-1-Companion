@@ -47,7 +47,7 @@ def short_firmware(text):
     return (text or "?").split()[-1]
 
 
-LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto",
+LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "midifile", "editor", "firmware", "sd", "auto",
                 "song_backup", "song_load", "dx7", "keep", "dx7_read")
 
 
@@ -276,6 +276,12 @@ class LibraryScreens:
         elif key == "recording":
             items = [(short_date(r["name"]), clock(r.get("seconds", 0)), r["name"]) for r in listing["recordings"]]
             self.open_pick("Recordings", items, self.pick_recording, "No recordings yet")
+        elif key == "midifile":               # .mid files (SD card's fm1-library/midi, or the web page) into the FM-1
+            playing = self.midifile_playing()
+            items = ([(f"▶ {Path(playing['name']).stem}", "stop", ("stop",))] if playing else []) + [
+                (Path(m["name"]).stem, clock(m.get("seconds", 0)), m["name"])
+                for m in listing["midi"] if not m.get("damaged")]
+            self.open_pick("MIDI files", items, self.pick_midifile, "No MIDI files: SD card › fm1-library/midi")
         elif key == "firmware":
             items = [(Path(f["name"]).stem, "", f["name"]) for f in listing["firmware"]]
             if self.wifi:                     # isod89's two firmwares, from their GitHub releases
@@ -389,6 +395,46 @@ class LibraryScreens:
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing]
         self.open_pick("Edit which", items, lambda name: self.open_editor(name, folder),
                        "No recordings yet" if folder == "recordings" else "No samples yet", back="pick")
+
+    # ---- MIDI files (midifile.py, played in the MIDI process)
+    def midifile_playing(self):
+        """the MIDI file playing ({"name", "pos", "length", "loop", "dest"}), or None"""
+        return getattr(self.midi, "file", None) if self.midi else None
+
+    def midifile_dest(self, letter=None):
+        """where a MIDI file goes: FM-1 A ("FM-1"), or B with two FM-1s when it's picked (letter: the web page's
+        A/B, else Settings > Sloop's FM-1)"""
+        two = bool(self.midi and getattr(self.midi, "usb_b", None))
+        return "FM-1 B" if two and (letter or self.state.get("library_fm1")) == "B" else "FM-1"
+
+    def play_midifile(self, name, letter=None, loop=False):
+        path = library.folder("midi") / Path(str(name)).name
+        if path.suffix.lower() not in library.SUFFIXES["midi"] or not path.is_file():
+            raise ValueError("no such MIDI file")
+        if not (self.midi and self.midi.usb_label()):
+            self.say("No FM-1 to play it on")
+            return
+        dest = self.midifile_dest(letter)
+        self.midi.play_file(path, dest, loop)
+        where = "FM-1 B" if dest == "FM-1 B" else "FM-1 A" if getattr(self.midi, "usb_b", None) else "FM-1"
+        self.say(f"Playing on {where}" + (", looped" if loop else ""), 2)
+
+    def stop_midifile(self):
+        if self.midi:
+            self.midi.stop_file()
+        self.say("MIDI file stopped", 1.5)
+
+    def pick_midifile(self, name):
+        """the picked file into the FM-1 (Stop: the one playing stopped); back to Settings, where Library's row
+        shows it playing"""
+        self.screen, self.pick = "settings", None
+        if name == ("stop",):
+            self.stop_midifile()
+            return
+        try:
+            self.play_midifile(name)
+        except ValueError as e:
+            self.say(str(e))
 
     def pick_recording(self, name):
         """what to do with a recording: play it on the speaker, make a sample of it, open one of its parts (each

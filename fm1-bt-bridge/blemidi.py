@@ -1321,6 +1321,37 @@ class MidiBridge:
         self.saved = {}                       # the routes as the app last sent them (a USB device's, made on use)
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
         self.midi_log, self.source_names = None, {}   # MIDI recording (start_midi_log); a USB key's name by key
+        import midifile
+        self.player = midifile.Player(self.file_send, on_start=make_realtime)   # a MIDI file (play_file)
+        self.file_dest = "FM-1"
+
+    # ---- a MIDI file played into an FM-1 (midifile.py): straight to it, past the routes
+    def play_file(self, path, dest="FM-1", loop=False):
+        """path's notes into FM-1 A or B (dest); a file that can't be played: said on the screen"""
+        import midifile
+        from pathlib import Path
+        self.player.stop()
+        try:
+            events, length = midifile.load(path)
+        except midifile.MidiFileError as e:
+            self.note(f"MIDI file: {e}"[:40])
+            return
+        self.file_dest = dest if dest in FM1S else "FM-1"
+        self.player.play(events, Path(path).name, length, loop)
+
+    def stop_file(self):
+        self.player.stop()
+
+    def file_send(self, message):
+        """one of the file's messages, on the player's thread; not while an FM-1 is flashed"""
+        if self.paused:
+            return
+        (self.usb if self.file_dest == "FM-1" else self.usb_b).send_messages([message])
+        self.note_watch(message, time.monotonic())
+
+    def file_status(self):
+        status = self.player.status()
+        return status and dict(status, dest=self.file_dest)
 
     def set_routes(self, routes):
         self.saved = dict(routes or {})
@@ -1770,6 +1801,13 @@ def run_child(conn, source_match, enabled):
                 bridge.open_pairing()
             elif command[0] == "pause":            # no Bluetooth notes into the FM-1 while it's flashed
                 bridge.paused = command[1]
+                if command[1]:
+                    bridge.stop_file()
+            elif command[0] == "file":             # ("file", "play", .mid path, "FM-1" or "FM-1 B", loop) / ("file", "stop")
+                if command[1] == "play":
+                    bridge.play_file(command[2], command[3], bool(command[4]))
+                else:
+                    bridge.stop_file()
             elif command[0] == "clock":            # ("clock", "follow" or "box", bpm)
                 bridge.clock_mode, bridge.bpm = command[1], float(command[2])
             elif command[0] == "transport":        # ("transport", "start" or "stop")
@@ -1816,6 +1854,7 @@ def run_child(conn, source_match, enabled):
         status["notes"], status["chans"] = bridge.notes_status(now)
         status.update(bridge.net_status())
         status["split"] = bridge.split
+        status["file"] = bridge.file_status()
         status.update(ble_keys=bridge.keyboard_list() if bridge.ble_loaded else None, ble_found=bridge.ble_found,
                       ble_scanning=bridge.ble_scanning, ble_note=bridge.ble_note, mmc=bridge.mmc)
         if status != last:
@@ -1891,6 +1930,7 @@ class MidiProcess:
         self.usb, self.last_activity = None, 0.0
         self.controllers = []               # USB MIDI controllers' names
         self.usb_b = None                   # a second FM-1's port name, when there is one
+        self.file = None                    # the MIDI file playing: {"name", "pos", "length", "loop", "dest"}
         self.clock = None                   # {"bpm", "source", "playing"} while there's a clock
         self.notes, self.chans = [], 0      # for the MIDI meter
         self.ble_keys, self.ble_found, self.ble_scanning = [], [], False   # Bluetooth MIDI keyboards (MidiBridge's)
@@ -1914,6 +1954,7 @@ class MidiProcess:
             self.controllers = status.get("controllers") or []
             self.split = status.get("split", False)
             self.usb_b = status.get("usb_b")
+            self.file = status.get("file")
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
             self.net = status.get("net") or []
@@ -1967,6 +2008,14 @@ class MidiProcess:
 
     def pause(self, on):
         self.send_command(("pause", on))
+
+    def play_file(self, path, dest="FM-1", loop=False):
+        """a .mid into FM-1 A ("FM-1") or B ("FM-1 B"), at its own tempo; loop: from the top again at its end"""
+        self.send_command(("file", "play", str(path), dest, bool(loop)))
+
+    def stop_file(self):
+        self.file = None                      # (till the MIDI process says otherwise: the screen at once)
+        self.send_command(("file", "stop"))
 
     def set_clock(self, mode, bpm):
         self.send_command(("clock", mode, bpm))

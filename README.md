@@ -151,6 +151,12 @@ Drawn by the Companion's own code on a computer (`tools/render_screens.py`).
 
 The latest releases; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG.md)**.
 
+- **Pocket v3.1: MIDI files, two FM-1s side by side, a USB Bluetooth adapter.** MIDI files from the SD card
+  played into the FM-1 (Library › MIDI files, or the web page, once or on a loop). With two FM-1s on a hub, every
+  one is backed up at start-up and named for what it runs, and the web page picks FM-1 A or B. The MIDI routes in
+  one order across and down. Everything Bluetooth moves to a USB adapter while one is plugged in; Settings ›
+  Bluetooth › BT devices to forget one.
+  ([More](docs/CHANGELOG.md#pocket-v31-midi-files-two-fm-1s-side-by-side-a-usb-bluetooth-adapter))
 - **Pocket v3.0: ten FM-1 firmwares in the library, Settings in seven pages.** Backups and restores for the
   FM-1 whatever it runs: SLOOP, Clipper, sloopDX, Felucca, JIANT FM, Melodee, Jangada and X0X, Baud Girl's
   FM-1+VA's presets, and the sound a stock FM-1 plays now, each in its own backup files (only SLOOP tried on an
@@ -172,9 +178,6 @@ The latest releases; every release in full: **[docs/CHANGELOG.md](docs/CHANGELOG
   tried yet) and the OLED over I2C; a screen picker, `fm1-screen` and `fm1-report`; an installer that checks the
   Pi first; Settings opening with Mixer, MIDI routes, Sample editor, Sloop, FM-1 and Bluetooth.
   ([More](docs/CHANGELOG.md#pocket-v211-more-boards-and-screens-a-tidier-settings))
-- **Pocket v2.10: a colour screen.** The Waveshare 1.44" LCD HAT as well as the OLED, every screen and meter
-  redrawn in colour with the Studio's look, and Settings › Theme. The OLED's screens are unchanged.
-  ([More](docs/CHANGELOG.md#pocket-v210-a-colour-screen))
 
 ## Tested on the real hardware
 

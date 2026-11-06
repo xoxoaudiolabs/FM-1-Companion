@@ -5,6 +5,39 @@ Every Pocket release, newest first. [Back to the main page](../README.md)
 The Studio has moved on: it is [XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now, with an FM-1
 Companion plug-in. Its releases here (Studio v1.0 to v1.6) are listed under Release history at the end.
 
+## Pocket v3.1: MIDI files, two FM-1s side by side, a USB Bluetooth adapter
+
+- **MIDI files from the SD card.** Put `.mid` files in the card's `fm1-library/midi` folder (or upload them on
+  the web page) and play them into the FM-1 from **Library › MIDI files**, at the file's own tempo. While one
+  plays, it's first in the list: press it to stop. The web page plays them once or on a loop, shows what's
+  playing and stops it. A file's notes, controllers and program changes go out on its own channels; its SysEx
+  doesn't, so a file can't change the FM-1's patches. Stopped or at its end, every note is let go.
+- **Two FM-1s on a hub, treated alike.**
+  - The start-up backup backs up **every** FM-1 plugged in, one after the other (one that fails doesn't stop
+    the other), and again for an FM-1 plugged in later. It only counts as done when it worked: a failure is
+    tried again a minute later, three times.
+  - Each FM-1's firmware is known on its own, so the screen no longer shows FM-1 A's firmware for FM-1 B, or
+    last time's for an FM-1 that has changed.
+  - With two FM-1s, a backup's name says which one it came from (`…_fm1-b_auto.json`), and timed backups are
+    compared with that FM-1's own last one.
+  - The web page's Status shows what each runs (`A: SLOOP 2.8.4 · B: FM-1+VA 102`); its Library has an
+    **FM-1 A/B** picker for backups, loads, samples, DX7 patches and MIDI files, and **Back up all**.
+  - A firmware install still needs one FM-1 at a time (mid-update the FM-1 restarts as another device); it now
+    says which one to unplug.
+- **The MIDI routes in one order** across and down: FM-1 A, FM-1 B, Bluetooth, USB, Network (and the box's
+  clock last, down only). The box's grid opens on Bluetooth › FM-1.
+- **A USB Bluetooth adapter:** while one is plugged in, everything Bluetooth moves to it, and back to the Pi's
+  own when it's unplugged. `fm1-report` lists the adapters.
+- **Settings › Bluetooth › BT devices** lists what's paired or connected (speakers, Bluetooth MIDI keyboards,
+  phones); hold press to forget one. A speaker scan lists only what it hears, and pairing a speaker that only
+  advertises now and then works.
+- **Plugging an FM-1 in while the box runs:** use a cable of about 1 m (3 ft) or longer, or a hub with its own
+  power supply. A 6-inch cable can let the FM-1's surge of current as it's plugged in reset the Pi
+  ([HARDWARE.md](../HARDWARE.md)).
+- *Not tried on a real Pocket yet:* MIDI file playback, and the two-FM-1 backups and labels (automated tests
+  only). The USB Bluetooth adapter switch was tried with a TP-Link UB500, not yet with a speaker or a keyboard
+  on it.
+
 ## Pocket v3.0: ten FM-1 firmwares in the library, Settings in seven pages
 
 | Settings | Library | The FM-1's page, for Felucca |

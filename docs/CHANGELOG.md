@@ -5,6 +5,13 @@ Every Pocket release, newest first. [Back to the main page](../README.md)
 The Studio has moved on: it is [XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now, with an FM-1
 Companion plug-in. Its releases here (Studio v1.0 to v1.6) are listed under Release history at the end.
 
+## Pocket v3.1.2: FM-1+VA backups fixed
+
+- **Baud Girl's FM-1+VA backs up again.** The installer left out two of the Companion's files (`baudgirl.py`,
+  `mvave.py`), so a backup of an FM-1+VA failed with `No module named 'baudgirl'`, and the Status page showed `?`
+  for its firmware (as did any FM-1 not running SLOOP firmware). Update to v3.1.2 and both work. A test now checks
+  that the installer copies every file.
+
 ## Pocket v3.1.1: update from the box
 
 - **Settings › Box › Software update:** the Companion's own update with no phone needed. Press it with Wi-Fi on:

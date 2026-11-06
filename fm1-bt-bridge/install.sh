@@ -144,6 +144,8 @@ install -D -m 644 "$DIR/pocketmeters.py"                        ~/.local/share/f
 install -D -m 644 "$DIR/oledi2c.py"                             ~/.local/share/fm1-bridge/oledi2c.py
 install -D -m 644 "$DIR/screenpick.py"                          ~/.local/share/fm1-bridge/screenpick.py
 install -D -m 644 "$DIR/dx7.py"                                 ~/.local/share/fm1-bridge/dx7.py
+install -D -m 644 "$DIR/mvave.py"                               ~/.local/share/fm1-bridge/mvave.py
+install -D -m 644 "$DIR/baudgirl.py"                            ~/.local/share/fm1-bridge/baudgirl.py
 install -D -m 644 "$DIR/midifile.py"                            ~/.local/share/fm1-bridge/midifile.py
 install -D -m 644 "$DIR/device.py"                              ~/.local/share/fm1-bridge/device.py
 install -D -m 644 "$DIR/iocard.py"                              ~/.local/share/fm1-bridge/iocard.py

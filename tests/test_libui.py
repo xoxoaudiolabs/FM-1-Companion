@@ -203,7 +203,7 @@ def test_flows():
     keys(app, "left")                                      # back to the top list, on Library
     assert app.settings_menu is None and app.setting == top.index("g_library") and app.screen == "settings"
     keys(app, "down", "press")                             # Box ›: the Pocket's own
-    assert app.settings_menu == "box" and [r[0] for r in app.settings_rows()] == ["sd", "wifi", "about"]
+    assert app.settings_menu == "box" and [r[0] for r in app.settings_rows()] == ["sd", "wifi", "software", "about"]
     at_row(app, "box", "about")
     keys(app, "press")                                     # About: the version first, then what it runs on
     assert app.screen == "pick" and app.pick["title"] == "About" and app.pick["items"][0][1] == "Version"
@@ -507,6 +507,45 @@ def test_midi_files():
     except ValueError:
         pass
     assert app.web_status()["midifile"] is None
+
+
+def test_software_update_on_the_box():
+    """Settings › Box › Software update: asks GitHub on a thread (the screen keeps going), then says it's up to
+    date, why it can't, or asks Update? with a hold-press, which starts the same job as the web page's Update"""
+    import update
+    app = make_app()
+    at_row(app, "box", "software")
+    assert app.settings_rows()[app.setting][2] == "›"
+    asked = []
+    saved = update.check
+    update.check = lambda fresh=False: asked.append(fresh) or {
+        "installed": "v3.1", "newest": "v3.2", "newer": True, "helper": True, "busy": None, "error": None}
+    try:
+        keys(app, "press")
+        for _ in range(50):                                # the thread posts what it found
+            if not app.events.empty():
+                break
+            time.sleep(0.02)
+        event = app.events.get_nowait()
+        assert asked == [True] and event[0] == "software"
+        app.software_checked(event[1])
+    finally:
+        update.check = saved
+    assert app.screen == "confirm" and app.confirm["lines"][0] == "v3.1 > v3.2"
+    snap(app, "software-update")
+    keys(app, "press")                                     # a short press: only "hold"
+    assert app.started == []
+    keys(app, "press!")
+    assert app.started == [["update"]]
+    app.screen = "settings"
+    assert app.settings_rows()[app.setting][2] == "v3.2 new"
+    for info, said in (({"installed": "v3.1", "newer": False}, "Up to date (v3.1)"),
+                       ({"error": "couldn't ask GitHub"}, "online?"),
+                       ({"busy": "a recording is running: stop it first"}, "a recording is running"),
+                       ({"installed": "v3.0", "newest": "v3.1", "newer": True, "helper": False}, "over SSH")):
+        app.screen = "settings"
+        app.software_checked(info)
+        assert said in app.message and app.screen == "settings", (info, app.message)
 
 
 def test_clock():

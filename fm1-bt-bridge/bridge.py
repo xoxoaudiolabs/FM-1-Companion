@@ -1782,7 +1782,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
         if menu == "box":                     # the Pocket's own
             theme = [("theme", "Theme", self.theme_label())] if getattr(self.display, "colour", False) else []
             return ([("sd", "Import SD card", "")] + theme + [("wifi", "Wi-Fi", wifi)]
-                    + [("about", "About", "v" + device.POCKET_VERSION)])
+                    + [("software", "Software update", self.software_label()),
+                       ("about", "About", "v" + device.POCKET_VERSION)])
         return [("g_mixer", "Mixer", "›"), ("g_play", "Playing", "›"), ("g_midi", "MIDI", "›"),
                 ("g_bt", "Bluetooth", "›"), ("g_link", "Studio link", self.link_label()),
                 ("g_library", "Library", "›"), ("g_box", "Box", "›")]
@@ -1868,6 +1869,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
             self.open_theme_pick()
         elif key == "about":
             self.open_about()
+        elif key == "software":               # the Companion's update: checked, then Update? with a hold-press
+            self.check_software()
         elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
@@ -2384,6 +2387,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink, Pock
                 self.wake()
             elif event and event[0] == "request":
                 self.web_request(event[1])
+            elif event and event[0] == "software":        # Box › Software update: what GitHub said
+                self.software_checked(event[1])
             elif event and event[0] == "ble_note":        # a Bluetooth MIDI keyboard connected, left, failed
                 self.last_activity = time.monotonic()
                 self.wake()

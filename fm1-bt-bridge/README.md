@@ -238,11 +238,13 @@ a half.
 | · **DX7 patches ›** | `.syx` banks and voices for firmwares that take them (Library, below). |
 | · **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
 | · **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
+| · **MIDI files ›** | `.mid` files played into the FM-1 (Library, below). |
 | · **Firmware ›** | Shows what the FM-1 runs; press to install firmware (below). |
 | **Box ›** | |
 | · **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
 | · **Theme ›** | On a colour LCD: the screens' colours, FM-1 A's or one picked (it shows each as you scroll). |
 | · **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
+| · **Software update** | The Companion's own update, with no phone needed: press it (Wi-Fi on) and the box asks GitHub for the newest release. If there's one, **hold press 2 s** to install it; it restarts when it's done (a few minutes on a Pi Zero) and keeps your settings, pairings and library. Up to date, it says so. The row shows a newer release once it has found one. The web page's Library › Software does the same. |
 | · **About ›** | The version, what the FM-1 runs, the Pocket's name and address, its board and screen. The version is on the start-up screen too. |
 
 ### Headphones

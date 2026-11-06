@@ -6,6 +6,7 @@ fonts, fit(), say(), draw_box() and the screen machinery.
 """
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -395,6 +396,49 @@ class LibraryScreens:
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing]
         self.open_pick("Edit which", items, lambda name: self.open_editor(name, folder),
                        "No recordings yet" if folder == "recordings" else "No samples yet", back="pick")
+
+    # ---- the Companion's own update (update.py), from Settings › Box, as the web page's Library › Software does
+    def software_label(self):
+        """Box's Software update row: the newer release the last check found, else "›" (never asked here: the
+        rows are drawn many times a second, and asking GitHub takes up to 10 s)"""
+        info = getattr(self, "software_info", None)
+        if getattr(self, "software_checking", False):
+            return "…"
+        return f"{info['newest']} new" if info and info.get("newer") else "›"
+
+    def check_software(self):
+        """ask GitHub for the newest release on a thread of its own; software_checked shows what it found"""
+        if getattr(self, "software_checking", False):
+            return
+        self.software_checking = True
+        self.say("Checking for an update…", 10)
+
+        def ask():
+            import update
+            try:
+                info = update.check(fresh=True)
+            except Exception as e:            # (whatever goes wrong: said on the screen, never a dead thread)
+                info = {"error": str(e)[:60] or "the check failed"}
+            self.post("software", info)
+
+        threading.Thread(target=ask, daemon=True).start()
+
+    def software_checked(self, info):
+        """the check's answer (on the screen's thread): up to date, why not, or Update? with a hold-press"""
+        self.software_checking, self.software_info = False, info
+        self.message, self.message_until = None, 0.0     # ("Checking…" off: the answer replaces it)
+        if info.get("error"):
+            self.say("No connection: Wi-Fi on?" if self.wifi is False else "Can't reach GitHub: online?", 3)
+        elif info.get("busy"):
+            self.say(str(info["busy"])[:40], 3)
+        elif not info.get("newer"):
+            self.say(f"Up to date ({info.get('installed')})", 3)
+        elif not info.get("helper"):
+            self.say("Needs one update over SSH", 3)
+        else:
+            self.ask("Update?", [f"{info['installed']} > {info['newest']}", "restarts; files kept",
+                                 "Wi-Fi on till it's back"],
+                     lambda: self.start_job(["update"], "Update"), back="settings")
 
     # ---- MIDI files (midifile.py, played in the MIDI process)
     def midifile_playing(self):

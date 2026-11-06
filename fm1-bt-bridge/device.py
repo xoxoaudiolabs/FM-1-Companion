@@ -8,7 +8,7 @@ boards) can do its job: detect()'s "bluetooth" says which.
 import os
 from pathlib import Path
 
-POCKET_VERSION = "3.1"       # the Pocket's release, shown by fm1-report
+POCKET_VERSION = "3.1.1"  # the Pocket's release, shown by fm1-report
 MODEL = Path("/proc/device-tree/model")
 FRAMEBUFFERS = Path("/sys/class/graphics")
 BLUETOOTH = Path("/sys/class/bluetooth")

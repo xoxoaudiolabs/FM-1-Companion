@@ -5,6 +5,15 @@ Every Pocket release, newest first. [Back to the main page](../README.md)
 The Studio has moved on: it is [XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now, with an FM-1
 Companion plug-in. Its releases here (Studio v1.0 to v1.6) are listed under Release history at the end.
 
+## Pocket v3.1.1: update from the box
+
+- **Settings › Box › Software update:** the Companion's own update with no phone needed. Press it with Wi-Fi on:
+  the box asks GitHub for the newest release, and if there's one, **hold press 2 s** to install it. It restarts
+  when it's done (a few minutes on a Pi Zero) and keeps your settings, pairings and library; if the new version
+  doesn't start, it goes back to the one before. Up to date, it says so. The same update as the web page's
+  Library › Software.
+- Library › MIDI files is listed in the README's Settings table.
+
 ## Pocket v3.1: MIDI files, two FM-1s side by side, a USB Bluetooth adapter
 
 - **MIDI files from the SD card.** Put `.mid` files in the card's `fm1-library/midi` folder (or upload them on

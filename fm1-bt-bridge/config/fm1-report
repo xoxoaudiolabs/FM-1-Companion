@@ -4,7 +4,7 @@
 # Run it as the user the Companion runs as:  fm1-report
 SETTINGS="$HOME/.config/fm1-bridge/fm1-bridge.json"
 APP="$HOME/.local/share/fm1-bridge"
-setting() { python3 -c "import json;v=json.load(open('$SETTINGS')).get('$1');print('' if v is None else v)" 2>/dev/null; }
+setting() { python3 -c "import json,sys;v=json.load(open(sys.argv[1])).get(sys.argv[2]);print('' if v is None else v)" "$SETTINGS" "$1" 2>/dev/null; }
 yes_no() { if eval "$1" >/dev/null 2>&1; then echo yes; else echo no; fi; }
 
 echo "=== FM-1 Companion report ($(date '+%Y-%m-%d %H:%M'))"

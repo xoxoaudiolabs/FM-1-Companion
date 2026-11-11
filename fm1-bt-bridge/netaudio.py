@@ -23,7 +23,6 @@ import json
 import os
 import socket
 import subprocess
-import urllib.request
 import zlib
 import tempfile
 from pathlib import Path
@@ -119,6 +118,7 @@ def studio_status(address, port=80, timeout=2.0):
     (None: it doesn't send it),
     "latency": its LATENCY step}; an older Studio, or one that doesn't answer: False, None and "SAFE"
     """
+    import urllib.request                      # (here, not at the top: 0.6 s of the Pocket's start-up on a Zero W)
     try:
         with urllib.request.urlopen(f"http://{address}:{port}/api/status", timeout=timeout) as reply:
             status = json.loads(reply.read(1 << 20))

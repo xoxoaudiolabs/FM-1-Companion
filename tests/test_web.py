@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "fm1-bt-bridge"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TMP = Path(tempfile.mkdtemp(prefix="fm1-web-"))
 os.environ.update(FM1_LIBRARY=str(TMP / "library"), XDG_RUNTIME_DIR=str(TMP / "run"), FM1_SD_LIBRARY=str(TMP / "sd"))
+(TMP / "run").mkdir()
 
 import fake_fm1  # noqa: E402
 import library  # noqa: E402
@@ -94,6 +95,7 @@ def test_downloads():
     status, data, headers = call(f"/files/backups/{name}")
     assert status == 200 and json.loads(data)["format"] == "sloop-backup" and "attachment" in headers["Content-Disposition"]
     assert call("/files/backups/..%2F..%2Fx.json")[0] == 404
+    assert call("/files/backups")[0] == 404                  # (no name: a 404, not a dropped connection)
     status, data, _ = call(f"/api/project?backup={name}&source=D")
     project = json.loads(data)
     assert status == 200 and project["format"] == "sloop-project" and sloop.project_from(project)

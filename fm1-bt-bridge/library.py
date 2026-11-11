@@ -39,7 +39,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +54,7 @@ STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
 THEME = RUNTIME / "fm1-theme.json"           # FM-1 A's colours (SLOOP MENU > COLOR), for the Pocket's LCD
                                              # (its OLED has one colour: it never asks)
+SETTINGS = Path(os.environ.get("FM1_SETTINGS") or Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json")
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20                               # the box's own backups kept unless Settings says (keep_backups, 1-100)
@@ -279,9 +279,9 @@ def chosen_fm1():
 
 
 def colour_screen():
-    """True with a screen in colour: the Pocket's 1.44" LCD (Settings: "screen")"""
+    """True with a screen in colour: the Pocket's 1.44" or 1.3" LCD (Settings: "screen"; "lcd" the 1.44"'s old name)"""
     try:
-        lcd = json.loads(SETTINGS.read_text()).get("screen") == "lcd"
+        lcd = json.loads(SETTINGS.read_text()).get("screen") in ("lcd", "lcd144", "lcd13")
     except (OSError, ValueError, AttributeError):
         lcd = False
     return lcd
@@ -807,7 +807,6 @@ SLOT_SECONDS = 7.3                      # a sample slot holds ~7.4 s at 22,050 H
 # a sample's loudest point in the slot (16-bit): SLOOP's own uploader goes to 30000, ~0.8 dB below full scale,
 # which leaves the FM-1 no room when it mixes a sample with other notes and sounds: it clips
 SAMPLE_LEVELS = {"full": 30000, "-3 dB": 23197, "-6 dB": 16422}
-SETTINGS = Path(os.environ.get("FM1_SETTINGS") or Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json")
 
 
 def sample_peak():
@@ -896,6 +895,7 @@ def newest_firmware(releases):
 
 def job_fetch(name):
     import fm1_install
+    import urllib.request                      # (here, not at the top: 0.6 s of the Pocket's start-up on a Zero W)
     if name not in FIRMWARES:
         raise ValueError(f"fetch {' or '.join(FIRMWARES)}")
     title, repo = FIRMWARES[name]

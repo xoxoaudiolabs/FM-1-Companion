@@ -12,10 +12,11 @@ import sys
 
 def load(path):
     rows = []
-    for line in open(path):
-        parts = line.split()
-        if len(parts) >= 2:
-            rows.append((float(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else ""))
+    with open(path) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                rows.append((float(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else ""))
     return rows
 
 

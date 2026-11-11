@@ -299,7 +299,7 @@ def clip_count(path, level=CLIP_LEVEL):
         with wave.open(str(path)) as w:
             channels, frames = w.getnchannels(), w.getframerate()
             if w.getsampwidth() != 2:
-                return 0
+                return 0, 0.0
             while True:
                 data = w.readframes(frames)
                 if not data:
@@ -445,9 +445,10 @@ def split_parts(raw, path, keys, levels):
     np = _np
     parts = [(key, path.with_name(f"{path.stem}-{key}.wav")) for key in keys]
     gains = np.array([levels.get(key, 100) / 100 for key in keys], dtype=np.float32)
-    with wave.open(str(raw), "rb") as src:
+    import contextlib
+    with wave.open(str(raw), "rb") as src, contextlib.ExitStack() as files:   # (each closed, even on an error)
         channels, rate = src.getnchannels(), src.getframerate()
-        outs = [wave.open(str(p), "wb") for _, p in parts] + [wave.open(str(path), "wb")]
+        outs = [files.enter_context(wave.open(str(p), "wb")) for p in [p for _, p in parts] + [path]]
         for out in outs:
             out.setnchannels(2)
             out.setsampwidth(2)
@@ -468,8 +469,6 @@ def split_parts(raw, path, keys, levels):
                 out.writeframes(np.ascontiguousarray(pairs[:, i]).tobytes())
             mix = np.tensordot(gains, pairs.astype(np.float32), axes=(0, 1))
             outs[-1].writeframes(np.clip(mix, -32768, 32767).astype("<i2").tobytes())
-        for out in outs:
-            out.close()
     raw.unlink(missing_ok=True)
     return parts
 

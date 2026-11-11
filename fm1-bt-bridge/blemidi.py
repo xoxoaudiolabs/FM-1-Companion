@@ -1495,7 +1495,7 @@ class MidiBridge:
             bpm = watch.bpm(now)
             if bpm:
                 return {"bpm": round(bpm), "tempo": round(bpm, 2), "source": source, "playing": watch.playing,
-                        "bar": round(watch.bar(now), 3)}
+                        "bar": round(watch.bar(now) or 0.0, 3)}   # (a Start between the two clears the ticks)
         return None
 
     def note_watch(self, message, now):

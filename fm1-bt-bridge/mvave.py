@@ -32,9 +32,10 @@ def kind(ident):
     if not ident or ident.model != "FM-1":
         return None
     v = ident.version
-    if len(ident.text.split("_")[1]) >= 3 and str(v).startswith("9"):
+    long = len((ident.text.split("_") + [""])[1]) >= 3     # its version after the "_" (FM-1_904); none: not long
+    if long and str(v).startswith("9"):
         return "felucca"
-    if len(ident.text.split("_")[1]) >= 3 and str(v).startswith("8"):
+    if long and str(v).startswith("8"):
         return "fomni"
     return "stock" if v <= 19 else "baudgirl" if v < 700 else None   # (her V102: FM-1_102 likely; 700: Skiff's dev)
 

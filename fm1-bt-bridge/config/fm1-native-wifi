@@ -17,9 +17,17 @@ dest=/etc/NetworkManager/system-connections/fm1-wifi.nmconnection
 old=$(nmcli -t -f NAME,TYPE,ACTIVE connection show | awk -F: '$2=="802-11-wireless" && $3=="yes" {print $1; exit}')
 [ -n "$old" ] || { echo "no active Wi-Fi connection"; exit 1; }
 case "$old" in netplan-*) ;; *) echo "already native: $old"; exit 0 ;; esac
-ssid=$(nmcli -g 802-11-wireless.ssid connection show "$old")
-psk=$(nmcli -s -g 802-11-wireless-security.psk connection show "$old")
+# (-e no: as they are, without nmcli's \: and \\ escapes for terse output)
+ssid=$(nmcli -e no -g 802-11-wireless.ssid connection show "$old")
+psk=$(nmcli -e no -s -g 802-11-wireless-security.psk connection show "$old")
 [ -n "$ssid" ] && [ -n "$psk" ] || { echo "could not read the Wi-Fi settings of $old"; exit 1; }
+case "$ssid$psk" in *"
+"*) echo "a line break in the Wi-Fi settings of $old: left as it is"; exit 1 ;; esac
+keyfile() {   # a value as NetworkManager's keyfile reads it: a backslash doubled, a leading space as \s
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/^ /\\s/'
+}
+ssid=$(keyfile "$ssid")
+psk=$(keyfile "$psk")
 
 loaded() {    # NetworkManager has fm1-wifi; a reload runs netplan and systemd reloads, minutes on a Zero W
     n=0

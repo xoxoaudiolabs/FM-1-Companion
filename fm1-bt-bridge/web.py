@@ -176,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length > limit:
             raise ValueError("too large")
+        if length < 0:                                 # (read(-1) would read on to the end, past the limit)
+            raise ValueError("a negative Content-Length")
         return self.rfile.read(length)
 
     def fail(self, message, code=400):
@@ -209,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
             state["waiting"] = library.REQUEST.exists()
             self.send(200, state)
         elif url.path.startswith("/files/"):
-            _, _, folder, name = url.path.split("/", 3)
+            folder, _, name = url.path[len("/files/"):].partition("/")    # (/files/backups alone: no name)
             path = safe_path(folder, urllib.parse.unquote(name))
             if not path or not path.is_file():
                 return self.fail("no such file", 404)
@@ -306,7 +308,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Accept-Ranges", "bytes")
         if part:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.send_header("Content-Disposition", f'{"inline" if inline else "attachment"}; filename="{path.name}"')
+        plain = path.name.replace("\\", "_").replace('"', "_")    # (a quote in a name would end the header's)
+        self.send_header("Content-Disposition", f'{"inline" if inline else "attachment"}; filename="{plain}"')
         self.end_headers()
         with open(path, "rb") as f:
             f.seek(start)

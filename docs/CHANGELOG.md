@@ -5,6 +5,19 @@ Every Pocket release, newest first. [Back to the main page](../README.md)
 The Studio has moved on: it is [XOXO Studio](https://github.com/xoxoaudiolabs/XOXO-Studio) now, with an FM-1
 Companion plug-in. Its releases here (Studio v1.0 to v1.6) are listed under Release history at the end.
 
+## Pocket v3.1.3: fixes from a code review
+
+- **The 1.44" and 1.3" LCDs show FM-1 A's colours again** when the screen is set to `lcd144` or `lcd13` (the
+  library only knew the old setting name, `lcd`).
+- The web page refuses a request with a negative size, answers "no such file" for a folder link with no file
+  name, and a download whose name has a `"` in it keeps a proper header.
+- `fm1-native-wifi` copies a Wi-Fi password with `\` or `:` in it as it is.
+- Small fixes that stop rare crashes: the clock read-out when a MIDI Start arrives, the clip check on a WAV that
+  isn't 16-bit, and an FM-1 whose firmware name has no `_`.
+- The Companion starts about a second sooner on a Pi Zero W.
+
+Checked with the tests; not tried on a Pocket yet.
+
 ## Pocket v3.1.2: FM-1+VA backups fixed
 
 - **Baud Girl's FM-1+VA backs up again.** The installer left out two of the Companion's files (`baudgirl.py`,
